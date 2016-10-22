@@ -35,7 +35,7 @@ favicon: /public/img/github.jpg
 active: 技术
 
 # 首页除了最新文章外显示分类
-#cates: 
+cates: 
 #  - Optimization
 #  - LaTeX
 
