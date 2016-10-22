@@ -291,12 +291,14 @@ func main() {
 下面详细讲解`Transport`结构需要注意的几个参数设置：
 
 * DisableKeepAlives
+
 > // DisableKeepAlives, if true, prevents re-use of TCP connections
 > // between different HTTP requests.
 
 表示是否开启http keepalive功能，也即是否重用连接，默认开启(false)
 
 * MaxIdleConns
+
 >// MaxIdleConns controls the maximum number of idle (keep-alive)
 	// connections across all hosts. Zero means no limit.
 
@@ -304,6 +306,7 @@ func main() {
 太大容易导致客户端和服务端的socket数量剧增，导致内存吃满，文件描述符不足等问题；太小则限制了连接池的socket数量，资源利用率较低。
 
 * MaxIdleConnsPerHost
+
 >// MaxIdleConnsPerHost, if non-zero, controls the maximum idle
 	// (keep-alive) connections to keep per-host. If zero,
 	// DefaultMaxIdleConnsPerHost is used.
@@ -317,6 +320,7 @@ MaxIdleConnsPerHost <= MaxIdleConns
 如果客户端只需要访问一个host，那么最好将`MaxIdleConnsPerHost`与`MaxIdleConns`设置为相同，这样逻辑更加清晰。
 
 * IdleConnTimeout
+
 >// IdleConnTimeout is the maximum amount of time an idle
 	// (keep-alive) connection will remain idle before closing
 	// itself.
@@ -325,6 +329,7 @@ MaxIdleConnsPerHost <= MaxIdleConns
 空闲timeout设置，也即socket在该时间内没有交互则自动关闭连接（注意：**该timeout起点是从每次空闲开始计时，若有交互则重置为0**）,该参数通常设置为分钟级别，例如：90秒。
 
 * DialContext
+
 >// DialContext specifies the dial function for creating unencrypted TCP connections.
 	// If DialContext is nil (and the deprecated Dial below is also nil),
 	// then the transport dials using package net.
@@ -336,7 +341,10 @@ MaxIdleConnsPerHost <= MaxIdleConns
 参考：
 
 https://github.com/golang/go/issues/13957
+
 https://golang.org/src/net/http/transport.go#L46
+
 http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang
+
 https://golang.org/pkg/net/http/#pkg-index 
 
