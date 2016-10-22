@@ -3,7 +3,7 @@
 <!-- 多说评论框 end -->
 <!-- 多说公共JS代码 start (一个网页只需插入一次) -->
 <script type="text/javascript">
-var duoshuoQuery = {short_name:"duyanghao"};
+var duoshuoQuery = {short_name:"{{ site.duoshuo }}"};
 	(function() {
 		var ds = document.createElement('script');
 		ds.type = 'text/javascript';ds.async = true;
@@ -12,5 +12,5 @@ var duoshuoQuery = {short_name:"duyanghao"};
 		(document.getElementsByTagName('head')[0] 
 		 || document.getElementsByTagName('body')[0]).appendChild(ds);
 	})();
-	</script>
+</script>
 <!-- 多说公共JS代码 end -->
