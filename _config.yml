@@ -6,12 +6,15 @@ paginate: 10
 author: 
   name: duyanghao
   email: 1294057873@qq.com
-  duoshuo: duyanghao
+  #duoshuo: duyanghao
   link: http://duyanghao.github.io/
   weibo: 
   github: http://github.com/duyanghao
   music: 
   linkedin: 
+
+# comments
+duoshuo: duyanghao
 
 # 站点信息
 title: 杜杨浩的博客
