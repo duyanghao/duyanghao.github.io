@@ -1,11 +1,12 @@
 permalink: /:year/:month/:day/:title.html
 paginate: 10
-markdown: redcarpet
+#markdown: redcarpet
 
 # 作者信息
 author: 
   name: duyanghao
   email: 1294057873@qq.com
+  duoshuo: duyanghao
   link: http://duyanghao.github.io/
   weibo: 
   github: http://github.com/duyanghao
