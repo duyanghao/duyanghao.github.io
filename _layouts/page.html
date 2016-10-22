@@ -14,3 +14,6 @@ layout: base
     {% include disqus.html %}
   </div>
 </div>
+{% if page.comments %}
+{% include comments.md %}
+{% endif %}
