@@ -326,6 +326,11 @@ MaxIdleConnsPerHost <= MaxIdleConns
 	// itself.
 	// Zero means no limit.
 	
+
+#### 这样
+
+我们
+	
 空闲timeout设置，也即socket在该时间内没有交互则自动关闭连接（注意：**该timeout起点是从每次空闲开始计时，若有交互则重置为0**）,该参数通常设置为分钟级别，例如：90秒。
 
 * DialContext
@@ -340,6 +345,7 @@ MaxIdleConnsPerHost <= MaxIdleConns
 
 
 #### 参考：
+
 
 * [net/http Client使用](http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang)
 
