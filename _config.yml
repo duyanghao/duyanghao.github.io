@@ -1,6 +1,15 @@
 permalink: /:year/:month/:day/:title.html
 paginate: 10
-#markdown: redcarpet
+
+# Markdown settings
+# replace redcarpet to kramdown,
+# although redcarpet can auto highlight code, the lack of header-id make the catalog impossible, so I switch to kramdown
+# document: http://jekyllrb.com/docs/configuration/#kramdown
+markdown: kramdown
+kramdown:
+  input: GFM        # use Github Flavored Markdown !important
+   
+
 
 # 作者信息
 author: 
