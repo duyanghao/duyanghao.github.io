@@ -293,7 +293,6 @@ func main() {
 * DisableKeepAlives
 
 >// DisableKeepAlives, if true, prevents re-use of TCP connections
-
 >// between different HTTP requests.
 
 表示是否开启http keepalive功能，也即是否重用连接，默认开启(false)
@@ -301,7 +300,6 @@ func main() {
 * MaxIdleConns
 
 >// MaxIdleConns controls the maximum number of idle (keep-alive)
-
 >// connections across all hosts. Zero means no limit.
 
 表示连接池对所有host的最大链接数量，host也即dest-ip，默认为无穷大（0），但是通常情况下为了性能考虑都要严格限制该数目（<font color="#8B0000">实际使用中通常利用压测 二分得到该参数的最佳近似值</font>）。
@@ -310,9 +308,7 @@ func main() {
 * MaxIdleConnsPerHost
 
 >// MaxIdleConnsPerHost, if non-zero, controls the maximum idle
-
 >// (keep-alive) connections to keep per-host. If zero,
-
 >// DefaultMaxIdleConnsPerHost is used.
 	
 表示连接池对每个host的最大链接数量，从字面意思也可以看出：
@@ -326,11 +322,8 @@ MaxIdleConnsPerHost <= MaxIdleConns
 * IdleConnTimeout
 
 >// IdleConnTimeout is the maximum amount of time an idle
-
 >// (keep-alive) connection will remain idle before closing 
-
 >// itself.
-
 >// Zero means no limit.
 	
 	
@@ -339,11 +332,8 @@ MaxIdleConnsPerHost <= MaxIdleConns
 * DialContext
 
 >// DialContext specifies the dial function for creating unencrypted TCP connections.
-
 >// If DialContext is nil (and the deprecated Dial below is also nil),
-
 >// then the transport dials using package net.
-
 >DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 	
 该函数用于创建http（非https）连接，通常需要关注`Timeout`和`KeepAlive`参数。前者表示建立Tcp链接超时时间；后者表示底层为了维持http keepalive状态 每隔多长时间发送Keep-Alive报文。`Timeout`通常设置为30s（网络环境良好），`KeepAlive`通常设置为30s(与IdleConnTimeout要对应)。
