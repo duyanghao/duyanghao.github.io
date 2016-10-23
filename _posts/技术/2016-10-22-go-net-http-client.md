@@ -338,10 +338,13 @@ MaxIdleConnsPerHost <= MaxIdleConns
 	
 该函数用于创建http（非https）连接，通常需要关注`Timeout`和`KeepAlive`参数。前者表示建立Tcp链接超时时间；后者表示底层为了维持http keepalive状态 每隔多长时间发送Keep-Alive报文。`Timeout`通常设置为30s（网络环境良好），`KeepAlive`通常设置为30s(与IdleConnTimeout要对应)。
 
+### 补充说明
 
+`Transport`数据结构中的`MaxConnsPerHost`参数目前正在研发中（Go项目），其表示对每个host可以发出的最大连接个数（包括长链接和短链接），是非常有用的参数，可以用来对socket数量进行限制，配合`MaxIdleConns`和`MaxIdleConnsPerHost`一起使用。
 
-### 参考：
+[net/http Transport MaxConnsPerHost](https://github.com/golang/go/issues/13957)
 
+### 参考
 
 * [net/http Client使用](http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang)
 
@@ -349,7 +352,6 @@ MaxIdleConnsPerHost <= MaxIdleConns
 
 * [Transport结构](https://golang.org/src/net/http/transport.go#L46)
 
-* [net/http Transport MaxConnsPerHost](https://github.com/golang/go/issues/13957)
 
 
 
