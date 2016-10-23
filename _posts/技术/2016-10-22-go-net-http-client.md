@@ -338,6 +338,7 @@ MaxIdleConnsPerHost <= MaxIdleConns
 该函数用于创建http（非https）连接，通常需要关注`Timeout`和`KeepAlive`参数。前者表示建立Tcp链接超时时间；后者表示底层为了维持http keepalive状态 每隔多长时间发送Keep-Alive报文。`Timeout`通常设置为30s（网络环境良好），`KeepAlive`通常设置为30s(与IdleConnTimeout要对应)。
 
 
+
 #### 参考：
 
 
