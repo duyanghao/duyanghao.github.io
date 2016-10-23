@@ -40,10 +40,6 @@ favicon: /public/img/github.jpg
 #  id: UA-54262064-1 
 #  url: painterlin.com
 
-# disqus 设置
-#disqus:
-#  shortname: painterlin
-
 # 主题设置，自动激活某个标签
 active: 技术
 
