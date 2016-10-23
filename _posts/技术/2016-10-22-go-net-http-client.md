@@ -9,7 +9,7 @@ description:
 
 go net/http Client使用总结
 
-###Client数据结构
+### Client数据结构
 
 ```go
 
@@ -340,7 +340,7 @@ MaxIdleConnsPerHost <= MaxIdleConns
 
 
 
-###参考：
+### 参考：
 
 
 * [net/http Client使用](http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang)
