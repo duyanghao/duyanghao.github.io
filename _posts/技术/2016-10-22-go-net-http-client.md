@@ -339,14 +339,15 @@ MaxIdleConnsPerHost <= MaxIdleConns
 
 
 
-### 参考：
+#### 参考：
+
+* [net/http Client使用](http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang)
+
+* [net/http](https://golang.org/pkg/net/http/#pkg-index )
+
+* [Transport结构](https://golang.org/src/net/http/transport.go#L46)
+
+* [net/http Transport MaxConnsPerHost](https://github.com/golang/go/issues/13957)
 
 
-https://github.com/golang/go/issues/13957
-
-https://golang.org/src/net/http/transport.go#L46
-
-http://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang
-
-https://golang.org/pkg/net/http/#pkg-index 
 
