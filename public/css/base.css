@@ -103,8 +103,8 @@ body, html {
   line-height: 1.42857143;
 }
 #content {
-  font-size: 12px;
-	color: #000000 
+  font-size: 16px;
+  color: #000000;
 }
 #content h2, h3 {
   line-height: 2;
