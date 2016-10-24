@@ -69,6 +69,7 @@ prog：/usr/bin/gunicorn
 
 OPTIONS：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/7.png)
+
 ```sh
 # ./tpoint -s block:block_bio_queue
       kthrotld/8-323   [008] 10929769.540355: block_bio_queue: 8,0 WS 1260299776 + 1024 [kthrotld/8]
