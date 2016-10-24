@@ -79,7 +79,6 @@ WSGIApplication类继承Application类，如下：
 
 <font color="#8B0000">而Arbiter类的run函数则是整个python-gunicorn的核心，它会生成worker进程，如下：</font>
 ![](/public/img/docker-registry/2016-10-24-docker-registry/13.png)
-![](/public/img/docker-registry/2016-10-24-docker-registry/32.png)
 
 manage_workers函数用于生成worker进程或者kill worker进程，使工作进程总数保持不变，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/14.png)
@@ -88,6 +87,7 @@ manage_workers函数用于生成worker进程或者kill worker进程，使工作�
 
 <font color="#8B0000">同时，Arbiter类的run函数也负责管理worker进程，如下：</font>
 ![](/public/img/docker-registry/2016-10-24-docker-registry/15.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/32.png)
 
 master进程会进入无限循环，利用信号与worker进程通信，从而管理worker进程，这里不展开介绍
 
@@ -101,8 +101,7 @@ master进程会进入无限循环，利用信号与worker进程通信，从而�
 回顾开始，启动脚本中其实已经指定了是使用AsyncIO Workers 进程的，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/19.png)
 
-<font color="#8B0000">就是由-k选项指定工作进程类型，gevent表示AsyncIO Workers进程类型</font>
-
+**就是由-k选项指定工作进程类型，gevent表示AsyncIO Workers进程类型**
 
 python-gunicorn中与该worker进程对应的处理类是gunicorn/workers/ggevent.py中GeventWorker类，也即spawn_workers函数会生成GeventWorker类对象
 
