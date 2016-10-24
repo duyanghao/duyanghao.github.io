@@ -1,7 +1,7 @@
 ---
 layout: post
 title: Docker-registry V1源码分析——整体框架
-date: 2015-10-24 23:42:30
+date: 2016-10-25 0:29:30
 category: 技术
 tags: Docker-registry
 excerpt: Docker-registry V1源码分析
@@ -77,7 +77,7 @@ WSGIApplication类继承Application类，如下：
 所以，WSGIApplication对象会执行Application的run函数，该函数会生成Arbiter对象，并执行该对象的run函数，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/12.png)
 
-<font color="#8B0000">而Arbiter类的run函数则是整个python-gunicorn的核心，它会生成worker进程，如下：</font>
+**<font color="#8B0000">而Arbiter类的run函数则是整个python-gunicorn的核心，它会生成worker进程，如下：</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/13.png)
 
 manage_workers函数用于生成worker进程或者kill worker进程，使工作进程总数保持不变，如下：
@@ -85,17 +85,17 @@ manage_workers函数用于生成worker进程或者kill worker进程，使工作�
 
 其中spawn_workers用于生成worker进程，kill_worker用于杀死工作进程，稍后详细介绍spawn_workers函数的逻辑
 
-<font color="#8B0000">同时，Arbiter类的run函数也负责管理worker进程，如下：</font>
+**<font color="#8B0000">同时，Arbiter类的run函数也负责管理worker进程，如下：</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/15.png)
 ![](/public/img/docker-registry/2016-10-24-docker-registry/32.png)
 
 master进程会进入无限循环，利用信号与worker进程通信，从而管理worker进程，这里不展开介绍
 
-<font color="#8B0000">下面详细介绍worker进程产生过程，也即函数spawn_workers，该函数首先创建worker_class对象，python-gunicorn中总共有四种类型的worker进程，如下：</font>
+**<font color="#8B0000">下面详细介绍worker进程产生过程，也即函数spawn_workers，该函数首先创建worker_class对象，python-gunicorn中总共有四种类型的worker进程，如下：</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/16.png)
 ![](/public/img/docker-registry/2016-10-24-docker-registry/17.png)
 
-<font color="#8B0000">其中AsyncIO Workers是推荐的worker进程类型，在如下情况要求使用该worker类型：</font>
+**<font color="#8B0000">其中AsyncIO Workers是推荐的worker进程类型，在如下情况要求使用该worker类型：</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/18.png)
 
 回顾开始，启动脚本中其实已经指定了是使用AsyncIO Workers 进程的，如下：
@@ -135,13 +135,13 @@ init_process函数会调用GeventWorker类的run函数，该函数对每个Liste
 ![](/public/img/docker-registry/2016-10-24-docker-registry/35.png)
 ![](/public/img/docker-registry/2016-10-24-docker-registry/36.png)
 
-<font color="#8B0000">该函数会加载Docker-registry app对象，并执行__call__函数，如下：（这个很关键，是python-gunicorn与docker-registry联系所在）</font>
+**<font color="#8B0000">该函数会加载Docker-registry app对象，并执行__call__函数，如下：（这个很关键，是python-gunicorn与docker-registry联系所在）</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/27.png)
 
 self.wsgi也即Docker-registry的App对象，回到最开始的脚本文件，APP模块为：docker_registry.wsgi:application，转到Docker-registry的wsgi.py文件：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/28.png)
 
-<font color="#8B0000">其中app为Flask类对象，如下：</font>
+**<font color="#8B0000">其中app为Flask类对象，如下：</font>**
 ![](/public/img/docker-registry/2016-10-24-docker-registry/29.png)
 
 之后，会调用Flask类对象的__call__函数（在python-flask中），如下：
