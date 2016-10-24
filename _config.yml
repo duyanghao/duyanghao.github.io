@@ -38,9 +38,9 @@ gavatar: /public/img/github.jpg
 favicon: /public/img/github.jpg
 
 # google analytics 设置
-#ga:
-#  id: UA-54262064-1 
-#  url: painterlin.com
+ga:
+  id: UA-56673760-1
+  url: auto
 
 # 主题设置，自动激活某个标签
 active: 技术
