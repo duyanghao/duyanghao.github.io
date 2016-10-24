@@ -1,7 +1,7 @@
 ---
 layout: post
 title: Docker-registry V1源码分析——整体框架
-date: 2016-10-25 0:29:30
+date: 2016-10-24 23:29:30
 category: 技术
 tags: Docker-registry
 excerpt: Docker-registry V1源码分析
