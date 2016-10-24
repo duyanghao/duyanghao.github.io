@@ -25,7 +25,7 @@ description:
 
 boot.s：
 
-```
+```as
 !   boot.s
 !
 ! It then loads the system at 0x10000, using BIOS interrupts. Thereafter
@@ -98,5 +98,6 @@ gdt_48: .word   0x7ff       ! gdt limit=2048, 256 GDT entries
 ```
 
 boot.s编译出的代码共512B，刚好一个扇区长度，将被存放于软盘映像文件的第一个扇区。PC加电启动后，ROM BIOS中的程序会把启动盘上第一个扇区加载到物理内存0x7c00（31KB）位置开始处，并把执行权转移到0x7c00处开始运行boot程序代码。
+
 
 
