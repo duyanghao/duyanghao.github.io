@@ -1,3 +1,12 @@
+---
+layout: post
+title: Linux Demo例子
+category: 技术
+tags: Linux
+keywords:
+description: 这是描述
+---
+
 内核是一个运维开发人员进阶的必要知识，许多高层应用都利用了内核的一些特性，包括最近几年特别流行的Docker技术，要理解这些高层应用技术，则必须熟悉内核。这里给出一个我在学习内核的过程中遇到的一个很经典的内核demo例子，作为内核的入门，个人认为是非常有用的！
 ![](../../public/img/linux/linux_demo.png)
 
