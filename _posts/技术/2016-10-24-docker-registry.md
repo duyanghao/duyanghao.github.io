@@ -42,7 +42,9 @@ gunicorn框架中的worker进程会利用python-gevent作为HTTP处理框架，�
 
 首先启动docker-registry，由脚本启动，如下：
 
+```sh
 service docker-registry start
+```
 
 下面是/etc/init.d/docker-registry中的start函数
 ![](/public/img/docker-registry/2016-10-24-docker-registry/4.png)
@@ -77,6 +79,7 @@ WSGIApplication类继承Application类，如下：
 
 <font color="#8B0000">而Arbiter类的run函数则是整个python-gunicorn的核心，它会生成worker进程，如下：</font>
 ![](/public/img/docker-registry/2016-10-24-docker-registry/13.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/32.png)
 
 manage_workers函数用于生成worker进程或者kill worker进程，使工作进程总数保持不变，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/14.png)
@@ -88,7 +91,7 @@ manage_workers函数用于生成worker进程或者kill worker进程，使工作�
 
 master进程会进入无限循环，利用信号与worker进程通信，从而管理worker进程，这里不展开介绍
 
-<font color="#8B0000">下面详细介绍worker进程产生过程，也即函数spawn_workers，该函数首先创建worker_class对象，python-gunicorn中总共有四种类型的worker进程，如下</font>：
+<font color="#8B0000">下面详细介绍worker进程产生过程，也即函数spawn_workers，该函数首先创建worker_class对象，python-gunicorn中总共有四种类型的worker进程，如下：</font>
 ![](/public/img/docker-registry/2016-10-24-docker-registry/16.png)
 ![](/public/img/docker-registry/2016-10-24-docker-registry/17.png)
 
@@ -99,6 +102,7 @@ master进程会进入无限循环，利用信号与worker进程通信，从而�
 ![](/public/img/docker-registry/2016-10-24-docker-registry/19.png)
 
 <font color="#8B0000">就是由-k选项指定工作进程类型，gevent表示AsyncIO Workers进程类型</font>
+
 
 python-gunicorn中与该worker进程对应的处理类是gunicorn/workers/ggevent.py中GeventWorker类，也即spawn_workers函数会生成GeventWorker类对象
 
@@ -117,9 +121,11 @@ init_process函数会调用GeventWorker类的run函数，该函数对每个Liste
 
 该函数会利用Libevent在监听套接字上创建一个触发事件，只要有客户端请求到来则会触发调用_do_accept函数，转到_do_accept函数，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/24.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/33.png)
 
 该函数会accept请求，创建Client Socket，并创建线程处理该客户端请求，而这里的self._handle也即python-gunicorn中GeventWorker类的handle函数，跳转到handle函数，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/25.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/34.png)
 
 该函数负责请求的处理，三个参数分别表示：监听套接字、客户端Socket，客户端地址
 
@@ -127,6 +133,8 @@ init_process函数会调用GeventWorker类的run函数，该函数对每个Liste
 
 转到handle_request函数，如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/26.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/35.png)
+![](/public/img/docker-registry/2016-10-24-docker-registry/36.png)
 
 <font color="#8B0000">该函数会加载Docker-registry app对象，并执行__call__函数，如下：（这个很关键，是python-gunicorn与docker-registry联系所在）</font>
 ![](/public/img/docker-registry/2016-10-24-docker-registry/27.png)
@@ -139,6 +147,7 @@ self.wsgi也即Docker-registry的App对象，回到最开始的脚本文件，AP
 
 之后，会调用Flask类对象的__call__函数（在python-flask中），如下：
 ![](/public/img/docker-registry/2016-10-24-docker-registry/30.png)
+
 该函数会调用wsgi_app函数，其中environ为WSGI HTTP环境，主要包含请求类型（例如：GET、POST等）和请求文件URI；start_response则主要负责重加工请求回应的头部信息，最后返回值即为回应的内容
 
 wsgi_app函数处理逻辑大致为：先从environ中取出请求类型和请求文件URI，然后根据这两个主要参数调用对应的函数处理，并生成回应报文，之后，调用start_response函数重加工回应报文头部，最后将回应内容作为函数返回值返回
