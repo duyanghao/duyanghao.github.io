@@ -1,6 +1,8 @@
 permalink: /:year/:month/:day/:title.html
 paginate: 10
 
+highlighter: rouge
+truncate: true
 # Markdown settings
 # replace redcarpet to kramdown,
 # although redcarpet can auto highlight code, the lack of header-id make the catalog impossible, so I switch to kramdown
