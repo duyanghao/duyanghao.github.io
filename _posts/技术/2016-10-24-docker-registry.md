@@ -66,7 +66,9 @@ python-gunicorn入口是wsgiapp.py的run函数，如下：
 可以将这些参数分为三类，分别对应prog、OPTIONS、APP_MODULE，如下：
 
 prog：/usr/bin/gunicorn
+
 OPTIONS：
+![](/public/img/docker-registry/2016-10-24-docker-registry/7.png)
 
 
 
