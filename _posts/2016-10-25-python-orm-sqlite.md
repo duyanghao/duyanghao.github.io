@@ -655,3 +655,95 @@ layout: page
   (共{{ paginator.total_posts }}篇)
 </div>
 ```
+
+```js
+<html> 
+<head> 
+<script language="javascript"> 
+//行的追加 
+function addRow() { 
+var testTable = document.getElementById("testTable"); 
+var bodies = testTable.tBodies; 
+var aBody = null; 
+if(bodies){ 
+aBody = bodies[0]; 
+} 
+if(aBody){ 
+var row = document.createElement("tr"); 
+for(var i = 0 ; i < testTable.tHead.rows[0].cells.length; i++){ 
+var cell = document.createElement("td"); 
+var str = "内容第" + (aBody.rows.length + 1) + "行第" + (i + 1) + "列"; 
+if(i == (testTable.tHead.rows[0].cells.length - 1)) { 
+str = "  <a href='javascript:void(0);' onclick=\"removeRow(this);\">删除</a>"; 
+}else if(i == 0){ 
+str = "<input type=\"radio\" name=\"RAd\" >"; 
+} cell.innerHTML = str; 
+row.appendChild(cell); 
+} 
+aBody.insertBefore(row); 
+} 
+} 
+//行的删除 
+function removeRow(obj) { 
+var testTable = document.getElementById("testTable"); 
+var bodies = testTable.tBodies; 
+var aBody = null; 
+if(bodies){ 
+aBody = bodies[0]; 
+if(aBody){ 
+aBody.removeChild(obj.parentNode.parentNode); 
+} 
+} 
+} 
+//行的上移 
+function moveUp(src){ 
+  var rowIndex = 0;
+  var rad = document.getElementsByName("RAd");
+  for(var i = 0; i < rad.length; i++){
+   if(rad[i].checked){
+  rowIndex = rad[i].parentElement.parentElement.rowIndex; 
+ }
+  }
+ if (rowIndex >= 2){ 
+ change_row(rowIndex-1,rowIndex); 
+} 
+} 
+//行的下移 
+function moveDown(src){ 
+  var rowIndex = 0;
+  var rad = document.getElementsByName("RAd");
+  for(var i = 0; i < rad.length; i++){
+   if(rad[i].checked){
+  rowIndex = rad[i].parentElement.parentElement.rowIndex; 
+ }
+  }
+var tl = document.getElementById("testTable"); 
+if (rowIndex < tl.rows.length - 1){ 
+change_row(rowIndex + 1,rowIndex); 
+} 
+} 
+function change_row(line1, line2){ 
+var tl = document.getElementById("testTable"); 
+tl.rows[line1].swapNode(tl.rows[line2]); 
+} 
+</script> 
+</head> 
+<body> 
+<div> 
+<table id="testTable" border="1" width="80%"> 
+<thead> 
+<tr> 
+<th scope="col">单选按钮</th> 
+<th scope="col">序列</th> 
+<th scope="col">ID</th> 
+<th scope="col">名字</th> 
+</tr> 
+</thead> 
+</table> 
+<input type="button" name="addButton" value="追加一行" onClick="addRow();"/> 
+<input type="button" name="moveUP" value="上移一行" onClick="moveUp(this);"/> 
+<input type="button" name="moveDOWN" value="下移一行" onClick="moveDown(this);"/> 
+</div> 
+</body> 
+</html>
+```
