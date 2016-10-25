@@ -308,6 +308,10 @@ color:teal;
 color:#48484c;
 }
 
+.center {
+text-align: left;
+}
+
 .prettyprint.linenums {
 -webkit-box-shadow:inset 40px 0 0 #fbfbfc,inset 41px 0 0 #ececf0;
 -moz-box-shadow:inset 40px 0 0 #fbfbfc,inset 41px 0 0 #ececf0;
