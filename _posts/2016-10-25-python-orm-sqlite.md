@@ -1,6 +1,6 @@
 ---
 layout: post
-title: go mysql 使用
+title: python orm使用Demo
 date: 2016-10-25 14:32:56
 category: 技术
 tags: Python
