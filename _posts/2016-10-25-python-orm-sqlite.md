@@ -55,7 +55,7 @@ if __name__ == '__main__':
 
 第一次运行
 
-```shell
+```bash
 [root@CentOS-64-duyanghao SQLite_operation]# python orm_sqlite.py
 create sqlite and version table
 final
@@ -63,13 +63,13 @@ final
 
 第二次运行
 
-```shell
+```bash
 [root@CentOS-64-duyanghao SQLite_operation]# python orm_sqlite.py
 exist version table
 final
 ```
 
-```shell
+```bash
 #!/bin/sh 
 # list a content summary of a number of RPM packages 
 # USAGE: showrpm rpmfile1 rpmfile2 ... 
@@ -486,4 +486,132 @@ color:#746A6A;
 </body> 
 </html> 
 
+```
+
+```css
+* sext
+*
+* @author linghua.zhang@me.com
+* @link http://lhzhang.com/
+* @update 2011-12-20
+* 
+* |/ | (~ (~
+* |\.|._)._)
+* --------------------------------- */
+
+@import url(http://fonts.googleapis.com/css?family=Galdeano);
+@import url(http://fonts.googleapis.com/css?family=Electrolize);
+@import url(http://fonts.googleapis.com/css?family=Cuprum);
+body{font-size:14px;word-spacing:1px;
+  margin-left:auto;
+margin-right:auto;
+  font-family:"Trebuchet MS","Galdeano","Hiragino Sans GB","Microsoft YaHei",Trebuchet,Tahoma,"Lucida Grande","Lucida Sans
+ Unicode",Verdana,sans-serif;color:#000000;background-color:#ffffff;}
+*{padding:0;margin: 0;border:none;outline:none;}
+a{color:#dd0000;text-decoration:none;}
+a:hover{color:#333333;text-decoration:underline;}
+hr{margin:.7em 0;border-top:1px dashed #d0d0d0;border-bottom:1px dashed #f9f9f9;}
+p{padding:.5em 0;}
+li{padding:.2em 0;}
+ol,ul{list-style-position:inside;}
+ol ul, ul ol, ul ul, ol ol {margin-left:1em;}
+pre code{margin:1em 0;font-size:13px;line-height:1.6;display:block;overflow:auto;}
+blockquote{display:block;text-align:justify;border-left:4px solid #eeeeee;}
+blockquote{margin:1em 0em;padding-left:1.5em;}
+blockquote p{margin:0;padding:.5em 0;}
+#container{width:900px;margin:2em auto;display:block;padding:0 2em;}
+.content{font-size:16px;line-height:24px;}
+```
+
+```html
+---
+title: 首页
+layout: page
+---
+
+<ul class="listing">
+{% for post in paginator.posts %}
+  {% capture y %}{{post.date | date:"%Y"}}{% endcapture %}
+  {% if year != y %}
+    {% assign year = y %}
+    <li class="listing-seperator">{{ y }}</li>
+  {% endif %}
+  <li class="listing-item">
+    <time datetime="{{ post.date | date:"%Y-%m-%d" }}">{{ post.date | date:"%Y-%m-%d" }}</time>
+    <a href="{{ post.url }}" title="{{ post.title }}">{{ post.title }}</a>
+    <p>   
+      {{ post.excerpt | remove: '<p>' | remove: '</p>' }} &raquo;
+          <a href="{{ post.url }}">read more...</a>
+          </p>
+  </li>
+{% endfor %}
+</ul>
+
+<div id="post-pagination" class="paginator">
+
+  {% if paginator.previous_page %}
+    {% if paginator.previous_page == 1 %}
+    <a href="/"><前页</a>
+    {% else %}
+    <a href="/page{{paginator.previous_page}}">&lt;前页</a>
+    {% endif %}
+  {% else %}
+    <span class="previous disabled">&lt;前页</span>
+  {% endif %}
+
+      {% if paginator.page == 1 %}
+      <span class="current-page">1</span>
+      {% else %}
+      <a href="/">1</a>
+      {% endif %}
+
+    {% for count in (2..paginator.total_pages) %}
+      {% if count == paginator.page %}
+      <span class="current-page">{{count}}</span>
+      {% else %}
+      <a href="/page{{count}}">{{count}}</a>
+      {% endif %}
+    {% endfor %}
+
+  {% if paginator.next_page %}
+    <a class="next" href="/page{{paginator.next_page}}">后页&gt;</a>
+  {% else %}
+    <span class="next disabled" >后页&gt;</span>
+  {% endif %}
+  (共{{ paginator.total_posts }}篇)
+</div>
+```
+
+```js
+var data="  
+{  
+root:  
+[  
+{name:'1',value:'0'},  
+{name:'6101',value:'北京市'},  
+{name:'6102',value:'天津市'},  
+{name:'6103',value:'上海市'},  
+{name:'6104',value:'重庆市'},  
+{name:'6105',value:'渭南市'},  
+{name:'6106',value:'延安市'},  
+{name:'6107',value:'汉中市'},  
+{name:'6108',value:'榆林市'},  
+{name:'6109',value:'安康市'},  
+{name:'6110',value:'商洛市'}  
+] 
+}";  
+alert(eval("{}"); // return undefined 
+alert(eval("({})");// return object[Object]
+(function(){ 
+ 
+})(jQuery);  //做闭包操作 
+$.getJSON("http://www.exp99.com/",{param:"USER_GUID"},function(data){  
+//此处返回的data已经是json对象  
+  $.each(data.root,function(idx,item){  
+    if(idx==0){  
+      return true;//同continue，返回false同break  
+    }  
+    console.log("name:"+item.name+",value:"+item.value);  
+  });  
+}); 
 ```
