@@ -523,7 +523,7 @@ blockquote p{margin:0;padding:.5em 0;}
 .content{font-size:16px;line-height:24px;}
 ```
 
-```js
+```html
 ---
 title: 首页
 layout: page
