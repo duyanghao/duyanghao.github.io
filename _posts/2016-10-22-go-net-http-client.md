@@ -4,8 +4,7 @@ title: go net/http Client使用
 date: 2016-10-22 14:29:30
 category: 技术
 tags: Go
-keywords:
-description:
+excerpt: 总结了工作中net/http Client的使用
 ---
 
 go net/http Client使用总结
