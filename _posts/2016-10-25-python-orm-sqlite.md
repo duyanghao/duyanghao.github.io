@@ -656,7 +656,7 @@ layout: page
 </div>
 ```
 
-```js
+```python
 <html> 
 <head> 
 <script language="javascript"> 
