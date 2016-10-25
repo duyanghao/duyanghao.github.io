@@ -1,59 +1,16 @@
-permalink: /:year/:month/:day/:title.html
-paginate: 10
-
+future: true
+permalink: /:title/
+url: http://duyanghao.github.io
+name: 阿杜
+author: duyanghao
+qq: 
+email: 1294057873@qq.com
+duoshuo: duyanghao
+beian: 
+cnzz: 
+weibo: duyanghao
+github: duyanghao
+paginate: 20
 highlighter: rouge
 truncate: true
-# Markdown settings
-# replace redcarpet to kramdown,
-# although redcarpet can auto highlight code, the lack of header-id make the catalog impossible, so I switch to kramdown
-# document: http://jekyllrb.com/docs/configuration/#kramdown
-markdown: kramdown
-kramdown:
-  input: GFM        # use Github Flavored Markdown !important
-   
-
-
-# 作者信息
-author: 
-  name: duyanghao
-  email: 1294057873@qq.com
-  #duoshuo: duyanghao
-  link: http://duyanghao.github.io/
-  weibo: http://weibo.com/6049751054/profile?rightmod=1&wvr=6&mod=personinfo&is_all=1
-  github: http://github.com/duyanghao
-  music: 
-  linkedin: 
-
-# comments
-duoshuo: duyanghao
-
-# 站点信息
-title: 阿杜的博客
-description: My personal blog
-url: http://duyanghao.github.io/
-rss_url: /pages/atom.xml
-
-# gavatar头像及Favicon
-gavatar: /public/img/github.jpg
-favicon: /public/img/github.jpg
-
-# google analytics 设置
-ga:
-  id: UA-56673760-1
-  url: auto
-
-# 主题设置，自动激活某个标签
-active: 技术
-
-# 首页除了最新文章外显示分类
-cates: 
-  - Go
-  - Docker-registry
-
-# 中文本地化
-locals:
-  tags: 标签
-  about: 关于
-  newest: 最新文章
-  archive: 归档
-  comment: 留言
+about: "阿杜(duyanghao)"
