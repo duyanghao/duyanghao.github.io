@@ -523,65 +523,6 @@ blockquote p{margin:0;padding:.5em 0;}
 .content{font-size:16px;line-height:24px;}
 ```
 
-```html
----
-title: 首页
-layout: page
----
-
-<ul class="listing">
-{% for post in paginator.posts %}
-  {% capture y %}{{post.date | date:"%Y"}}{% endcapture %}
-  {% if year != y %}
-    {% assign year = y %}
-    <li class="listing-seperator">{{ y }}</li>
-  {% endif %}
-  <li class="listing-item">
-    <time datetime="{{ post.date | date:"%Y-%m-%d" }}">{{ post.date | date:"%Y-%m-%d" }}</time>
-    <a href="{{ post.url }}" title="{{ post.title }}">{{ post.title }}</a>
-    <p>   
-      {{ post.excerpt | remove: '<p>' | remove: '</p>' }} &raquo;
-          <a href="{{ post.url }}">read more...</a>
-          </p>
-  </li>
-{% endfor %}
-</ul>
-
-<div id="post-pagination" class="paginator">
-
-  {% if paginator.previous_page %}
-    {% if paginator.previous_page == 1 %}
-    <a href="/"><前页</a>
-    {% else %}
-    <a href="/page{{paginator.previous_page}}">&lt;前页</a>
-    {% endif %}
-  {% else %}
-    <span class="previous disabled">&lt;前页</span>
-  {% endif %}
-
-      {% if paginator.page == 1 %}
-      <span class="current-page">1</span>
-      {% else %}
-      <a href="/">1</a>
-      {% endif %}
-
-    {% for count in (2..paginator.total_pages) %}
-      {% if count == paginator.page %}
-      <span class="current-page">{{count}}</span>
-      {% else %}
-      <a href="/page{{count}}">{{count}}</a>
-      {% endif %}
-    {% endfor %}
-
-  {% if paginator.next_page %}
-    <a class="next" href="/page{{paginator.next_page}}">后页&gt;</a>
-  {% else %}
-    <span class="next disabled" >后页&gt;</span>
-  {% endif %}
-  (共{{ paginator.total_posts }}篇)
-</div>
-```
-
 ```js
 var data="  
 {  
@@ -653,4 +594,64 @@ titlename: 关于
 
 <h4>关于模板</h4>
 <p style=font-size:12px>模板来源于<a href="https://github.com/lay1010/lay1010.github.io">PainterLin.com</a></p>
+```
+
+
+```html
+---
+title: 首页
+layout: page
+---
+
+<ul class="listing">
+{% for post in paginator.posts %}
+  {% capture y %}{{post.date | date:"%Y"}}{% endcapture %}
+  {% if year != y %}
+    {% assign year = y %}
+    <li class="listing-seperator">{{ y }}</li>
+  {% endif %}
+  <li class="listing-item">
+    <time datetime="{{ post.date | date:"%Y-%m-%d" }}">{{ post.date | date:"%Y-%m-%d" }}</time>
+    <a href="{{ post.url }}" title="{{ post.title }}">{{ post.title }}</a>
+    <p>   
+      {{ post.excerpt | remove: '<p>' | remove: '</p>' }} &raquo;
+          <a href="{{ post.url }}">read more...</a>
+          </p>
+  </li>
+{% endfor %}
+</ul>
+
+<div id="post-pagination" class="paginator">
+
+  {% if paginator.previous_page %}
+    {% if paginator.previous_page == 1 %}
+    <a href="/"><前页</a>
+    {% else %}
+    <a href="/page{{paginator.previous_page}}">&lt;前页</a>
+    {% endif %}
+  {% else %}
+    <span class="previous disabled">&lt;前页</span>
+  {% endif %}
+
+      {% if paginator.page == 1 %}
+      <span class="current-page">1</span>
+      {% else %}
+      <a href="/">1</a>
+      {% endif %}
+
+    {% for count in (2..paginator.total_pages) %}
+      {% if count == paginator.page %}
+      <span class="current-page">{{count}}</span>
+      {% else %}
+      <a href="/page{{count}}">{{count}}</a>
+      {% endif %}
+    {% endfor %}
+
+  {% if paginator.next_page %}
+    <a class="next" href="/page{{paginator.next_page}}">后页&gt;</a>
+  {% else %}
+    <span class="next disabled" >后页&gt;</span>
+  {% endif %}
+  (共{{ paginator.total_posts }}篇)
+</div>
 ```
