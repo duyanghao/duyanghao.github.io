@@ -1,46 +1,25 @@
 ---
-title: 关于
-layout: page
-comments: no
+layout: page_title
+title: <i class="fa fa-user fa-lg"></i>
+titlename: 关于
 ---
+<h3>关于博客</h3>
+<p style=font-size:18px><B>duyanghao.github.io</B>是我的个人博客。用于学习、技术、生活等总结沉淀。</p>
 
----
-### 自我介绍
+<h3>关于作者</h3>
+<p style=font-size:18px>一个对生活充满激情，并希望有所成就的年轻人！</p>
 
-{{ site.about }}
+<center><img src="/public/img/love.jpg" style="width:100%"></center>
 
-专业打杂程序员，全栈工程师，擅长打杂，吹牛逼...
+<hr>
+<a href="{{ site.weibo }}" target="_blank">
+  <i class="fa fa-weibo fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="{{ site.github }}" target="_blank">
+  <i class="fa fa-github fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="mailto:{{ site.email }}">
+  <i class="fa fa-envelope-o fa-lg" style="color:#16a095;"></i>
+</a>
+<hr>
 
-关注 Linux kernel、Docker/Kubernetes、Networking、Distributed Storage...
-
-
----
-### 经历
-
-* 2004.09 ~ 2011.04 游学于武汉某985职业技术学院 —— 关山口职业技术学院
-
-* 2011.04 ~ Now     在深圳某国内前三互联网公司，从事搬砖、打杂等相关工作
-
-
-----
-
-### 联系方式：
-
-{% if site.qq %}
-ＱＱ：[{{ site.qq }}](tencent://message/?uin={{ site.qq }})
-{% endif %}
-网站：[{{ site.name }}]({{ site.url }})
-
-邮箱：[{{ site.email }}](mailto:{{ site.email }})
-
-GitHub：[http://github.com/{{ site.github }}](http://github.com/{{ site.github }})
-
-Twitter: [hustcat](https://twitter.com/hustcat)
-
-@cnblogs：[hustcat](http://hustcat.cnblogs.com)
-
-----
-
-[![新浪微博](http://service.t.sina.com.cn/widget/qmd/1831504255/02345c5a/1.png)](http://weibo.com/u/1831504255?s=6uyXnP)
-
-----
