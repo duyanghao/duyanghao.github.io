@@ -70,7 +70,7 @@ final
 ```
 
 ```bash
-#!/bin/sh 
+#!/bin/bash 
 # list a content summary of a number of RPM packages 
 # USAGE: showrpm rpmfile1 rpmfile2 ... 
 # EXAMPLE: showrpm /cdrom/RedHat/RPMS/*.rpm 
@@ -523,7 +523,7 @@ blockquote p{margin:0;padding:.5em 0;}
 .content{font-size:16px;line-height:24px;}
 ```
 
-```html
+```css
 ---
 title: 首页
 layout: page
