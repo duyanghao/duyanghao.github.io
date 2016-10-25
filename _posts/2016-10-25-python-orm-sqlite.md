@@ -523,7 +523,7 @@ blockquote p{margin:0;padding:.5em 0;}
 .content{font-size:16px;line-height:24px;}
 ```
 
-```css
+```js
 ---
 title: 首页
 layout: page
@@ -614,4 +614,43 @@ $.getJSON("http://www.exp99.com/",{param:"USER_GUID"},function(data){
     console.log("name:"+item.name+",value:"+item.value);  
   });  
 }); 
+```
+
+```html
+---
+layout: page_title
+title: <i class="fa fa-user fa-lg"></i>
+titlename: 关于
+---
+<h3>关于博客</h3>
+<p style=font-size:18px><B>duyanghao.github.io</B>是我的个人博客。用于学习、技术、生活等总结沉淀。</p>
+
+<h3>关于作者</h3>
+<p style=font-size:18px>一个对生活充满激情，并希望有所成就的年轻人！</p>
+
+<center><img src="/public/img/love.jpg" style="width:100%"></center>
+
+<hr>
+<a href="{{ site.author.linkedin }}">
+  <i class="fa fa-linkedin fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="{{ site.author.weibo }}" target="_blank">
+  <i class="fa fa-weibo fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="{{ site.author.github }}" target="_blank">
+  <i class="fa fa-github fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="/pages/atom.xml" target="_blank">
+  <i class="fa fa-rss fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="mailto:{{ site.author.email }}">
+  <i class="fa fa-envelope-o fa-lg" style="color:#16a095;"></i>
+</a>
+<a href="{{ site.author.music }}">
+  <i class="fa fa-music fa-lg" style="color:#16a095;"></i>
+</a>
+<hr>
+
+<h4>关于模板</h4>
+<p style=font-size:12px>模板来源于<a href="https://github.com/lay1010/lay1010.github.io">PainterLin.com</a></p>
 ```
