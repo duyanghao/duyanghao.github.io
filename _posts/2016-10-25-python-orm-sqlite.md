@@ -597,7 +597,7 @@ titlename: 关于
 ```
 
 
-```html
+```
 ---
 title: 首页
 layout: page
