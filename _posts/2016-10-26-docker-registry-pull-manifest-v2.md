@@ -866,6 +866,7 @@ Status: Downloaded newer image for xxxx/duyanghao/busybox:v0
 ```
 
 下载各layer文件
+
 ```go
     var descriptors []xfer.DownloadDescriptor
 
@@ -1056,6 +1057,7 @@ func (ldm *LayerDownloadManager) Download(ctx context.Context, initialRootFS ima
 ```
 
 makeDownloadFunc函数
+
 ```go
 // makeDownloadFunc returns a function that performs the layer download and
 // registration. If parentDownload is non-nil, it waits for that download to
