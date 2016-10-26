@@ -294,6 +294,33 @@ func (ms *manifests) Get(ctx context.Context, dgst digest.Digest, options ...dis
 
 ```
 < Content-Type: application/vnd.docker.distribution.manifest.v2+json
+
+{
+   "schemaVersion": 2,
+   "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+   "config": {
+      "mediaType": "application/octet-stream",
+      "size": 1756,
+      "digest": "sha256:2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042"
+   },
+   "layers": [
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 224153958,
+         "digest": "sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 32,
+         "digest": "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 10289,
+         "digest": "sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7"
+      }
+   ]
+}
 ```
 
 转到UnmarshalManifest函数
@@ -472,3 +499,309 @@ func (p *v2Puller) pullSchema2(ctx context.Context, ref reference.Named, mfst *s
 }
 ```
 
+docker pull逻辑：
+
+* step1：由镜像名请求Manifest Schema v2
+
+* step2：解析Manifest获取镜像Configuration
+
+* step3：下载各Layer gzip压缩文件
+
+* step4：验证Configuration中的RootFS.DiffIDs是否与下载（解压后）hash相同
+
+解析Manifest获取镜像Configuration
+
+```go
+func (p *v2Puller) pullSchema2ImageConfig(ctx context.Context, dgst digest.Digest) (configJSON []byte, err error) {
+    blobs := p.repo.Blobs(ctx)
+    configJSON, err = blobs.Get(ctx, dgst)
+    if err != nil {
+        return nil, err
+    }
+
+    // Verify image config digest
+    verifier, err := digest.NewDigestVerifier(dgst)
+    if err != nil {
+        return nil, err
+    }
+    if _, err := verifier.Write(configJSON); err != nil {
+        return nil, err
+    }
+    if !verifier.Verified() {
+        err := fmt.Errorf("image config verification failed for digest %s", dgst)
+        logrus.Error(err)
+        return nil, err
+    }
+
+    return configJSON, nil
+}
+// NewDigestVerifier returns a verifier that compares the written bytes
+// against a passed in digest.
+func NewDigestVerifier(d Digest) (Verifier, error) {
+    if err := d.Validate(); err != nil {
+        return nil, err
+    }
+
+    return hashVerifier{
+        hash:   d.Algorithm().Hash(),
+        digest: d,
+    }, nil
+}
+type hashVerifier struct {
+    digest Digest
+    hash   hash.Hash
+}
+
+func (hv hashVerifier) Write(p []byte) (n int, err error) {
+    return hv.hash.Write(p)
+}
+
+func (hv hashVerifier) Verified() bool {
+    return hv.digest == NewDigest(hv.digest.Algorithm(), hv.hash)
+}
+type Digest string
+
+// NewDigest returns a Digest from alg and a hash.Hash object.
+func NewDigest(alg Algorithm, h hash.Hash) Digest {
+    return NewDigestFromBytes(alg, h.Sum(nil))
+}
+
+// NewDigestFromBytes returns a new digest from the byte contents of p.
+// Typically, this can come from hash.Hash.Sum(...) or xxx.SumXXX(...)
+// functions. This is also useful for rebuilding digests from binary
+// serializations.
+func NewDigestFromBytes(alg Algorithm, p []byte) Digest {
+    return Digest(fmt.Sprintf("%s:%x", alg, p))
+}
+func receiveConfig(configChan <-chan []byte, errChan <-chan error) ([]byte, image.Image, error) {
+    select {
+    case configJSON := <-configChan:
+        var unmarshalledConfig image.Image
+        if err := json.Unmarshal(configJSON, &unmarshalledConfig); err != nil {
+            return nil, image.Image{}, err
+        }
+        return configJSON, unmarshalledConfig, nil
+    case err := <-errChan:
+        return nil, image.Image{}, err
+        // Don't need a case for ctx.Done in the select because cancellation
+        // will trigger an error in p.pullSchema2ImageConfig.
+    }
+}
+// Image stores the image configuration
+type Image struct {
+    V1Image
+    Parent  ID        `json:"parent,omitempty"`
+    RootFS  *RootFS   `json:"rootfs,omitempty"`
+    History []History `json:"history,omitempty"`
+
+    // rawJSON caches the immutable JSON associated with this image.
+    rawJSON []byte
+
+    // computedID is the ID computed from the hash of the image config.
+    // Not to be confused with the legacy V1 ID in V1Image.
+    computedID ID
+}
+// V1Image stores the V1 image configuration.
+type V1Image struct {
+    // ID a unique 64 character identifier of the image
+    ID string `json:"id,omitempty"`
+    // Parent id of the image
+    Parent string `json:"parent,omitempty"`
+    // Comment user added comment
+    Comment string `json:"comment,omitempty"`
+    // Created timestamp when image was created
+    Created time.Time `json:"created"`
+    // Container is the id of the container used to commit
+    Container string `json:"container,omitempty"`
+    // ContainerConfig is the configuration of the container that is committed into the image
+    ContainerConfig container.Config `json:"container_config,omitempty"`
+    // DockerVersion specifies version on which image is built
+    DockerVersion string `json:"docker_version,omitempty"`
+    // Author of the image
+    Author string `json:"author,omitempty"`
+    // Config is the configuration of the container received from the client
+    Config *container.Config `json:"config,omitempty"`
+    // Architecture is the hardware that the image is build and runs on
+    Architecture string `json:"architecture,omitempty"`
+    // OS is the operating system used to build and run the image
+    OS string `json:"os,omitempty"`
+    // Size is the total size of the image including all layers it is composed of
+    Size int64 `json:",omitempty"`
+}
+// History stores build commands that were used to create an image
+type History struct {
+    // Created timestamp for build point
+    Created time.Time `json:"created"`
+    // Author of the build point
+    Author string `json:"author,omitempty"`
+    // CreatedBy keeps the Dockerfile command used while building image.
+    CreatedBy string `json:"created_by,omitempty"`
+    // Comment is custom message set by the user when creating the image.
+    Comment string `json:"comment,omitempty"`
+    // EmptyLayer is set to true if this history item did not generate a
+    // layer. Otherwise, the history item is associated with the next
+    // layer in the RootFS section.
+    EmptyLayer bool `json:"empty_layer,omitempty"`
+}
+```
+
+镜像configuration文件存储位置：
+
+
+>/var/lib/docker/image/aufs/imagedb/content/sha256/2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+
+```go
+imageID, err = p.config.ImageStore.Create(configJSON)
+```
+
+configuration写入操作
+
+```go
+// Store is an interface for creating and accessing images
+type Store interface {
+    Create(config []byte) (ID, error)
+    Get(id ID) (*Image, error)
+    Delete(id ID) ([]layer.Metadata, error)
+    Search(partialID string) (ID, error)
+    SetParent(id ID, parent ID) error
+    GetParent(id ID) (ID, error)
+    Children(id ID) []ID
+    Map() map[ID]*Image
+    Heads() map[ID]*Image
+}
+type store struct {
+    sync.Mutex
+    ls        LayerGetReleaser
+    images    map[ID]*imageMeta
+    fs        StoreBackend
+    digestSet *digest.Set
+}
+func (is *store) Create(config []byte) (ID, error) {
+    var img Image
+    err := json.Unmarshal(config, &img)
+    if err != nil {
+        return "", err
+    }
+
+    // Must reject any config that references diffIDs from the history
+    // which aren't among the rootfs layers.
+    rootFSLayers := make(map[layer.DiffID]struct{})
+    for _, diffID := range img.RootFS.DiffIDs {
+        rootFSLayers[diffID] = struct{}{}
+    }
+
+    layerCounter := 0
+    for _, h := range img.History {
+        if !h.EmptyLayer {
+            layerCounter++
+        }
+    }
+    if layerCounter > len(img.RootFS.DiffIDs) {
+        return "", errors.New("too many non-empty layers in History section")
+    }
+
+    dgst, err := is.fs.Set(config)
+    if err != nil {
+        return "", err
+    }
+    imageID := ID(dgst)
+
+    is.Lock()
+    defer is.Unlock()
+
+    if _, exists := is.images[imageID]; exists {
+        return imageID, nil
+    }
+
+    layerID := img.RootFS.ChainID()
+
+    var l layer.Layer
+    if layerID != "" {
+        l, err = is.ls.Get(layerID)
+        if err != nil {
+            return "", err
+        }
+    }
+
+    imageMeta := &imageMeta{
+        layer:    l,
+        children: make(map[ID]struct{}),
+    }
+
+    is.images[imageID] = imageMeta
+    if err := is.digestSet.Add(digest.Digest(imageID)); err != nil {
+        delete(is.images, imageID)
+        return "", err
+    }
+
+    return imageID, nil
+}
+// Set stores content under a given ID.
+func (s *fs) Set(data []byte) (ID, error) {
+    s.Lock()
+    defer s.Unlock()
+
+    if len(data) == 0 {
+        return "", fmt.Errorf("Invalid empty data")
+    }
+
+    id := ID(digest.FromBytes(data))
+    filePath := s.contentFile(id)
+    tempFilePath := s.contentFile(id) + ".tmp"
+    if err := ioutil.WriteFile(tempFilePath, data, 0600); err != nil {
+        return "", err
+    }
+    if err := os.Rename(tempFilePath, filePath); err != nil {
+        return "", err
+    }
+
+    return id, nil
+}
+// FromBytes digests the input and returns a Digest.
+func FromBytes(p []byte) Digest {
+    return Canonical.FromBytes(p)
+}
+// supported digest types
+const (
+    SHA256 Algorithm = "sha256" // sha256 with hex encoding
+    SHA384 Algorithm = "sha384" // sha384 with hex encoding
+    SHA512 Algorithm = "sha512" // sha512 with hex encoding
+
+    // Canonical is the primary digest algorithm used with the distribution
+    // project. Other digests may be used but this one is the primary storage
+    // digest.
+    Canonical = SHA256
+)
+// FromBytes digests the input and returns a Digest.
+func (a Algorithm) FromBytes(p []byte) Digest {
+    digester := a.New()
+
+    if _, err := digester.Hash().Write(p); err != nil {
+        // Writes to a Hash should never fail. None of the existing
+        // hash implementations in the stdlib or hashes vendored
+        // here can return errors from Write. Having a panic in this
+        // condition instead of having FromBytes return an error value
+        // avoids unnecessary error handling paths in all callers.
+        panic("write to hash function returned error: " + err.Error())
+    }
+
+    return digester.Digest()
+}
+// Digester calculates the digest of written data. Writes should go directly
+// to the return value of Hash, while calling Digest will return the current
+// value of the digest.
+type Digester interface {
+    Hash() hash.Hash // provides direct access to underlying hash instance.
+    Digest() Digest
+}
+
+// digester provides a simple digester definition that embeds a hasher.
+type digester struct {
+    alg  Algorithm
+    hash hash.Hash
+}
+func (s *fs) contentFile(id ID) string {
+    dgst := digest.Digest(id)
+    return filepath.Join(s.root, contentDirName, string(dgst.Algorithm()), dgst.Hex())
+}
+```
