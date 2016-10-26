@@ -1,17 +1,18 @@
 ---
 layout: post
-title: go mysql 使用
+title: docker pull分析
 date: 2016-10-26 17:36:11
 category: 技术
 tags: Docker-registry Docker Docker-Manifest-v2
 excerpt: Image Manifest Version 2, Schema 2
 ---
 
-总结`docker pull`流程中`Image Manifest Version 2, Schema 2`原理（以[docker 1.11.0](https://github.com/docker/docker/tree/v1.11.0)和[registry v2 2.3.0](https://github.com/docker/distribution/tree/v2.3.0)为分析版本）
+总结`docker pull`流程中`Image Manifest Version 2, Schema 2`原理（以[docker 1.11.0](https://github.com/docker/docker/tree/v1.11.0)为分析版本）
 
 ### docker pull
 
 入口Pull
+
 ```go
 func (p *v2Puller) Pull(ctx context.Context, ref reference.Named) (err error) {
     // TODO(tiborvass): was ReceiveTimeout
@@ -39,6 +40,7 @@ func (p *v2Puller) Pull(ctx context.Context, ref reference.Named) (err error) {
 ```
 
 调用pullV2Repository
+
 ```go
 func (p *v2Puller) pullV2Repository(ctx context.Context, ref reference.Named) (err error) {
     var layersDownloaded bool
@@ -285,6 +287,7 @@ func (ms *manifests) Get(ctx context.Context, dgst digest.Digest, options ...dis
 ```
 
 如下：
+
 ```
 > Accept: application/vnd.docker.distribution.manifest.v2+json
 ```
