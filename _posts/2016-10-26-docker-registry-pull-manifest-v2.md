@@ -7,7 +7,7 @@ tags: Docker-registry Docker Docker-Manifest-v2
 excerpt: Image Manifest Version 2, Schema 2
 ---
 
-总结`docker pull`流程中`Image Manifest Version 2, Schema 2`原理（以[docker 1.11.0](https://github.com/docker/docker/tree/v1.11.0)为分析版本）
+总结`docker pull`流程中[`Image Manifest Version 2, Schema 2`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)原理（以[docker 1.11.0](https://github.com/docker/docker/tree/v1.11.0)为分析版本）
 
 ### docker pull
 
@@ -1367,3 +1367,13 @@ func createDownloadFile() (*os.File, error) {
     return ioutil.TempFile("", "GetImageBlob")
 }
 ```
+
+
+
+
+### 参考
+
+[Manifest Schema v2 design](https://gist.github.com/aaronlehmann/b42a2eaf633fc949f93b#removed-fields)
+[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)
+[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)
+[issues/22225](https://github.com/docker/docker/issues/22225)
