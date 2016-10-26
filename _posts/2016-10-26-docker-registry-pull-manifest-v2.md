@@ -1373,10 +1373,10 @@ func createDownloadFile() (*os.File, error) {
 
 ### 参考
 
-[Manifest Schema v2 design](https://gist.github.com/aaronlehmann/b42a2eaf633fc949f93b#removed-fields)
+* [Manifest Schema v2 design](https://gist.github.com/aaronlehmann/b42a2eaf633fc949f93b#removed-fields)
 
-[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)
+* [Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)
 
-[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)
+* [Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)
 
-[issues/22225](https://github.com/docker/docker/issues/22225)
+* [issues/22225](https://github.com/docker/docker/issues/22225)
