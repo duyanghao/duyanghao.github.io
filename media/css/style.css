@@ -62,7 +62,7 @@ embed,object,iframe{display:block;margin:4px auto;}
 .gist{font-size: 12px;line-height:1.6;}
 
 footer{
-text-align:left;
+text-align:center;
 display:block;
 border-top: 1px dashed #CCC;
 }
@@ -132,5 +132,9 @@ background: #ff0000;
 .paginator a:hover{
 color: white;
 background: #83BF73;
+}
+
+.center {
+text-align: left;
 }
 
