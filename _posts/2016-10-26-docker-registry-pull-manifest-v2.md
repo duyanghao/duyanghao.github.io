@@ -1214,3 +1214,156 @@ func (ldm *LayerDownloadManager) makeDownloadFunc(descriptor DownloadDescriptor,
 }
 ```
 
+Download
+
+```go
+downloadReader, size, err = descriptor.Download(d.Transfer.Context(), progressOutput)
+
+func (ld *v2LayerDescriptor) Download(ctx context.Context, progressOutput progress.Output) (io.ReadCloser, int64, error) {
+    logrus.Debugf("pulling blob %q", ld.digest)
+
+    var (
+        err    error
+        offset int64
+    )
+
+    if ld.tmpFile == nil {
+        ld.tmpFile, err = createDownloadFile()
+        if err != nil {
+            return nil, 0, xfer.DoNotRetry{Err: err}
+        }
+    } else {
+        offset, err = ld.tmpFile.Seek(0, os.SEEK_END)
+        if err != nil {
+            logrus.Debugf("error seeking to end of download file: %v", err)
+            offset = 0
+
+            ld.tmpFile.Close()
+            if err := os.Remove(ld.tmpFile.Name()); err != nil {
+                logrus.Errorf("Failed to remove temp file: %s", ld.tmpFile.Name())
+            }
+            ld.tmpFile, err = createDownloadFile()
+            if err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+        } else if offset != 0 {
+            logrus.Debugf("attempting to resume download of %q from %d bytes", ld.digest, offset)
+        }
+    }
+
+    tmpFile := ld.tmpFile
+    blobs := ld.repo.Blobs(ctx)
+
+    layerDownload, err := blobs.Open(ctx, ld.digest)
+    if err != nil {
+        logrus.Errorf("Error initiating layer download: %v", err)
+        if err == distribution.ErrBlobUnknown {
+            return nil, 0, xfer.DoNotRetry{Err: err}
+        }
+        return nil, 0, retryOnError(err)
+    }
+
+    if offset != 0 {
+        _, err := layerDownload.Seek(offset, os.SEEK_SET)
+        if err != nil {
+            if err := ld.truncateDownloadFile(); err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+            return nil, 0, err
+        }
+    }
+    size, err := layerDownload.Seek(0, os.SEEK_END)
+    if err != nil {
+        // Seek failed, perhaps because there was no Content-Length
+        // header. This shouldn't fail the download, because we can
+        // still continue without a progress bar.
+        size = 0
+    } else {
+        if size != 0 && offset > size {
+            logrus.Debugf("Partial download is larger than full blob. Starting over")
+            offset = 0
+            if err := ld.truncateDownloadFile(); err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+        }
+
+        // Restore the seek offset either at the beginning of the
+        // stream, or just after the last byte we have from previous
+        // attempts.
+        _, err = layerDownload.Seek(offset, os.SEEK_SET)
+        if err != nil {
+            return nil, 0, err
+        }
+    }
+
+    reader := progress.NewProgressReader(ioutils.NewCancelReadCloser(ctx, layerDownload), progressOutput, size-offset, ld.ID(), "Downloading")
+    defer reader.Close()
+
+    if ld.verifier == nil {
+        ld.verifier, err = digest.NewDigestVerifier(ld.digest)
+        if err != nil {
+            return nil, 0, xfer.DoNotRetry{Err: err}
+        }
+    }
+
+    _, err = io.Copy(tmpFile, io.TeeReader(reader, ld.verifier))
+    if err != nil {
+        if err == transport.ErrWrongCodeForByteRange {
+            if err := ld.truncateDownloadFile(); err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+            return nil, 0, err
+        }
+        return nil, 0, retryOnError(err)
+    }
+
+    progress.Update(progressOutput, ld.ID(), "Verifying Checksum")
+
+    if !ld.verifier.Verified() {
+        err = fmt.Errorf("filesystem layer verification failed for digest %s", ld.digest)
+        logrus.Error(err)
+
+        // Allow a retry if this digest verification error happened
+        // after a resumed download.
+        if offset != 0 {
+            if err := ld.truncateDownloadFile(); err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+
+            return nil, 0, err
+        }
+        return nil, 0, xfer.DoNotRetry{Err: err}
+    }
+
+    progress.Update(progressOutput, ld.ID(), "Download complete")
+
+    logrus.Debugf("Downloaded %s to tempfile %s", ld.ID(), tmpFile.Name())
+
+    _, err = tmpFile.Seek(0, os.SEEK_SET)
+    if err != nil {
+        tmpFile.Close()
+        if err := os.Remove(tmpFile.Name()); err != nil {
+            logrus.Errorf("Failed to remove temp file: %s", tmpFile.Name())
+        }
+        ld.tmpFile = nil
+        ld.verifier = nil
+        return nil, 0, xfer.DoNotRetry{Err: err}
+    }
+
+    // hand off the temporary file to the download manager, so it will only
+    // be closed once
+    ld.tmpFile = nil
+
+    return ioutils.NewReadCloserWrapper(tmpFile, func() error {
+        tmpFile.Close()
+        err := os.RemoveAll(tmpFile.Name())
+        if err != nil {
+            logrus.Errorf("Failed to remove temp file: %s", tmpFile.Name())
+        }
+        return err
+    }), size, nil
+}
+func createDownloadFile() (*os.File, error) {
+    return ioutil.TempFile("", "GetImageBlob")
+}
+```
