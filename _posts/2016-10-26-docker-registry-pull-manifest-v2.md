@@ -805,3 +805,63 @@ func (s *fs) contentFile(id ID) string {
     return filepath.Join(s.root, contentDirName, string(dgst.Algorithm()), dgst.Hex())
 }
 ```
+
+获取镜像`configuration`后，进行验证：
+
+* Manifest中的`sha256 hash`与对configuration内容`sha256 hash`进行对比(要相同)
+
+* configuration文件中`History`数目与`RootFS.DiffIDs`数据进行对比（要相同）
+
+验证成功后将configuration内容写入文件
+
+manifestDigest生成
+
+```go
+manifestDigest, err = schema2ManifestDigest(ref, mfst)
+
+// schema2ManifestDigest computes the manifest digest, and, if pulling by
+// digest, ensures that it matches the requested digest.
+func schema2ManifestDigest(ref reference.Named, mfst distribution.Manifest) (digest.Digest, error) {
+    _, canonical, err := mfst.Payload()
+    if err != nil {
+        return "", err
+    }
+
+    // If pull by digest, then verify the manifest digest.
+    if digested, isDigested := ref.(reference.Canonical); isDigested {
+        verifier, err := digest.NewDigestVerifier(digested.Digest())
+        if err != nil {
+            return "", err
+        }
+        if _, err := verifier.Write(canonical); err != nil {
+            return "", err
+        }
+        if !verifier.Verified() {
+            err := fmt.Errorf("manifest verification failed for digest %s", digested.Digest())
+            logrus.Error(err)
+            return "", err
+        }
+        return digested.Digest(), nil
+    }
+
+    return digest.FromBytes(canonical), nil
+}
+// Payload returns the raw content of the manifest. The contents can be used to
+// calculate the content identifier.
+func (m DeserializedManifest) Payload() (string, []byte, error) {
+    return m.MediaType, m.canonical, nil
+}
+```
+
+对Manifest v2内容进行sha256 hash得到manifestDigest(**d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc**)
+
+```sh
+[root@CentOS-64-duyanghao ~]# docker pull xxxx/duyanghao/busybox:v0
+v0: Pulling from duyanghao/busybox
+c0a04912aa5a: Pull complete 
+a3ed95caeb02: Pull complete 
+93eea0ce9921: Pull complete 
+Digest: sha256:d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc
+Status: Downloaded newer image for xxxx/duyanghao/busybox:v0
+```
+
