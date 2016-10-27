@@ -2145,6 +2145,24 @@ func (c *Client) SendFile(serviceMethod string, data io.Reader, ret interface{})
     }
     return nil
 }
+type graphDriverResponse struct {
+    Err      string            `json:",omitempty"`
+    Dir      string            `json:",omitempty"`
+    Exists   bool              `json:",omitempty"`
+    Status   [][2]string       `json:",omitempty"`
+    Changes  []archive.Change  `json:",omitempty"`
+    Size     int64             `json:",omitempty"`
+    Metadata map[string]string `json:",omitempty"`
+}
+// Change represents a change, it wraps the change type and path.
+// It describes changes of the files in the path respect to the
+// parent layers. The change could be modify, add, delete.
+// This is used for layer diff.
+type Change struct {
+    Path string
+    Kind ChangeType
+}
+
 
 ```
 
@@ -2415,6 +2433,266 @@ This table summarizes the different types of IDs involved and how they are calcu
 
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/ID_definitions_and_calculations.png)
 
+**数据文件内容如何写入？**
+
+```go
+func (ls *layerStore) applyTar(tx MetadataTransaction, ts io.Reader, parent string, layer *roLayer) error {
+    ...
+    applySize, err := ls.driver.ApplyDiff(layer.cacheID, parent, archive.Reader(rdr))
+    ...
+}
+
+// ApplyDiff extracts the changeset from the given diff into the
+// layer with the specified id and parent, returning the size of the
+// new layer in bytes.
+func (a *Driver) ApplyDiff(id, parent string, diff archive.Reader) (size int64, err error) {
+    // AUFS doesn't need the parent id to apply the diff.
+    if err = a.applyDiff(id, diff); err != nil {
+        return
+    }
+
+    return a.DiffSize(id, parent)
+}
+func (a *Driver) applyDiff(id string, diff archive.Reader) error {
+    return chrootarchive.UntarUncompressed(diff, path.Join(a.rootPath(), "diff", id), &archive.TarOptions{
+        UIDMaps: a.uidMaps,
+        GIDMaps: a.gidMaps,
+    })
+}
+// UntarUncompressed reads a stream of bytes from `archive`, parses it as a tar archive,
+// and unpacks it into the directory at `dest`.
+// The archive must be an uncompressed stream.
+func UntarUncompressed(tarArchive io.Reader, dest string, options *archive.TarOptions) error {
+    return untarHandler(tarArchive, dest, options, false)
+}
+// Handler for teasing out the automatic decompression
+func untarHandler(tarArchive io.Reader, dest string, options *archive.TarOptions, decompress bool) error {
+
+    if tarArchive == nil {
+        return fmt.Errorf("Empty archive")
+    }
+    if options == nil {
+        options = &archive.TarOptions{}
+    }
+    if options.ExcludePatterns == nil {
+        options.ExcludePatterns = []string{}
+    }
+
+    rootUID, rootGID, err := idtools.GetRootUIDGID(options.UIDMaps, options.GIDMaps)
+    if err != nil {
+        return err
+    }
+
+    dest = filepath.Clean(dest)
+    if _, err := os.Stat(dest); os.IsNotExist(err) {
+        if err := idtools.MkdirAllNewAs(dest, 0755, rootUID, rootGID); err != nil {
+            return err
+        }
+    }
+
+    r := ioutil.NopCloser(tarArchive)
+    if decompress {
+        decompressedArchive, err := archive.DecompressStream(tarArchive)
+        if err != nil {
+            return err
+        }
+        defer decompressedArchive.Close()
+        r = decompressedArchive
+    }
+
+    return invokeUnpack(r, dest, options)
+}
+func invokeUnpack(decompressedArchive io.ReadCloser,
+    dest string,
+    options *archive.TarOptions) error {
+    // Windows is different to Linux here because Windows does not support
+    // chroot. Hence there is no point sandboxing a chrooted process to
+    // do the unpack. We call inline instead within the daemon process.
+    return archive.Unpack(decompressedArchive, longpath.AddPrefix(dest), options)
+}
+// Unpack unpacks the decompressedArchive to dest with options.
+func Unpack(decompressedArchive io.Reader, dest string, options *TarOptions) error {
+    tr := tar.NewReader(decompressedArchive)
+    trBuf := pools.BufioReader32KPool.Get(nil)
+    defer pools.BufioReader32KPool.Put(trBuf)
+
+    var dirs []*tar.Header
+    remappedRootUID, remappedRootGID, err := idtools.GetRootUIDGID(options.UIDMaps, options.GIDMaps)
+    if err != nil {
+        return err
+    }
+
+    // Iterate through the files in the archive.
+loop:
+    for {
+        hdr, err := tr.Next()
+        if err == io.EOF {
+            // end of tar archive
+            break
+        }
+        if err != nil {
+            return err
+        }
+
+        // Normalize name, for safety and for a simple is-root check
+        // This keeps "../" as-is, but normalizes "/../" to "/". Or Windows:
+        // This keeps "..\" as-is, but normalizes "\..\" to "\".
+        hdr.Name = filepath.Clean(hdr.Name)
+
+        for _, exclude := range options.ExcludePatterns {
+            if strings.HasPrefix(hdr.Name, exclude) {
+                continue loop
+            }
+        }
+
+        // After calling filepath.Clean(hdr.Name) above, hdr.Name will now be in
+        // the filepath format for the OS on which the daemon is running. Hence
+        // the check for a slash-suffix MUST be done in an OS-agnostic way.
+        if !strings.HasSuffix(hdr.Name, string(os.PathSeparator)) {
+            // Not the root directory, ensure that the parent directory exists
+            parent := filepath.Dir(hdr.Name)
+            parentPath := filepath.Join(dest, parent)
+            if _, err := os.Lstat(parentPath); err != nil && os.IsNotExist(err) {
+                err = idtools.MkdirAllNewAs(parentPath, 0777, remappedRootUID, remappedRootGID)
+                if err != nil {
+                    return err
+                }
+            }
+        }
+
+        path := filepath.Join(dest, hdr.Name)
+        rel, err := filepath.Rel(dest, path)
+        if err != nil {
+            return err
+        }
+        if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+            return breakoutError(fmt.Errorf("%q is outside of %q", hdr.Name, dest))
+        }
+
+        // If path exits we almost always just want to remove and replace it
+        // The only exception is when it is a directory *and* the file from
+        // the layer is also a directory. Then we want to merge them (i.e.
+        // just apply the metadata from the layer).
+        if fi, err := os.Lstat(path); err == nil {
+            if options.NoOverwriteDirNonDir && fi.IsDir() && hdr.Typeflag != tar.TypeDir {
+                // If NoOverwriteDirNonDir is true then we cannot replace
+                // an existing directory with a non-directory from the archive.
+                return fmt.Errorf("cannot overwrite directory %q with non-directory %q", path, dest)
+            }
+
+            if options.NoOverwriteDirNonDir && !fi.IsDir() && hdr.Typeflag == tar.TypeDir {
+                // If NoOverwriteDirNonDir is true then we cannot replace
+                // an existing non-directory with a directory from the archive.
+                return fmt.Errorf("cannot overwrite non-directory %q with directory %q", path, dest)
+            }
+
+            if fi.IsDir() && hdr.Name == "." {
+                continue
+            }
+
+            if !(fi.IsDir() && hdr.Typeflag == tar.TypeDir) {
+                if err := os.RemoveAll(path); err != nil {
+                    return err
+                }
+            }
+        }
+        trBuf.Reset(tr)
+
+        // if the options contain a uid & gid maps, convert header uid/gid
+        // entries using the maps such that lchown sets the proper mapped
+        // uid/gid after writing the file. We only perform this mapping if
+        // the file isn't already owned by the remapped root UID or GID, as
+        // that specific uid/gid has no mapping from container -> host, and
+        // those files already have the proper ownership for inside the
+        // container.
+        if hdr.Uid != remappedRootUID {
+            xUID, err := idtools.ToHost(hdr.Uid, options.UIDMaps)
+            if err != nil {
+                return err
+            }
+            hdr.Uid = xUID
+        }
+        if hdr.Gid != remappedRootGID {
+            xGID, err := idtools.ToHost(hdr.Gid, options.GIDMaps)
+            if err != nil {
+                return err
+            }
+            hdr.Gid = xGID
+        }
+
+        if err := createTarFile(path, dest, hdr, trBuf, !options.NoLchown, options.ChownOpts); err != nil {
+            return err
+        }
+
+        // Directory mtimes must be handled at the end to avoid further
+        // file creation in them to modify the directory mtime
+        if hdr.Typeflag == tar.TypeDir {
+            dirs = append(dirs, hdr)
+        }
+    }
+
+    for _, hdr := range dirs {
+        path := filepath.Join(dest, hdr.Name)
+
+        if err := system.Chtimes(path, hdr.AccessTime, hdr.ModTime); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+// DiffSize calculates the changes between the specified layer
+// and its parent and returns the size in bytes of the changes
+// relative to its base filesystem directory.
+func (d *Driver) DiffSize(id, parent string) (size int64, err error) {
+    rPId, err := d.resolveID(parent)
+    if err != nil {
+        return
+    }
+
+    changes, err := d.Changes(id, rPId)
+    if err != nil {
+        return
+    }
+
+    layerFs, err := d.Get(id, "")
+    if err != nil {
+        return
+    }
+    defer d.Put(id)
+
+    return archive.ChangesSize(layerFs, changes), nil
+}
+// ChangesSize calculates the size in bytes of the provided changes, based on newDir.
+func ChangesSize(newDir string, changes []Change) int64 {
+    var (
+        size int64
+        sf   = make(map[uint64]struct{})
+    )
+    for _, change := range changes {
+        if change.Kind == ChangeModify || change.Kind == ChangeAdd {
+            file := filepath.Join(newDir, change.Path)
+            fileInfo, err := os.Lstat(file)
+            if err != nil {
+                logrus.Errorf("Can not stat %q: %s", file, err)
+                continue
+            }
+
+            if fileInfo != nil && !fileInfo.IsDir() {
+                if hasHardlinks(fileInfo) {
+                    inode := getIno(fileInfo)
+                    if _, ok := sf[inode]; !ok {
+                        size += fileInfo.Size()
+                        sf[inode] = struct{}{}
+                    }
+                } else {
+                    size += fileInfo.Size()
+                }
+            }
+        }
+    }
+    return size
+}
+```
 
 
 ### 参考
