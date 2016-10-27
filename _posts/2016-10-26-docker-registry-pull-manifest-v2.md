@@ -2695,6 +2695,18 @@ func ChangesSize(newDir string, changes []Change) int64 {
     └── metadata.db
 ```
 
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/pull_function_process.png)
+
+Cache mapping from this layer's DiffID to the blobsum
+
+```go
+func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
+    // Cache mapping from this layer's DiffID to the blobsum
+    ld.V2MetadataService.Add(diffID, metadata.V2Metadata{Digest: ld.digest, SourceRepository: ld.repoInfo.FullName()})
+}
+
+```
+
 
 ### 参考
 
