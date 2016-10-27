@@ -2152,26 +2152,6 @@ TarSplitWriter函数写tar-split.json.gz文件
 
 storeLayer函数写diff、size、cache-id文件，如下：
 
-```sh
-/data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
-
-[root@CentOS-64-duyanghao ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a]# ls -l
-总用量 24
--rw-r--r-- 1 root root    64 10月 25 17:30 cache-id
--rw-r--r-- 1 root root    71 10月 25 17:30 diff
--rw-r--r-- 1 root root     9 10月 25 17:30 size
--rw-r--r-- 1 root root 11277 10月 25 17:30 tar-split.json.gz
-
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/diff    
-sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
-
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/cache-id 
-1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
-
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/size 
-364348077
-```
-
 ```go
 func storeLayer(tx MetadataTransaction, layer *roLayer) error {
     if err := tx.SetDiffID(layer.diffID); err != nil {
@@ -2223,25 +2203,6 @@ func (fm *fileMetadataTransaction) TarSplitWriter(compressInput bool) (io.WriteC
 }
 ```
 
-```sh
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
-[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
-
-===================
-[root@CentOS-64-duyanghao ~]# find /* -name 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
-/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
-
-[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
-
-===================
-[root@CentOS-64-duyanghao ~]# find /* -name d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06  
-/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
-[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
-
-[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
-```
-
 /data/docker/image/aufs目录结构
 
 ```sh
@@ -2289,7 +2250,84 @@ func (fm *fileMetadataTransaction) TarSplitWriter(compressInput bool) (io.WriteC
 16 directories, 22 files
 ```
 
+```sh
+======
+[root@CentOS-64-duyanghao aufs]# cat imagedb/content/sha256/2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042 
+{"architecture":"amd64","config":{"Hostname":"xxxx","Domainname":"","User":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["sh"],"ArgsEscaped":true,"Image":"sha256:9e301a362a270bcb6900ebd1aad1b3a9553a9d055830bdf4cab5c2184187a2d1","Volumes":null,"WorkingDir":"","Entrypoint":null,"OnBuild":[],"Labels":{}},"container":"7dfa08cb9cbf2962b2362b1845b6657895685576015a8121652872fea56a7509","container_config":{"Hostname":"xxxx","Domainname":"","User":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["/bin/sh","-c","dd if=/dev/zero of=file bs=10M count=1"],"ArgsEscaped":true,"Image":"sha256:9e301a362a270bcb6900ebd1aad1b3a9553a9d055830bdf4cab5c2184187a2d1","Volumes":null,"WorkingDir":"","Entrypoint":null,"OnBuild":[],"Labels":{}},"created":"2016-08-18T06:13:28.269459769Z","docker_version":"1.11.0-dev","history":[{"created":"2015-09-21T20:15:47.433616227Z","created_by":"/bin/sh -c #(nop) ADD file:6cccb5f0a3b3947116a0c0f55d071980d94427ba0d6dad17bc68ead832cc0a8f in /"},{"created":"2015-09-21T20:15:47.866196515Z","created_by":"/bin/sh -c #(nop) CMD [\"sh\"]"},{"created":"2016-08-18T06:13:28.269459769Z","created_by":"/bin/sh -c dd if=/dev/zero of=file bs=10M count=1"}],"os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a","sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef","sha256:d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06"]}}
 
+=====
+[root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7 
+sha256:d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+
+[root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4 
+sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+
+[root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e 
+sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+=====
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+
+=====
+[root@CentOS-64-duyanghao 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119]# cat cache-id 
+2be304721c0f40e5a4a3afc4081c5225e86077b7e2229b35676d14324fc5208f
+
+[root@CentOS-64-duyanghao 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119]# cat diff 
+sha256:d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+
+[root@CentOS-64-duyanghao 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119]# cat parent 
+sha256:75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6
+
+[root@CentOS-64-duyanghao 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119]# cat size 
+10485760
+
+[root@CentOS-64-duyanghao 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119]# ls -l tar-split.json.gz 
+-rw-r--r-- 1 root root 213 10月 25 17:30 tar-split.json.gz
+
+=====
+[root@CentOS-64-duyanghao 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6]# cat cache-id 
+43e3ac3e2c7b905f1b54ce7cdf2560e0e70457d1d1177c874739d788423fde83
+
+[root@CentOS-64-duyanghao 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6]# cat diff 
+sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+
+[root@CentOS-64-duyanghao 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6]# cat parent 
+sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+[root@CentOS-64-duyanghao 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6]# cat size 
+0
+
+[root@CentOS-64-duyanghao 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6]# ls -l tar-split.json.gz 
+-rw-r--r-- 1 root root 82 10月 25 17:30 tar-split.json.gz
+
+=====
+[root@CentOS-64-duyanghao ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a]# ls -l
+总用量 24
+-rw-r--r-- 1 root root    64 10月 25 17:30 cache-id
+-rw-r--r-- 1 root root    71 10月 25 17:30 diff
+-rw-r--r-- 1 root root     9 10月 25 17:30 size
+-rw-r--r-- 1 root root 11277 10月 25 17:30 tar-split.json.gz
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/diff    
+sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/cache-id 
+1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/size 
+364348077
+
+=====
+[root@CentOS-64-duyanghao aufs]# cat repositories.json    
+{"Repositories":{"x.x.x.x:5000/duyanghao/busybox":{"x.x.x.x:5000/duyanghao/busybox:v0":"sha256:2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042"}}}
+```
 
 ### 参考
 
