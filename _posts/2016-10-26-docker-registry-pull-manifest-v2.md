@@ -2118,6 +2118,8 @@ type Driver interface {
 
 **TarSplitWriter函数创建tar-split.json.gz文件，NewInputTarStream函数写tar-split.json.gz文件**
 
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/tar_split_json_gz.png)
+
 storeLayer函数写diff、size、cache-id文件，如下：
 
 ```go
