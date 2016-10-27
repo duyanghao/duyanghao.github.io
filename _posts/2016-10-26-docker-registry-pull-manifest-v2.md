@@ -723,7 +723,7 @@ func (bs *blobs) Open(ctx context.Context, dgst digest.Digest) (distribution.Rea
 镜像configuration文件存储位置：
 
 
->/var/lib/docker/image/aufs/imagedb/content/sha256/2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+>/data/docker/image/aufs/imagedb/content/sha256/2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
 
 ```go
 imageID, err = p.config.ImageStore.Create(configJSON)
@@ -2376,6 +2376,44 @@ d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/relation.png)
 
+几个问题：
+
+* parent sha256 hash怎么得到的？
+* 数据文件内容如何写入？
+
+**parent SHA256怎么得到的？**
+
+```go
+func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
+    ...
+    if layer.parent == nil {
+        layer.chainID = ChainID(layer.diffID)
+    } else {
+        layer.chainID = createChainIDFromParent(layer.parent.chainID, layer.diffID)
+    }
+    ...
+}
+func createChainIDFromParent(parent ChainID, dgsts ...DiffID) ChainID {
+    if len(dgsts) == 0 {
+        return parent
+    }
+    if parent == "" {
+        return createChainIDFromParent(ChainID(dgsts[0]), dgsts[1:]...)
+    }
+    // H = "H(n-1) SHA256(n)"
+    dgst := digest.FromBytes([]byte(string(parent) + " " + string(dgsts[0])))
+    return createChainIDFromParent(ChainID(dgst), dgsts[1:]...)
+}
+// ChainID is the content-addressable ID of a layer.
+type ChainID digest.Digest
+
+```
+
+#### ID definitions and calculations
+
+This table summarizes the different types of IDs involved and how they are calculated:
+
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/ID_definitions_and_calculations.png)
 
 
 
