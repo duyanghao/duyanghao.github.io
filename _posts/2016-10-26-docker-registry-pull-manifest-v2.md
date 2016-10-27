@@ -2695,6 +2695,8 @@ func ChangesSize(newDir string, changes []Change) int64 {
     └── metadata.db
 ```
 
+docker pull函数调用流程：
+
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/pull_function_process.png)
 
 Cache mapping from this layer's DiffID to the blobsum
