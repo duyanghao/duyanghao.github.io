@@ -1509,7 +1509,7 @@ func NewCancelReadCloser(ctx context.Context, in io.ReadCloser) io.ReadCloser {
 }
 ```
 
-```
+```go
 layerDownload, err := blobs.Open(ctx, ld.digest)
 
 type v2LayerDescriptor struct {
@@ -2085,9 +2085,162 @@ func NewInputTarStream(r io.Reader, p storage.Packer, fp storage.FilePutter) (io
 
     return pR, nil
 }
+type layerStore struct {
+    store  MetadataStore
+    driver graphdriver.Driver
+
+    layerMap map[ChainID]*roLayer
+    layerL   sync.Mutex
+
+    mounts map[string]*mountedLayer
+    mountL sync.Mutex
+}
+// Driver is the interface for layered/snapshot file system drivers.
+type Driver interface {
+    ProtoDriver
+    // Diff produces an archive of the changes between the specified
+    // layer and its parent layer which may be "".
+    Diff(id, parent string) (archive.Archive, error)
+    // Changes produces a list of changes between the specified layer
+    // and its parent layer. If parent is "", then all changes will be ADD changes.
+    Changes(id, parent string) ([]archive.Change, error)
+    // ApplyDiff extracts the changeset from the given diff into the
+    // layer with the specified id and parent, returning the size of the
+    // new layer in bytes.
+    // The archive.Reader must be an uncompressed stream.
+    ApplyDiff(id, parent string, diff archive.Reader) (size int64, err error)
+    // DiffSize calculates the changes between the specified id
+    // and its parent and returns the size in bytes of the changes
+    // relative to its base filesystem directory.
+    DiffSize(id, parent string) (size int64, err error)
+}
+func (d *graphDriverProxy) ApplyDiff(id, parent string, diff archive.Reader) (int64, error) {
+    var ret graphDriverResponse
+    if err := d.client.SendFile(fmt.Sprintf("GraphDriver.ApplyDiff?id=%s&parent=%s", id, parent), diff, &ret); err != nil {
+        return -1, err
+    }
+    if ret.Err != "" {
+        return -1, errors.New(ret.Err)
+    }
+    return ret.Size, nil
+}
+type pluginClient interface {
+    // Call calls the specified method with the specified arguments for the plugin.
+    Call(string, interface{}, interface{}) error
+    // Stream calls the specified method with the specified arguments for the plugin and returns the response IO stream
+    Stream(string, interface{}) (io.ReadCloser, error)
+    // SendFile calls the specified method, and passes through the IO stream
+    SendFile(string, io.Reader, interface{}) error
+}
+// SendFile calls the specified method, and passes through the IO stream
+func (c *Client) SendFile(serviceMethod string, data io.Reader, ret interface{}) error {
+    body, err := c.callWithRetry(serviceMethod, data, true)
+    if err != nil {
+        return err
+    }
+    defer body.Close()
+    if err := json.NewDecoder(body).Decode(&ret); err != nil {
+        logrus.Errorf("%s: error reading plugin resp: %v", serviceMethod, err)
+        return err
+    }
+    return nil
+}
+
 ```
 
+TarSplitWriter函数写tar-split.json.gz文件
 
+storeLayer函数写diff、size、cache-id文件，如下：
+
+```sh
+/data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+[root@CentOS-64-duyanghao ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a]# ls -l
+总用量 24
+-rw-r--r-- 1 root root    64 10月 25 17:30 cache-id
+-rw-r--r-- 1 root root    71 10月 25 17:30 diff
+-rw-r--r-- 1 root root     9 10月 25 17:30 size
+-rw-r--r-- 1 root root 11277 10月 25 17:30 tar-split.json.gz
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/diff    
+sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/cache-id 
+1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a/size 
+364348077
+```
+
+```go
+func storeLayer(tx MetadataTransaction, layer *roLayer) error {
+    if err := tx.SetDiffID(layer.diffID); err != nil {
+        return err
+    }
+    if err := tx.SetSize(layer.size); err != nil {
+        return err
+    }
+    if err := tx.SetCacheID(layer.cacheID); err != nil {
+        return err
+    }
+    if layer.parent != nil {
+        if err := tx.SetParent(layer.parent.chainID); err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+func (fm *fileMetadataTransaction) SetDiffID(diff DiffID) error {
+    return ioutil.WriteFile(filepath.Join(fm.root, "diff"), []byte(digest.Digest(diff).String()), 0644)
+}
+func (fm *fileMetadataTransaction) SetSize(size int64) error {
+    content := fmt.Sprintf("%d", size)
+    return ioutil.WriteFile(filepath.Join(fm.root, "size"), []byte(content), 0644)
+}
+func (fm *fileMetadataTransaction) SetCacheID(cacheID string) error {
+    return ioutil.WriteFile(filepath.Join(fm.root, "cache-id"), []byte(cacheID), 0644)
+}
+func (fm *fileMetadataTransaction) SetParent(parent ChainID) error {
+    return ioutil.WriteFile(filepath.Join(fm.root, "parent"), []byte(digest.Digest(parent).String()), 0644)
+}
+func (fm *fileMetadataTransaction) TarSplitWriter(compressInput bool) (io.WriteCloser, error) {
+    f, err := os.OpenFile(filepath.Join(fm.root, "tar-split.json.gz"), os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return nil, err
+    }
+    var wc io.WriteCloser
+    if compressInput {
+        wc = gzip.NewWriter(f)
+    } else {
+        wc = f
+    }
+
+    return ioutils.NewWriteCloserWrapper(wc, func() error {
+        wc.Close()
+        return f.Close()
+    }), nil
+}
+```
+
+```sh
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+
+===================
+[root@CentOS-64-duyanghao ~]# find /* -name 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+
+===================
+[root@CentOS-64-duyanghao ~]# find /* -name d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06  
+/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+```
 
 
 
