@@ -2114,59 +2114,9 @@ type Driver interface {
     // relative to its base filesystem directory.
     DiffSize(id, parent string) (size int64, err error)
 }
-func (d *graphDriverProxy) ApplyDiff(id, parent string, diff archive.Reader) (int64, error) {
-    var ret graphDriverResponse
-    if err := d.client.SendFile(fmt.Sprintf("GraphDriver.ApplyDiff?id=%s&parent=%s", id, parent), diff, &ret); err != nil {
-        return -1, err
-    }
-    if ret.Err != "" {
-        return -1, errors.New(ret.Err)
-    }
-    return ret.Size, nil
-}
-type pluginClient interface {
-    // Call calls the specified method with the specified arguments for the plugin.
-    Call(string, interface{}, interface{}) error
-    // Stream calls the specified method with the specified arguments for the plugin and returns the response IO stream
-    Stream(string, interface{}) (io.ReadCloser, error)
-    // SendFile calls the specified method, and passes through the IO stream
-    SendFile(string, io.Reader, interface{}) error
-}
-// SendFile calls the specified method, and passes through the IO stream
-func (c *Client) SendFile(serviceMethod string, data io.Reader, ret interface{}) error {
-    body, err := c.callWithRetry(serviceMethod, data, true)
-    if err != nil {
-        return err
-    }
-    defer body.Close()
-    if err := json.NewDecoder(body).Decode(&ret); err != nil {
-        logrus.Errorf("%s: error reading plugin resp: %v", serviceMethod, err)
-        return err
-    }
-    return nil
-}
-type graphDriverResponse struct {
-    Err      string            `json:",omitempty"`
-    Dir      string            `json:",omitempty"`
-    Exists   bool              `json:",omitempty"`
-    Status   [][2]string       `json:",omitempty"`
-    Changes  []archive.Change  `json:",omitempty"`
-    Size     int64             `json:",omitempty"`
-    Metadata map[string]string `json:",omitempty"`
-}
-// Change represents a change, it wraps the change type and path.
-// It describes changes of the files in the path respect to the
-// parent layers. The change could be modify, add, delete.
-// This is used for layer diff.
-type Change struct {
-    Path string
-    Kind ChangeType
-}
-
-
 ```
 
-TarSplitWriter函数写tar-split.json.gz文件
+**TarSplitWriter函数创建tar-split.json.gz文件，NewInputTarStream函数写tar-split.json.gz文件**
 
 storeLayer函数写diff、size、cache-id文件，如下：
 
@@ -2433,7 +2383,7 @@ This table summarizes the different types of IDs involved and how they are calcu
 
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/ID_definitions_and_calculations.png)
 
-**数据文件内容如何写入？**
+**Size大小**
 
 ```go
 func (ls *layerStore) applyTar(tx MetadataTransaction, ts io.Reader, parent string, layer *roLayer) error {
@@ -2692,6 +2642,55 @@ func ChangesSize(newDir string, changes []Change) int64 {
     }
     return size
 }
+```
+
+/data/docker目录
+
+```sh
+[root@CentOS-64-duyanghao docker]# tree -L 4 -C
+.
+├── aufs
+│   ├── diff
+│   │   ├── 1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
+│   │   │   ├── bin
+│   │   │   ├── dev
+│   │   │   ├── etc
+│   │   │   ├── home
+│   │   │   ├── root
+│   │   │   ├── tmp
+│   │   │   ├── usr
+│   │   │   └── var
+│   │   ├── 2be304721c0f40e5a4a3afc4081c5225e86077b7e2229b35676d14324fc5208f
+│   │   │   └── file
+│   │   └── 43e3ac3e2c7b905f1b54ce7cdf2560e0e70457d1d1177c874739d788423fde83
+│   ├── layers
+│   │   ├── 1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
+│   │   ├── 2be304721c0f40e5a4a3afc4081c5225e86077b7e2229b35676d14324fc5208f
+│   │   └── 43e3ac3e2c7b905f1b54ce7cdf2560e0e70457d1d1177c874739d788423fde83
+│   └── mnt
+│       ├── 1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
+│       ├── 2be304721c0f40e5a4a3afc4081c5225e86077b7e2229b35676d14324fc5208f
+│       └── 43e3ac3e2c7b905f1b54ce7cdf2560e0e70457d1d1177c874739d788423fde83
+├── containers
+├── image
+│   └── aufs
+│       ├── distribution
+│       │   ├── diffid-by-digest
+│       │   └── v2metadata-by-diffid
+│       ├── imagedb
+│       │   ├── content
+│       │   └── metadata
+│       ├── layerdb
+│       │   ├── sha256
+│       │   └── tmp
+│       └── repositories.json
+├── network
+│   └── files
+│       └── local-kv.db
+├── tmp
+├── trust
+└── volumes
+    └── metadata.db
 ```
 
 
