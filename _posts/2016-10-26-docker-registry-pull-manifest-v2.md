@@ -14,23 +14,23 @@ excerpt: Image Manifest Version 2, Schema 2
 docker pull日志
 
 ```sh
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/manifests/v0 HTTP/1.1" 200 923 "" "docker/1.1
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/manifests/v0 HTTP/1.1" 200 923 "" "docker/1.1
 1.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(li
 nux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:2b519bd204483370e81176d98fd0c9bc
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:2b519bd204483370e81176d98fd0c9bc
 4632e156da7b2cc752fa383b96e7c042 HTTP/1.1" 200 1756 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x8
 6_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
 e93d633cb16422d00e8a7c22955b46d4 HTTP/1.1" 200 32 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_
 64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
 f29baf653157c368cd347f9caa6e58f7 HTTP/1.1" 200 10289 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x
 86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
 47e67431f6bc122084f1e692dcb7d34e HTTP/1.1" 200 224153958 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.e
 l6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 ```
@@ -1597,15 +1597,15 @@ const (
 Layer拉取日志
 
 ```sh
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
 e93d633cb16422d00e8a7c22955b46d4 HTTP/1.1" 200 32 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_
 64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
 f29baf653157c368cd347f9caa6e58f7 HTTP/1.1" 200 10289 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x
 86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 
-192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
+x.x.x.x - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
 47e67431f6bc122084f1e692dcb7d34e HTTP/1.1" 200 224153958 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.e
 l6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
 ```
@@ -1890,21 +1890,21 @@ docker端存储
 -rw-r--r-- 1 root root 11277 10月 25 17:30 tar-split.json.gz
 
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
-[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 
 ===================
 [root@CentOS-64-duyanghao ~]# find /* -name 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 
-[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 
 ===================
 [root@CentOS-64-duyanghao ~]# find /* -name d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06  
 /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 
-[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 ```
 
 applyTar函数
@@ -2225,21 +2225,21 @@ func (fm *fileMetadataTransaction) TarSplitWriter(compressInput bool) (io.WriteC
 
 ```sh
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
-[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 
 ===================
 [root@CentOS-64-duyanghao ~]# find /* -name 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 
-[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 
 ===================
 [root@CentOS-64-duyanghao ~]# find /* -name d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06  
 /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 
-[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 ```
 
 /data/docker/image/aufs目录结构
