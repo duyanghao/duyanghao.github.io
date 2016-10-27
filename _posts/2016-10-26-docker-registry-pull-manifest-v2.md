@@ -2242,6 +2242,52 @@ func (fm *fileMetadataTransaction) TarSplitWriter(compressInput bool) (io.WriteC
 [{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
 ```
 
+/data/docker/image/aufs目录结构
+
+```sh
+[root@CentOS-64-duyanghao ~]# tree /data/docker/image/aufs
+/data/docker/image/aufs
+├── distribution
+│   ├── diffid-by-digest
+│   │   └── sha256
+│   │       ├── 93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7
+│   │       ├── a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4
+│   │       └── c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e
+│   └── v2metadata-by-diffid
+│       └── sha256
+│           ├── 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+│           ├── ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+│           └── d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+├── imagedb
+│   ├── content
+│   │   └── sha256
+│   │       └── 2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+│   └── metadata
+│       └── sha256
+├── layerdb
+│   ├── sha256
+│   │   ├── 0af1c8e643b5b1985c93a0004b1e6b091e30d349bb7f005271d1d9ff23b70119
+│   │   │   ├── cache-id
+│   │   │   ├── diff
+│   │   │   ├── parent
+│   │   │   ├── size
+│   │   │   └── tar-split.json.gz
+│   │   ├── 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6
+│   │   │   ├── cache-id
+│   │   │   ├── diff
+│   │   │   ├── parent
+│   │   │   ├── size
+│   │   │   └── tar-split.json.gz
+│   │   └── ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+│   │       ├── cache-id
+│   │       ├── diff
+│   │       ├── size
+│   │       └── tar-split.json.gz
+│   └── tmp
+└── repositories.json
+
+16 directories, 22 files
+```
 
 
 
