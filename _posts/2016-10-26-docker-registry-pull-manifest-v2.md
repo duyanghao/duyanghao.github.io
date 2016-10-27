@@ -11,6 +11,30 @@ excerpt: Image Manifest Version 2, Schema 2
 
 ### docker pull
 
+docker pull日志
+
+```sh
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/manifests/v0 HTTP/1.1" 200 923 "" "docker/1.1
+1.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(li
+nux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:2b519bd204483370e81176d98fd0c9bc
+4632e156da7b2cc752fa383b96e7c042 HTTP/1.1" 200 1756 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x8
+6_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
+e93d633cb16422d00e8a7c22955b46d4 HTTP/1.1" 200 32 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_
+64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
+f29baf653157c368cd347f9caa6e58f7 HTTP/1.1" 200 10289 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x
+86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
+47e67431f6bc122084f1e692dcb7d34e HTTP/1.1" 200 224153958 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.e
+l6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+```
+
 入口Pull
 
 ```go
@@ -284,15 +308,35 @@ func (ms *manifests) Get(ctx context.Context, dgst digest.Digest, options ...dis
     }
     return nil, HandleErrorResponse(resp)
 }
+// BuildManifestURL constructs a url for the manifest identified by name and
+// reference. The argument reference may be either a tag or digest.
+func (ub *URLBuilder) BuildManifestURL(ref reference.Named) (string, error) {
+    route := ub.cloneRoute(RouteNameManifest)
+
+    tagOrDigest := ""
+    switch v := ref.(type) {
+    case reference.Tagged:
+        tagOrDigest = v.Tag()
+    case reference.Digested:
+        tagOrDigest = v.Digest().String()
+    }
+
+    manifestURL, err := route.URL("name", ref.Name(), "reference", tagOrDigest)
+    if err != nil {
+        return "", err
+    }
+
+    return manifestURL.String(), nil
+}
 ```
 
 如下：
 
-```
-> Accept: application/vnd.docker.distribution.manifest.v2+json
+```sh
+curl -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' http://xxxx/v2/duyanghao/busybox/manifests/v0
 ```
 
-```
+```sh
 < Content-Type: application/vnd.docker.distribution.manifest.v2+json
 
 {
@@ -511,6 +555,10 @@ docker pull逻辑：
 
 解析Manifest获取镜像Configuration
 
+```sh
+curl -L http://xxxx/v2/duyanghao/busybox/blobs/sha256:2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+```
+
 ```go
 func (p *v2Puller) pullSchema2ImageConfig(ctx context.Context, dgst digest.Digest) (configJSON []byte, err error) {
     blobs := p.repo.Blobs(ctx)
@@ -642,6 +690,33 @@ type History struct {
     // layer. Otherwise, the history item is associated with the next
     // layer in the RootFS section.
     EmptyLayer bool `json:"empty_layer,omitempty"`
+}
+func (bs *blobs) Get(ctx context.Context, dgst digest.Digest) ([]byte, error) {
+    reader, err := bs.Open(ctx, dgst)
+    if err != nil {
+        return nil, err
+    }
+    defer reader.Close()
+
+    return ioutil.ReadAll(reader)
+}
+func (bs *blobs) Open(ctx context.Context, dgst digest.Digest) (distribution.ReadSeekCloser, error) {
+    ref, err := reference.WithDigest(bs.name, dgst)
+    if err != nil {
+        return nil, err
+    }
+    blobURL, err := bs.ub.BuildBlobURL(ref)
+    if err != nil {
+        return nil, err
+    }
+
+    return transport.NewHTTPReadSeeker(bs.client, blobURL,
+        func(resp *http.Response) error {
+            if resp.StatusCode == http.StatusNotFound {
+                return distribution.ErrBlobUnknown
+            }
+            return HandleErrorResponse(resp)
+        }), nil
 }
 ```
 
@@ -1366,7 +1441,653 @@ func (ld *v2LayerDescriptor) Download(ctx context.Context, progressOutput progre
 func createDownloadFile() (*os.File, error) {
     return ioutil.TempFile("", "GetImageBlob")
 }
+// NewProgressReader creates a new ProgressReader.
+func NewProgressReader(in io.ReadCloser, out Output, size int64, id, action string) *Reader {
+    return &Reader{
+        in:     in,
+        out:    out,
+        size:   size,
+        id:     id,
+        action: action,
+    }
+}
+// Reader is a Reader with progress bar.
+type Reader struct {
+    in         io.ReadCloser // Stream to read from
+    out        Output        // Where to send progress bar to
+    size       int64
+    current    int64
+    lastUpdate int64
+    id         string
+    action     string
+}
 ```
+
+
+```go
+ioutils.NewCancelReadCloser(ctx, layerDownload)
+
+// NewCancelReadCloser creates a wrapper that closes the ReadCloser when the
+// context is cancelled. The returned io.ReadCloser must be closed when it is
+// no longer needed.
+func NewCancelReadCloser(ctx context.Context, in io.ReadCloser) io.ReadCloser {
+    pR, pW := io.Pipe()
+
+    // Create a context used to signal when the pipe is closed
+    doneCtx, cancel := context.WithCancel(context.Background())
+
+    p := &cancelReadCloser{
+        cancel: cancel,
+        pR:     pR,
+        pW:     pW,
+    }
+
+    go func() {
+        _, err := io.Copy(pW, in)
+        select {
+        case <-ctx.Done():
+            // If the context was closed, p.closeWithError
+            // was already called. Calling it again would
+            // change the error that Read returns.
+        default:
+            p.closeWithError(err)
+        }
+        in.Close()
+    }()
+    go func() {
+        for {
+            select {
+            case <-ctx.Done():
+                p.closeWithError(ctx.Err())
+            case <-doneCtx.Done():
+                return
+            }
+        }
+    }()
+
+    return p
+}
+```
+
+```
+layerDownload, err := blobs.Open(ctx, ld.digest)
+
+type v2LayerDescriptor struct {
+    digest            digest.Digest
+    repoInfo          *registry.RepositoryInfo
+    repo              distribution.Repository
+    V2MetadataService *metadata.V2MetadataService
+    tmpFile           *os.File
+    verifier          digest.Verifier
+}
+func (r *repository) Blobs(ctx context.Context) distribution.BlobStore {
+    statter := &blobStatter{
+        name:   r.name,
+        ub:     r.ub,
+        client: r.client,
+    }
+    return &blobs{
+        name:    r.name,
+        ub:      r.ub,
+        client:  r.client,
+        statter: cache.NewCachedBlobStatter(memory.NewInMemoryBlobDescriptorCacheProvider(), statter),
+    }
+}
+type blobs struct {
+    name   reference.Named
+    ub     *v2.URLBuilder
+    client *http.Client
+
+    statter distribution.BlobDescriptorService
+    distribution.BlobDeleter
+}
+func (bs *blobs) Open(ctx context.Context, dgst digest.Digest) (distribution.ReadSeekCloser, error) {
+    ref, err := reference.WithDigest(bs.name, dgst)
+    if err != nil {
+        return nil, err
+    }
+    blobURL, err := bs.ub.BuildBlobURL(ref)
+    if err != nil {
+        return nil, err
+    }
+
+    return transport.NewHTTPReadSeeker(bs.client, blobURL,
+        func(resp *http.Response) error {
+            if resp.StatusCode == http.StatusNotFound {
+                return distribution.ErrBlobUnknown
+            }
+            return HandleErrorResponse(resp)
+        }), nil
+}
+// BuildBlobURL constructs the url for the blob identified by name and dgst.
+func (ub *URLBuilder) BuildBlobURL(ref reference.Canonical) (string, error) {
+    route := ub.cloneRoute(RouteNameBlob)
+
+    layerURL, err := route.URL("name", ref.Name(), "digest", ref.Digest().String())
+    if err != nil {
+        return "", err
+    }
+
+    return layerURL.String(), nil
+}
+// clondedRoute returns a clone of the named route from the router. Routes
+// must be cloned to avoid modifying them during url generation.
+func (ub *URLBuilder) cloneRoute(name string) clonedRoute {
+    route := new(mux.Route)
+    root := new(url.URL)
+
+    *route = *ub.router.GetRoute(name) // clone the route
+    *root = *ub.root
+
+    return clonedRoute{Route: route, root: root}
+}
+// The following are definitions of the name under which all V2 routes are
+// registered. These symbols can be used to look up a route based on the name.
+const (
+    RouteNameBase            = "base"
+    RouteNameManifest        = "manifest"
+    RouteNameTags            = "tags"
+    RouteNameBlob            = "blob"
+    RouteNameBlobUpload      = "blob-upload"
+    RouteNameBlobUploadChunk = "blob-upload-chunk"
+    RouteNameCatalog         = "catalog"
+)
+```
+
+Layer拉取日志
+
+```sh
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680a
+e93d633cb16422d00e8a7c22955b46d4 HTTP/1.1" 200 32 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x86_
+64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:93eea0ce9921b81687ad054452396461
+f29baf653157c368cd347f9caa6e58f7 HTTP/1.1" 200 10289 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.el6.x
+86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+
+192.168.128.128 - - [30/Sep/2016:14:01:45 +0800] "GET /v2/duyanghao/busybox/blobs/sha256:c0a04912aa5afc0b4fd4c34390e526d5
+47e67431f6bc122084f1e692dcb7d34e HTTP/1.1" 200 224153958 "" "docker/1.11.0 go/go1.5.4 git-commit/4dc5990 kernel/3.10.5-3.e
+l6.x86_64 os/linux arch/amd64 UpstreamClient(Docker-Client/1.11.0 \\(linux\\))"
+```
+
+```go
+_, err = io.Copy(tmpFile, io.TeeReader(reader, ld.verifier))
+
+type v2LayerDescriptor struct {
+    digest            digest.Digest
+    repoInfo          *registry.RepositoryInfo
+    repo              distribution.Repository
+    V2MetadataService *metadata.V2MetadataService
+    tmpFile           *os.File
+    verifier          digest.Verifier
+}
+```
+
+TeeReader函数
+
+>TeeReader returns a Reader that writes to w what it reads from r. All reads from r performed through it are matched with corresponding writes to w. There is no internal buffering - the write must complete before the read completes. Any error encountered while writing is reported as a read error.
+
+将Layer文件下载完后存储到临时文件中，之后进行验证sha256 hash与对下载内容sha 256 hash结果对比（应该相同）
+
+```go
+    progress.Update(progressOutput, ld.ID(), "Verifying Checksum")
+
+    if !ld.verifier.Verified() {
+        err = fmt.Errorf("filesystem layer verification failed for digest %s", ld.digest)
+        logrus.Error(err)
+
+        // Allow a retry if this digest verification error happened
+        // after a resumed download.
+        if offset != 0 {
+            if err := ld.truncateDownloadFile(); err != nil {
+                return nil, 0, xfer.DoNotRetry{Err: err}
+            }
+
+            return nil, 0, err
+        }
+        return nil, 0, xfer.DoNotRetry{Err: err}
+    }
+
+    progress.Update(progressOutput, ld.ID(), "Download complete")
+``` 
+
+Seek函数
+
+>Seek sets the offset for the next Read or Write on file to offset, interpreted according to whence: 0 means relative to the origin of the file, 1 means relative to the current offset, and 2 means relative to the end. It returns the new offset and an error, if any. The behavior of Seek on a file opened with O_APPEND is not specified.
+
+```go
+    size, err := layerDownload.Seek(0, os.SEEK_END)
+    ...
+
+    _, err = tmpFile.Seek(0, os.SEEK_SET)
+    if err != nil {
+        tmpFile.Close()
+        if err := os.Remove(tmpFile.Name()); err != nil {
+            logrus.Errorf("Failed to remove temp file: %s", tmpFile.Name())
+        }
+        ld.tmpFile = nil
+        ld.verifier = nil
+        return nil, 0, xfer.DoNotRetry{Err: err}
+    }
+
+    // hand off the temporary file to the download manager, so it will only
+    // be closed once
+    ld.tmpFile = nil
+
+    return ioutils.NewReadCloserWrapper(tmpFile, func() error {
+        tmpFile.Close()
+        err := os.RemoveAll(tmpFile.Name())
+        if err != nil {
+            logrus.Errorf("Failed to remove temp file: %s", tmpFile.Name())
+        }
+        return err
+    }), size, nil
+```
+
+下载完后进行解压(Extracting)
+
+```go
+            reader := progress.NewProgressReader(ioutils.NewCancelReadCloser(d.Transfer.Context(), downloadReader), progressOutput, size, descriptor.ID(), "Extracting")
+            defer reader.Close()
+
+            inflatedLayerData, err := archive.DecompressStream(reader)
+            if err != nil {
+                d.err = fmt.Errorf("could not get decompression stream: %v", err)
+                return
+            }
+
+
+// DecompressStream decompress the archive and returns a ReaderCloser with the decompressed archive.
+func DecompressStream(archive io.Reader) (io.ReadCloser, error) {
+    p := pools.BufioReader32KPool
+    buf := p.Get(archive)
+    bs, err := buf.Peek(10)
+    if err != nil && err != io.EOF {
+        // Note: we'll ignore any io.EOF error because there are some odd
+        // cases where the layer.tar file will be empty (zero bytes) and
+        // that results in an io.EOF from the Peek() call. So, in those
+        // cases we'll just treat it as a non-compressed stream and
+        // that means just create an empty layer.
+        // See Issue 18170
+        return nil, err
+    }
+
+    compression := DetectCompression(bs)
+    switch compression {
+    case Uncompressed:
+        readBufWrapper := p.NewReadCloserWrapper(buf, buf)
+        return readBufWrapper, nil
+    case Gzip:
+        gzReader, err := gzip.NewReader(buf)
+        if err != nil {
+            return nil, err
+        }
+        readBufWrapper := p.NewReadCloserWrapper(buf, gzReader)
+        return readBufWrapper, nil
+    case Bzip2:
+        bz2Reader := bzip2.NewReader(buf)
+        readBufWrapper := p.NewReadCloserWrapper(buf, bz2Reader)
+        return readBufWrapper, nil
+    case Xz:
+        xzReader, chdone, err := xzDecompress(buf)
+        if err != nil {
+            return nil, err
+        }
+        readBufWrapper := p.NewReadCloserWrapper(buf, xzReader)
+        return ioutils.NewReadCloserWrapper(readBufWrapper, func() error {
+            <-chdone
+            return readBufWrapper.Close()
+        }), nil
+    default:
+        return nil, fmt.Errorf("Unsupported compression format %s", (&compression).Extension())
+    }
+}
+```
+
+Register
+
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/relation.png)
+
+```go
+            d.layer, err = d.layerStore.Register(inflatedLayerData, parentLayer)
+            if err != nil {
+                select {
+                case <-d.Transfer.Context().Done():
+                    d.err = errors.New("layer registration cancelled")
+                default:
+                    d.err = fmt.Errorf("failed to register layer: %v", err)
+                }
+                return
+            }
+
+            progress.Update(progressOutput, descriptor.ID(), "Pull complete")
+            withRegistered, hasRegistered := descriptor.(DownloadDescriptorWithRegistered)
+            if hasRegistered {
+                withRegistered.Registered(d.layer.DiffID())
+            }
+
+            // Doesn't actually need to be its own goroutine, but
+            // done like this so we can defer close(c).
+            go func() {
+                <-d.Transfer.Released()
+                if d.layer != nil {
+                    layer.ReleaseAndLog(d.layerStore, d.layer)
+                }
+            }()
+
+type downloadTransfer struct {
+    Transfer
+
+    layerStore layer.Store
+    layer      layer.Layer
+    err        error
+}
+
+func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
+    // err is used to hold the error which will always trigger
+    // cleanup of creates sources but may not be an error returned
+    // to the caller (already exists).
+    var err error
+    var pid string
+    var p *roLayer
+    if string(parent) != "" {
+        p = ls.get(parent)
+        if p == nil {
+            return nil, ErrLayerDoesNotExist
+        }
+        pid = p.cacheID
+        // Release parent chain if error
+        defer func() {
+            if err != nil {
+                ls.layerL.Lock()
+                ls.releaseLayer(p)
+                ls.layerL.Unlock()
+            }
+        }()
+        if p.depth() >= maxLayerDepth {
+            err = ErrMaxDepthExceeded
+            return nil, err
+        }
+    }
+
+    // Create new roLayer
+    layer := &roLayer{
+        parent:         p,
+        cacheID:        stringid.GenerateRandomID(),
+        referenceCount: 1,
+        layerStore:     ls,
+        references:     map[Layer]struct{}{},
+    }
+
+    if err = ls.driver.Create(layer.cacheID, pid, ""); err != nil {
+        return nil, err
+    }
+
+    tx, err := ls.store.StartTransaction()
+    if err != nil {
+        return nil, err
+    }
+
+    defer func() {
+        if err != nil {
+            logrus.Debugf("Cleaning up layer %s: %v", layer.cacheID, err)
+            if err := ls.driver.Remove(layer.cacheID); err != nil {
+                logrus.Errorf("Error cleaning up cache layer %s: %v", layer.cacheID, err)
+            }
+            if err := tx.Cancel(); err != nil {
+                logrus.Errorf("Error canceling metadata transaction %q: %s", tx.String(), err)
+            }
+        }
+    }()
+
+    if err = ls.applyTar(tx, ts, pid, layer); err != nil {
+        return nil, err
+    }
+
+    if layer.parent == nil {
+        layer.chainID = ChainID(layer.diffID)
+    } else {
+        layer.chainID = createChainIDFromParent(layer.parent.chainID, layer.diffID)
+    }
+
+    if err = storeLayer(tx, layer); err != nil {
+        return nil, err
+    }
+
+    ls.layerL.Lock()
+    defer ls.layerL.Unlock()
+
+    if existingLayer := ls.getWithoutLock(layer.chainID); existingLayer != nil {
+        // Set error for cleanup, but do not return the error
+        err = errors.New("layer already exists")
+        return existingLayer.getReference(), nil
+    }
+
+    if err = tx.Commit(layer.chainID); err != nil {
+        return nil, err
+    }
+
+    ls.layerMap[layer.chainID] = layer
+
+    return layer.getReference(), nil
+}
+
+```
+
+docker端存储
+
+```sh
+===================
+[root@CentOS-64-duyanghao ~]# find /* -name ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+/data/docker/image/aufs/layerdb/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+
+[root@CentOS-64-duyanghao ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a]# ls -l
+总用量 24
+-rw-r--r-- 1 root root    64 10月 25 17:30 cache-id
+-rw-r--r-- 1 root root    71 10月 25 17:30 diff
+-rw-r--r-- 1 root root     9 10月 25 17:30 size
+-rw-r--r-- 1 root root 11277 10月 25 17:30 tar-split.json.gz
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+
+===================
+[root@CentOS-64-duyanghao ~]# find /* -name 5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+
+===================
+[root@CentOS-64-duyanghao ~]# find /* -name d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06  
+/data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"192.168.128.128:5000/duyanghao/busybox"}]
+```
+
+applyTar函数
+
+```go
+func (ls *layerStore) applyTar(tx MetadataTransaction, ts io.Reader, parent string, layer *roLayer) error {
+    digester := digest.Canonical.New()
+    tr := io.TeeReader(ts, digester.Hash())
+
+    tsw, err := tx.TarSplitWriter(true)
+    if err != nil {
+        return err
+    }
+    metaPacker := storage.NewJSONPacker(tsw)
+    defer tsw.Close()
+
+    // we're passing nil here for the file putter, because the ApplyDiff will
+    // handle the extraction of the archive
+    rdr, err := asm.NewInputTarStream(tr, metaPacker, nil)
+    if err != nil {
+        return err
+    }
+
+    applySize, err := ls.driver.ApplyDiff(layer.cacheID, parent, archive.Reader(rdr))
+    if err != nil {
+        return err
+    }
+
+    // Discard trailing data but ensure metadata is picked up to reconstruct stream
+    io.Copy(ioutil.Discard, rdr) // ignore error as reader may be closed
+
+    layer.size = applySize
+    layer.diffID = DiffID(digester.Digest())
+
+    logrus.Debugf("Applied tar %s to %s, size: %d", layer.diffID, layer.cacheID, applySize)
+
+    return nil
+}
+// NewJSONPacker provides a Packer that writes each Entry (SegmentType and
+// FileType) as a json document.
+//
+// The Entries are delimited by new line.
+func NewJSONPacker(w io.Writer) Packer {
+    return &jsonPacker{
+        w:    w,
+        e:    json.NewEncoder(w),
+        seen: seenNames{},
+    }
+}
+// NewInputTarStream wraps the Reader stream of a tar archive and provides a
+// Reader stream of the same.
+//
+// In the middle it will pack the segments and file metadata to storage.Packer
+// `p`.
+//
+// The the storage.FilePutter is where payload of files in the stream are
+// stashed. If this stashing is not needed, you can provide a nil
+// storage.FilePutter. Since the checksumming is still needed, then a default
+// of NewDiscardFilePutter will be used internally
+func NewInputTarStream(r io.Reader, p storage.Packer, fp storage.FilePutter) (io.Reader, error) {
+    // What to do here... folks will want their own access to the Reader that is
+    // their tar archive stream, but we'll need that same stream to use our
+    // forked 'archive/tar'.
+    // Perhaps do an io.TeeReader that hands back an io.Reader for them to read
+    // from, and we'll MITM the stream to store metadata.
+    // We'll need a storage.FilePutter too ...
+
+    // Another concern, whether to do any storage.FilePutter operations, such that we
+    // don't extract any amount of the archive. But then again, we're not making
+    // files/directories, hardlinks, etc. Just writing the io to the storage.FilePutter.
+    // Perhaps we have a DiscardFilePutter that is a bit bucket.
+
+    // we'll return the pipe reader, since TeeReader does not buffer and will
+    // only read what the outputRdr Read's. Since Tar archives have padding on
+    // the end, we want to be the one reading the padding, even if the user's
+    // `archive/tar` doesn't care.
+    pR, pW := io.Pipe()
+    outputRdr := io.TeeReader(r, pW)
+
+    // we need a putter that will generate the crc64 sums of file payloads
+    if fp == nil {
+        fp = storage.NewDiscardFilePutter()
+    }
+
+    go func() {
+        tr := tar.NewReader(outputRdr)
+        tr.RawAccounting = true
+        for {
+            hdr, err := tr.Next()
+            if err != nil {
+                if err != io.EOF {
+                    pW.CloseWithError(err)
+                    return
+                }
+                // even when an EOF is reached, there is often 1024 null bytes on
+                // the end of an archive. Collect them too.
+                if b := tr.RawBytes(); len(b) > 0 {
+                    _, err := p.AddEntry(storage.Entry{
+                        Type:    storage.SegmentType,
+                        Payload: b,
+                    })
+                    if err != nil {
+                        pW.CloseWithError(err)
+                        return
+                    }
+                }
+                break // not return. We need the end of the reader.
+            }
+            if hdr == nil {
+                break // not return. We need the end of the reader.
+            }
+
+            if b := tr.RawBytes(); len(b) > 0 {
+                _, err := p.AddEntry(storage.Entry{
+                    Type:    storage.SegmentType,
+                    Payload: b,
+                })
+                if err != nil {
+                    pW.CloseWithError(err)
+                    return
+                }
+            }
+
+            var csum []byte
+            if hdr.Size > 0 {
+                var err error
+                _, csum, err = fp.Put(hdr.Name, tr)
+                if err != nil {
+                    pW.CloseWithError(err)
+                    return
+                }
+            }
+
+            entry := storage.Entry{
+                Type:    storage.FileType,
+                Size:    hdr.Size,
+                Payload: csum,
+            }
+            // For proper marshalling of non-utf8 characters
+            entry.SetName(hdr.Name)
+
+            // File entries added, regardless of size
+            _, err = p.AddEntry(entry)
+            if err != nil {
+                pW.CloseWithError(err)
+                return
+            }
+
+            if b := tr.RawBytes(); len(b) > 0 {
+                _, err = p.AddEntry(storage.Entry{
+                    Type:    storage.SegmentType,
+                    Payload: b,
+                })
+                if err != nil {
+                    pW.CloseWithError(err)
+                    return
+                }
+            }
+        }
+
+        // it is allowable, and not uncommon that there is further padding on the
+        // end of an archive, apart from the expected 1024 null bytes.
+        remainder, err := ioutil.ReadAll(outputRdr)
+        if err != nil && err != io.EOF {
+            pW.CloseWithError(err)
+            return
+        }
+        _, err = p.AddEntry(storage.Entry{
+            Type:    storage.SegmentType,
+            Payload: remainder,
+        })
+        if err != nil {
+            pW.CloseWithError(err)
+            return
+        }
+        pW.Close()
+    }()
+
+    return pR, nil
+}
+```
+
+
 
 
 
