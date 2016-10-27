@@ -2339,20 +2339,20 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 │   │   │   ├── diff sha256:d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 │   │   │   ├── parent sha256:75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6
 │   │   │   ├── size 10485760
-│   │   │   └── tar-split.json.gz
+│   │   │   └── tar-split.json.gz 213(文件大小)
 │   │   ├── 75a46a4a46d9b53d8bbd70d52a26dc08858961f51156372edf6e8084ba9cfdb6
 │   │   │   ├── cache-id 43e3ac3e2c7b905f1b54ce7cdf2560e0e70457d1d1177c874739d788423fde83
 │   │   │   ├── diff sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
 │   │   │   ├── parent sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 │   │   │   ├── size 0
-│   │   │   └── tar-split.json.gz
+│   │   │   └── tar-split.json.gz 82(文件大小)
 │   │   └── ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 │   │       ├── cache-id 1291dc82f80bd68a5ddb79db7164cf786209fe352394dc9e3db37d5acde44404
 │   │       ├── diff sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 │   │       ├── size 364348077
-│   │       └── tar-split.json.gz
+│   │       └── tar-split.json.gz 11277(文件大小)
 
-pull后生成了三个sha256 hash，对应关系分别如下：
+三个sha256 hash，对应关系分别如下：
 ------------
 ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 |
@@ -2367,7 +2367,17 @@ a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4
 d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
 |
 93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7
+
+[root@CentOS-64-duyanghao aufs]# cat repositories.json    
+{"Repositories":{"x.x.x.x:5000/duyanghao/busybox":{"x.x.x.x:5000/duyanghao/busybox:v0":"sha256:2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042"}}}
 ```
+
+关系图：
+
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/relation.png)
+
+
+
 
 ### 参考
 
