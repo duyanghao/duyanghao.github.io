@@ -2701,6 +2701,17 @@ docker pull函数调用流程：
 
 Cache mapping from this layer's DiffID to the blobsum
 
+```sh
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+[{"Digest":"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/d13087c084482a01b15c755b55c5401e5514057f179a258b7b48a9f28fde7d06
+[{"Digest":"sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+```
+
 ```go
 func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
     // Cache mapping from this layer's DiffID to the blobsum
@@ -2708,6 +2719,58 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 }
 
 ```
+
+总结：
+
+* 1、`layer.DiffID`表示单个layer的ID（唯一标识该layer），计算公式：
+
+>**`DiffID = SHA256hex(uncompressed layer tar data)`**
+
+* 2、`layer.ChainID`也即`parent`，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
+
+>For bottom layer: **`ChainID(layer0) = DiffID(layer0)`**
+
+>For other layers：**`ChainID(layerN) = SHA256hex(ChainID(layerN-1) + " " + DiffID(layerN))`**
+
+* 3、`image.ID`表示镜像配置的ID，由于镜像配置包含了镜像layer和使用信息，所以`image.ID`也唯一标识该镜像，计算公式：
+
+>**`SHA256hex(imageConfigJSON)`**
+
+* 4、`/data/docker/image/aufs/distribution/v2metadata-by-diffid`目录下记录map：`layer.DiffID`-> `blobsum`
+
+```sh
+[root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+[{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
+```
+
+* 5、`/data/docker/image/aufs/distribution/diffid-by-digest`目录下记录map：`digest`(`SHA256hex(compressed layer tar data)`) -> `layer.DiffID`(**`SHA256hex(uncompressed layer tar data)`**)
+
+```sh
+[root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e 
+sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
+```
+
+* 6、`/data/docker/image/aufs/imagedb/content/`目录下存放镜像`configuration`信息
+
+* 7、`/data/docker/image/aufs/layerdb/sha256/`目录下存放镜像各layer元数据信息
+
+* 8、`/data/docker/aufs/diff/`目录下存放各layer的**`uncompressed untar data`**  
+
+几个问题：
+
+* 1、`cache-id`怎么生成，有何意义？
+
+* 2、`size`文件内容如何得来，是什么大小，size(`uncompressed layer tar data`)?
+
+* 3、`tar-split.json.gz`如何计算生成，有何意义？
+
+* 4、distribution/**diffid-by-digest**/sha256目录文件如何生成（在哪里进行生成）？
+
+* 5、`repositories.json`如何生成（在哪里进行生成）？
+
+* 6、**[`Manifest Schema v1`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[`Manifest Schema v2`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？**
+
+
 
 
 ### 参考
