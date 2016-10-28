@@ -2722,17 +2722,17 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 
 总结：
 
-* 1、**<font color="#8B0000">`layer.DiffID`</font>**表示单个layer的ID（唯一标识该layer），计算公式：
+* 1、<font color="#8B0000">`layer.DiffID`</font>表示单个layer的ID（唯一标识该layer），计算公式：
 
 >**`DiffID = SHA256hex(uncompressed layer tar data)`**
 
-* 2、**<font color="#8B0000">`layer.ChainID`也即`parent`</font>**，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
+* 2、<font color="#8B0000">`layer.ChainID`也即`parent`</font>，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
 
 >For bottom layer: **`ChainID(layer0) = DiffID(layer0)`**
 
 >For other layers：**`ChainID(layerN) = SHA256hex(ChainID(layerN-1) + " " + DiffID(layerN))`**
 
-* 3、**<font color="#8B0000">`image.ID`</font>**表示镜像配置的ID，由于镜像配置包含了镜像layer和使用信息，所以`image.ID`也唯一标识该镜像，计算公式：
+* 3、<font color="#8B0000">`image.ID`</font>表示镜像配置的ID，由于镜像配置包含了镜像layer和使用信息，所以`image.ID`也唯一标识该镜像，计算公式：
 
 >**`SHA256hex(imageConfigJSON)`**
 
@@ -2743,7 +2743,7 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 [{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 ```
 
-* 5、`/data/docker/image/aufs/distribution/diffid-by-digest`目录下记录map：`digest`(**<font color="#8B0000">`SHA256hex(compressed layer tar data)`</font>**) -> `layer.DiffID`(**<font color="#8B0000">`SHA256hex(uncompressed layer tar data)`</font>**)
+* 5、`/data/docker/image/aufs/distribution/diffid-by-digest`目录下记录map：`digest`(<font color="#8B0000">`SHA256hex(compressed layer tar data)`</font>) -> `layer.DiffID`(<font color="#8B0000">`SHA256hex(uncompressed layer tar data)`</font>)
 
 ```sh
 [root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e 
@@ -2754,7 +2754,7 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 
 * 7、`/data/docker/image/aufs/layerdb/sha256/`目录下存放镜像各**layer元数据信息**
 
-* 8、`/data/docker/aufs/diff/`目录下存放各layer的**<font color="#8B0000">`uncompressed untar data`</font>**  
+* 8、`/data/docker/aufs/diff/`目录下存放各layer的<font color="#8B0000">`uncompressed untar data`</font>
 
 几个问题：
 
@@ -2768,7 +2768,7 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 
 * 5、`repositories.json`如何生成（在哪里进行生成）？
 
-* 6、**<font color="#8B0000">[`Manifest Schema v1`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[`Manifest Schema v2`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？</font>**
+* 6、<font color="#8B0000">[`Manifest Schema v1`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[`Manifest Schema v2`](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？</font>
 
 
 
