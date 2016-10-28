@@ -2726,17 +2726,21 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 
 >**`DiffID = SHA256hex(uncompressed layer tar data)`**
 
-* 2 **<font color="#8B0000">layer.ChainID也即parent</font>**，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
+* 2 **<font color="#8B0000">layer.Digest</font>**表示单个layer的**压缩**ID，计算公式：
+
+>**`DiffID = SHA256hex(compressed layer tar data)`**
+
+* 3 **<font color="#8B0000">layer.ChainID也即parent</font>**，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
 
 >For bottom layer: **`ChainID(layer0) = DiffID(layer0)`**
 
 >For other layers：**`ChainID(layerN) = SHA256hex(ChainID(layerN-1) + " " + DiffID(layerN))`**
 
-* 3 **<font color="#8B0000">image.ID</font>**表示镜像配置的ID，由于镜像配置包含了镜像layer和使用信息，所以`image.ID`也唯一标识该镜像，计算公式：
+* 4 **<font color="#8B0000">image.ID</font>**表示镜像配置的ID，由于镜像配置包含了镜像layer和使用信息，所以`image.ID`也唯一标识该镜像，计算公式：
 
 >**`SHA256hex(imageConfigJSON)`**
 
-* 4 `/data/docker/image/aufs/distribution/v2metadata-by-diffid`目录下记录map：`layer.DiffID`-> `blobsum`
+* 5 `/data/docker/image/aufs/distribution/v2metadata-by-diffid`目录下记录map：`layer.DiffID`-> `blobsum`
 
 ```sh
 [root@CentOS-64-duyanghao ~]# cat /data/docker/image/aufs/distribution/v2metadata-by-diffid/sha256/ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
@@ -2771,7 +2775,289 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 * 6 **[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？**
 
 
+分析 Manifest Schema v1：
 
+>The current manifest format has two big problems which contributed to the security issues. First, it is not truly content addressable, since the digest which identifies it is only taken over a portion of the manifest. Second, it includes a “v1compatibility” string for each FS layer. This ties the format to v1 identifiers, and a one-to-one mapping between layers and configurations; both of which are problematic.
+
+>Docker 1.10 adds new manifest format that corrects these problems. The manifest consists of a list of layers and a single configuration. The digest of the manifest is simply the hash of the serialized manifest. We add an image configuration object that completely covers both its configration and root filesystem, making it possible to use the hash of the configuration as a content addressable ID of the image.
+
+v1 Manifest请求
+
+```sh
+[root@CentOS-64-duyanghao docker]# curl -v  http://x.x.x.x:5000/v2/duyanghao/busybox/manifests/v0 
+
+< HTTP/1.1 200 OK
+< Content-Length: 3209
+< Content-Type: application/vnd.docker.distribution.manifest.v1+prettyjws
+< Docker-Content-Digest: sha256:d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc
+< Docker-Distribution-Api-Version: registry/2.0
+< Etag: "sha256:d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc"
+< X-Content-Type-Options: nosniff
+< Date: Fri, 28 Oct 2016 03:55:58 GMT
+{
+   "schemaVersion": 1,
+   "name": "duyanghao/busybox",
+   "tag": "v0",
+   "architecture": "amd64",
+   "fsLayers": [
+      {
+         "blobSum": "sha256:93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7"
+      },
+      {
+         "blobSum": "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"
+      },
+      {
+         "blobSum": "sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e"
+      }
+   ],
+   "history": [
+      {
+         "v1Compatibility": "{\"architecture\":\"amd64\",\"config\":{\"Hostname\":\"xxxx\",\"Domainname\":\"\",\"User\":\"\",\"AttachStdin\":false,\"AttachStdout\":false,\"AttachStderr\":false,\"Tty\":false,\"OpenStdin\":false,\"StdinOnce\":false,\"Env\":[\"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"],\"Cmd\":[\"sh\"],\"ArgsEscaped\":true,\"Image\":\"sha256:9e301a362a270bcb6900ebd1aad1b3a9553a9d055830bdf4cab5c2184187a2d1\",\"Volumes\":null,\"WorkingDir\":\"\",\"Entrypoint\":null,\"OnBuild\":[],\"Labels\":{}},\"container\":\"7dfa08cb9cbf2962b2362b1845b6657895685576015a8121652872fea56a7509\",\"container_config\":{\"Hostname\":\"xxxx\",\"Domainname\":\"\",\"User\":\"\",\"AttachStdin\":false,\"AttachStdout\":false,\"AttachStderr\":false,\"Tty\":false,\"OpenStdin\":false,\"StdinOnce\":false,\"Env\":[\"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"],\"Cmd\":[\"/bin/sh\",\"-c\",\"dd if=/dev/zero of=file bs=10M count=1\"],\"ArgsEscaped\":true,\"Image\":\"sha256:9e301a362a270bcb6900ebd1aad1b3a9553a9d055830bdf4cab5c2184187a2d1\",\"Volumes\":null,\"WorkingDir\":\"\",\"Entrypoint\":null,\"OnBuild\":[],\"Labels\":{}},\"created\":\"2016-08-18T06:13:28.269459769Z\",\"docker_version\":\"1.11.0-dev\",\"id\":\"4b24c0d5113fac3c749381476dbe37ce56be2f20d4e75f481ef83657e4d25f65\",\"os\":\"linux\",\"parent\":\"14295db6daa4e1068fa3fabcf618fcda9a22f4a154da17e75f62bc2973c14f2c\"}"
+      },
+      {
+         "v1Compatibility": "{\"id\":\"14295db6daa4e1068fa3fabcf618fcda9a22f4a154da17e75f62bc2973c14f2c\",\"parent\":\"77106241d10a8ed96dc42f690453f89ec95890b1494ccac18bac69065e4b67fa\",\"created\":\"2015-09-21T20:15:47.866196515Z\",\"container_config\":{\"Cmd\":[\"/bin/sh -c #(nop) CMD [\\\"sh\\\"]\"]}}"
+      },
+      {
+         "v1Compatibility": "{\"id\":\"77106241d10a8ed96dc42f690453f89ec95890b1494ccac18bac69065e4b67fa\",\"created\":\"2015-09-21T20:15:47.433616227Z\",\"container_config\":{\"Cmd\":[\"/bin/sh -c #(nop) ADD file:6cccb5f0a3b3947116a0c0f55d071980d94427ba0d6dad17bc68ead832cc0a8f in /\"]}}"
+      }
+   ],
+   "signatures": [
+      {
+         "header": {
+            "jwk": {
+               "crv": "P-256",
+               "kid": "DS2C:VHKH:RLH3:NQLE:WXLY:OZPL:XIY3:ZJF4:PROG:7OX4:YHTD:2PWI",
+               "kty": "EC",
+               "x": "zbcubSTub3_q7W7b1VVT_ImvuVZpp_xmGdoN9M7DGvw",
+               "y": "Us2z0GVXcM3CtfxJW76bnYC4gRRkZtB2OgV_Xkz7R9I"
+            },
+            "alg": "ES256"
+         },
+         "signature": "0wGyo5x7Xoik8ozwJbkjE6RzRF1JRYcTEABMYH-tsHbQtbP7vIPCyVQ7dWROgy-FIMGWfXXkvDirxgHpbwl5dw",
+         "protected": "eyJmb3JtYXRMZW5ndGgiOjI1NjIsImZvcm1hdFRhaWwiOiJDbjAiLCJ0aW1lIjoiMjAxNi0xMC0yOFQwMzo1NTo1OFoifQ"
+      }
+   ]
+}
+```
+
+```go
+func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named) (tagUpdated bool, err error) {
+    manSvc, err := p.repo.Manifests(ctx)
+    if err != nil {
+        return false, err
+    }
+
+    var (
+        manifest    distribution.Manifest
+        tagOrDigest string // Used for logging/progress only
+    )
+    if tagged, isTagged := ref.(reference.NamedTagged); isTagged {
+        // NOTE: not using TagService.Get, since it uses HEAD requests
+        // against the manifests endpoint, which are not supported by
+        // all registry versions.
+        manifest, err = manSvc.Get(ctx, "", client.WithTag(tagged.Tag()))
+        if err != nil {
+            return false, allowV1Fallback(err)
+        }
+        tagOrDigest = tagged.Tag()
+    } else if digested, isDigested := ref.(reference.Canonical); isDigested {
+        manifest, err = manSvc.Get(ctx, digested.Digest())
+        if err != nil {
+            return false, err
+        }
+        tagOrDigest = digested.Digest().String()
+    } else {
+        return false, fmt.Errorf("internal error: reference has neither a tag nor a digest: %s", ref.String())
+    }
+
+    if manifest == nil {
+        return false, fmt.Errorf("image manifest does not exist for tag or digest %q", tagOrDigest)
+    }
+
+    // If manSvc.Get succeeded, we can be confident that the registry on
+    // the other side speaks the v2 protocol.
+    p.confirmedV2 = true
+
+    logrus.Debugf("Pulling ref from V2 registry: %s", ref.String())
+    progress.Message(p.config.ProgressOutput, tagOrDigest, "Pulling from "+p.repo.Named().Name())
+
+    var (
+        imageID        image.ID
+        manifestDigest digest.Digest
+    )
+
+    switch v := manifest.(type) {
+    case *schema1.SignedManifest:
+        imageID, manifestDigest, err = p.pullSchema1(ctx, ref, v)
+        if err != nil {
+            return false, err
+        }
+    case *schema2.DeserializedManifest:
+        imageID, manifestDigest, err = p.pullSchema2(ctx, ref, v)
+        if err != nil {
+            return false, err
+        }
+    case *manifestlist.DeserializedManifestList:
+        imageID, manifestDigest, err = p.pullManifestList(ctx, ref, v)
+        if err != nil {
+            return false, err
+        }
+    default:
+        return false, errors.New("unsupported manifest format")
+    }
+
+    progress.Message(p.config.ProgressOutput, "", "Digest: "+manifestDigest.String())
+
+    oldTagImageID, err := p.config.ReferenceStore.Get(ref)
+    if err == nil {
+        if oldTagImageID == imageID {
+            return false, nil
+        }
+    } else if err != reference.ErrDoesNotExist {
+        return false, err
+    }
+
+    if canonical, ok := ref.(reference.Canonical); ok {
+        if err = p.config.ReferenceStore.AddDigest(canonical, imageID, true); err != nil {
+            return false, err
+        }
+    } else if err = p.config.ReferenceStore.AddTag(ref, imageID, true); err != nil {
+        return false, err
+    }
+
+    return true, nil
+}
+func (p *v2Puller) pullSchema1(ctx context.Context, ref reference.Named, unverifiedManifest *schema1.SignedManifest) (imageID image.ID, manifestDigest digest.Digest, err error) {
+    var verifiedManifest *schema1.Manifest
+    verifiedManifest, err = verifySchema1Manifest(unverifiedManifest, ref)
+    if err != nil {
+        return "", "", err
+    }
+
+    rootFS := image.NewRootFS()
+
+    if err := detectBaseLayer(p.config.ImageStore, verifiedManifest, rootFS); err != nil {
+        return "", "", err
+    }
+
+    // remove duplicate layers and check parent chain validity
+    err = fixManifestLayers(verifiedManifest)
+    if err != nil {
+        return "", "", err
+    }
+
+    var descriptors []xfer.DownloadDescriptor
+
+    // Image history converted to the new format
+    var history []image.History
+
+    // Note that the order of this loop is in the direction of bottom-most
+    // to top-most, so that the downloads slice gets ordered correctly.
+    for i := len(verifiedManifest.FSLayers) - 1; i >= 0; i-- {
+        blobSum := verifiedManifest.FSLayers[i].BlobSum
+
+        var throwAway struct {
+            ThrowAway bool `json:"throwaway,omitempty"`
+        }
+        if err := json.Unmarshal([]byte(verifiedManifest.History[i].V1Compatibility), &throwAway); err != nil {
+            return "", "", err
+        }
+
+        h, err := v1.HistoryFromConfig([]byte(verifiedManifest.History[i].V1Compatibility), throwAway.ThrowAway)
+        if err != nil {
+            return "", "", err
+        }
+        history = append(history, h)
+
+        if throwAway.ThrowAway {
+            continue
+        }
+
+        layerDescriptor := &v2LayerDescriptor{
+            digest:            blobSum,
+            repoInfo:          p.repoInfo,
+            repo:              p.repo,
+            V2MetadataService: p.V2MetadataService,
+        }
+
+        descriptors = append(descriptors, layerDescriptor)
+    }
+
+    resultRootFS, release, err := p.config.DownloadManager.Download(ctx, *rootFS, descriptors, p.config.ProgressOutput)
+    if err != nil {
+        return "", "", err
+    }
+    defer release()
+
+    config, err := v1.MakeConfigFromV1Config([]byte(verifiedManifest.History[0].V1Compatibility), &resultRootFS, history)
+    if err != nil {
+        return "", "", err
+    }
+
+    imageID, err = p.config.ImageStore.Create(config)
+    if err != nil {
+        return "", "", err
+    }
+
+    manifestDigest = digest.FromBytes(unverifiedManifest.Canonical)
+
+    return imageID, manifestDigest, nil
+}
+```
+
+imageID生成：
+
+```go
+...
+config, err := v1.MakeConfigFromV1Config([]byte(verifiedManifest.History[0].V1Compatibility), &resultRootFS, history)
+...
+imageID, err = p.config.ImageStore.Create(config)
+```
+
+```go
+// MakeConfigFromV1Config creates an image config from the legacy V1 config format.
+func MakeConfigFromV1Config(imageJSON []byte, rootfs *image.RootFS, history []image.History) ([]byte, error) {
+    var dver struct {
+        DockerVersion string `json:"docker_version"`
+    }
+
+    if err := json.Unmarshal(imageJSON, &dver); err != nil {
+        return nil, err
+    }
+
+    useFallback := version.Version(dver.DockerVersion).LessThan(noFallbackMinVersion)
+
+    if useFallback {
+        var v1Image image.V1Image
+        err := json.Unmarshal(imageJSON, &v1Image)
+        if err != nil {
+            return nil, err
+        }
+        imageJSON, err = json.Marshal(v1Image)
+        if err != nil {
+            return nil, err
+        }
+    }
+
+    var c map[string]*json.RawMessage
+    if err := json.Unmarshal(imageJSON, &c); err != nil {
+        return nil, err
+    }
+
+    delete(c, "id")
+    delete(c, "parent")
+    delete(c, "Size") // Size is calculated from data on disk and is inconsistent
+    delete(c, "parent_id")
+    delete(c, "layer_id")
+    delete(c, "throwaway")
+
+    c["rootfs"] = rawJSON(rootfs)
+    c["history"] = rawJSON(history)
+
+    return json.Marshal(c)
+}
+
+```
 
 ### 参考
 
