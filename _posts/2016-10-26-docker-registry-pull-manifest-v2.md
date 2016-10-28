@@ -2784,7 +2784,7 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 
 * 2 **<font color="#8B0000">layer.Digest</font>**表示单个layer的**压缩**ID，计算公式：
 
->**`DiffID = SHA256hex(compressed layer tar data)`**
+>**`Digest = SHA256hex(compressed layer tar data)`**
 
 * 3 **<font color="#8B0000">layer.ChainID也即parent</font>**，表示该layer以及`parent layer`的ID（唯一标识以该layer为叶子的`layers tree`）计算公式：
 
