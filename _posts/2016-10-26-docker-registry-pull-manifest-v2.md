@@ -2768,7 +2768,7 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 
 * 5、`repositories.json`如何生成（在哪里进行生成）？
 
-* 6、<font color="#8B0000">[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？</font>
+* 6、**<font color="#8B0000"> [Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？</font>**
 
 
 
