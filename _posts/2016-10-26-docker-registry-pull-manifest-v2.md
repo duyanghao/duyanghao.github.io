@@ -2695,6 +2695,62 @@ func ChangesSize(newDir string, changes []Change) int64 {
     └── metadata.db
 ```
 
+registry v2目录结构
+
+```sh
+[root@CentOS-64-duyanghao registry_test]# tree
+.
+└── docker
+    └── registry
+        └── v2
+            ├── blobs
+            │   └── sha256
+            │       ├── 2b
+            │       │   └── 2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+            │       │       └── data
+            │       ├── 93
+            │       │   └── 93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7
+            │       │       └── data
+            │       ├── a3
+            │       │   └── a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4
+            │       │       └── data
+            │       ├── c0
+            │       │   └── c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e
+            │       │       └── data
+            │       └── d5
+            │           └── d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc
+            │               └── data
+            └── repositories
+                └── duyanghao
+                    └── busybox
+                        ├── _layers
+                        │   └── sha256
+                        │       ├── 2b519bd204483370e81176d98fd0c9bc4632e156da7b2cc752fa383b96e7c042
+                        │       │   └── link
+                        │       ├── 93eea0ce9921b81687ad054452396461f29baf653157c368cd347f9caa6e58f7
+                        │       │   └── link
+                        │       ├── a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4
+                        │       │   └── link
+                        │       └── c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e
+                        │           └── link
+                        ├── _manifests
+                        │   ├── revisions
+                        │   │   └── sha256
+                        │   │       └── d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc
+                        │   │           └── link
+                        │   └── tags
+                        │       └── v0
+                        │           ├── current
+                        │           │   └── link
+                        │           └── index
+                        │               └── sha256
+                        │                   └── d5ab5a18ba5a252216a930976e7a1d22ec6c4bb40d600df5dcea8714ca7973bc
+                        │                       └── link
+                        └── _uploads
+
+35 directories, 12 files
+```
+
 docker pull函数调用流程：
 
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/pull_function_process.png)
@@ -2774,14 +2830,35 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 
 * 6 **[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？**
 
+**<font color="#8B0000">下面分析[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)（docker 1.10-）与[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)不同，实际上也是分析两种不同的镜像数据模型</font>**
 
-分析 Manifest Schema v1：
+![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/Manifest_Schema_v1.png)
 
 >The current manifest format has two big problems which contributed to the security issues. First, it is not truly content addressable, since the digest which identifies it is only taken over a portion of the manifest. Second, it includes a “v1compatibility” string for each FS layer. This ties the format to v1 identifiers, and a one-to-one mapping between layers and configurations; both of which are problematic.
 
 >Docker 1.10 adds new manifest format that corrects these problems. The manifest consists of a list of layers and a single configuration. The digest of the manifest is simply the hash of the serialized manifest. We add an image configuration object that completely covers both its configration and root filesystem, making it possible to use the hash of the configuration as a content addressable ID of the image.
 
-v1 Manifest请求
+>The new format allows end-to-end content addressability. The existing v2 manifest format puts image configurations in "v1Compatibility" strings that use the same data model and non-content-addressable ID scheme that the legacy v1 protocol uses. Supporting this format with the content addressable image/layer model in Docker 1.10 involves hacks to do things like generate fake v1 IDs. The new format carries the actual image configuration as a blob, so push/pull transfers an exact copy of the image.
+
+>One nice side effect of this PR is that the hacks described above for assembling legacy manifests are moved out of the engine code into vendored distribution code. The distribution APIs now have a ManifestBuilder interface that abstracts away the job of creating a manifest in either the old or new format.
+
+>Schema 1 is designed for a model where every layer of an image is actually a runnable image. That's not how Docker works anymore. Since the switch to content addressability, layers are just filesystem diffs. When the image model changed, it made sense to switch to a different manifest format that makes sense for this model.
+
+>As mentioned above, schema 1 treats every layer like a separate image. Each layer has a v1compatibility string which includes an id key. That's the pre-1.10 image ID. But this isn't the ID that recent versions of Docker will use. Now that images are content-addressable, the ID is based on a hash of the configuration and layers. Basically Docker 1.10+ has to migrate schema1 images to the new format. That's why we replaced schema1.
+
+**<font color="#8B0000">总结如下区分</font>**：
+
+* 1、`Manifest Schema v2`的`image.ID`唯一标识该镜像（包括配置和layer信息），而`Manifest Schema v1`的镜像ID是随机生成的，不能标识镜像，存在伪造镜像ID的风险
+
+* 2、`Manifest Schema v1`的每个layer都关联着一个配置configuration，它将每个layer都看作一个单独的镜像（具有随机生成的镜像ID），而这是不符合docker工作原理的，并不是每个layer都是image
+
+* 3、`Manifest Schema v2`将layer数据与镜像`configuration`分开，结构更清晰合理，有利于后续扩展。镜像`configuration`包含镜像的配置信息以及组成镜像各layer的数据标识`layer.DiffID`；每个layer数据不再与配置关联，而是具有自己独立的内容唯一标识`layer.DIffID`和对应的树形内容（filesystem composed of a set of layers）唯一标识`layer.ChainID`
+
+下面给出docker 1.10+[兼容Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md#backward-compatibility)部分代码分析：
+
+>If the manifest being requested uses the new format, and the appropriate media type is not present in an Accept header, the registry will assume that the client cannot handle the manifest as-is, and rewrite it on the fly into the old format. If the object that would otherwise be returned is a manifest list, the registry will look up the appropriate manifest for the amd64 platform and linux OS, rewrite that manifest into the old format if necessary, and return the result to the client. If no suitable manifest is found in the manifest list, the registry will return a 404 error.
+
+>One of the challenges in rewriting manifests to the old format is that the old format involves an image configuration for each layer in the manifest, but the new format only provides one image configuration. To work around this, the registry will create synthetic image configurations for all layers except the top layer. These image configurations will not result in runnable images on their own, but only serve to fill in the parent chain in a compatible way. The IDs in these synthetic configurations will be derived from hashes of their respective blobs. The registry will create these configurations and their IDs using the same scheme as Docker 1.10 when it creates a legacy manifest to push to a registry which doesn't support the new format.
 
 ```sh
 [root@CentOS-64-duyanghao docker]# curl -v  http://x.x.x.x:5000/v2/duyanghao/busybox/manifests/v0 
@@ -3058,6 +3135,7 @@ func MakeConfigFromV1Config(imageJSON []byte, rootfs *image.RootFS, history []im
 }
 
 ```
+
 
 ### 参考
 
