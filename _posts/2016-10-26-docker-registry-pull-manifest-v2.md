@@ -2830,7 +2830,9 @@ sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 
 * 6 **[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)为什么不安全，相比而言，[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)有什么优点？**
 
-**<font color="#8B0000">下面分析[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)（docker 1.10-）与[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)不同，实际上也是分析两种不同的镜像数据模型</font>**
+<font color="#8B0000">下面分析[Manifest Schema v1](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-1.md)（docker 1.10-）与[Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)不同，实际上也是分析两种不同的镜像数据模型</font>
+
+Manifest Schema v1对应的数据模型：
 
 ![](/public/img/docker-registry/2016-10-26-docker-registry-pull-manifest-v2/Manifest_Schema_v1.png)
 
