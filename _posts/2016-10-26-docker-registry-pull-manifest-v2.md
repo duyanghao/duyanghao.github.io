@@ -2803,18 +2803,18 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 [{"Digest":"sha256:c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e","SourceRepository":"x.x.x.x:5000/duyanghao/busybox"}]
 ```
 
-* 5 `/data/docker/image/aufs/distribution/diffid-by-digest`目录下记录map：`digest`(**<font color="#8B0000">SHA256hex(compressed layer tar data)</font>**) -> `layer.DiffID`(**<font color="#8B0000">SHA256hex(uncompressed layer tar data)</font>**)
+* 6 `/data/docker/image/aufs/distribution/diffid-by-digest`目录下记录map：`digest`(**<font color="#8B0000">SHA256hex(compressed layer tar data)</font>**) -> `layer.DiffID`(**<font color="#8B0000">SHA256hex(uncompressed layer tar data)</font>**)
 
 ```sh
 [root@CentOS-64-duyanghao aufs]# cat distribution/diffid-by-digest/sha256/c0a04912aa5afc0b4fd4c34390e526d547e67431f6bc122084f1e692dcb7d34e 
 sha256:ae2b342b32f9ee27f0196ba59e9952c00e016836a11921ebc8baaf783847686a
 ```
 
-* 6 `/data/docker/image/aufs/imagedb/content/`目录下存放镜像**`configuration`**信息
+* 7 `/data/docker/image/aufs/imagedb/content/`目录下存放镜像**`configuration`**信息
 
-* 7 `/data/docker/image/aufs/layerdb/sha256/`目录下存放镜像各**layer元数据信息**
+* 8 `/data/docker/image/aufs/layerdb/sha256/`目录下存放镜像各**layer元数据信息**
 
-* 8 `/data/docker/aufs/diff/`目录下存放各layer的**<font color="#8B0000">uncompressed untar data</font>**
+* 9 `/data/docker/aufs/diff/`目录下存放各layer的**<font color="#8B0000">uncompressed untar data</font>**
 
 几个问题：
 
