@@ -1901,7 +1901,7 @@ Step 4 : CMD env | grep _TCP= | (sed 's/.*_PORT_\([0-9]*\)_TCP=tcp:\/\/\(.*\):\(
 Successfully built 7ea8aef582cc
 ```
 
-* `Config`与`ContainerConfig`区别？
+* **`Config`与`ContainerConfig`区别？**
 
 >// Config is the configuration of the container received from the client
    
@@ -2290,5 +2290,150 @@ func maintainer(b *Builder, args []string, attributes map[string]bool, original 
 
     b.maintainer = args[0]
     return b.commit("", b.runConfig.Cmd, fmt.Sprintf("MAINTAINER %s", b.maintainer))
+}
+// History stores build commands that were used to create an image
+type History struct {
+    // Created timestamp for build point
+    Created time.Time `json:"created"`
+    // Author of the build point
+    Author string `json:"author,omitempty"`
+    // CreatedBy keeps the Dockerfile command used while building image.
+    CreatedBy string `json:"created_by,omitempty"`
+    // Comment is custom message set by the user when creating the image.
+    Comment string `json:"comment,omitempty"`
+    // EmptyLayer is set to true if this history item did not generate a
+    // layer. Otherwise, the history item is associated with the next
+    // layer in the RootFS section.
+    EmptyLayer bool `json:"empty_layer,omitempty"`
+}
+```
+
+### docker commit
+
+```sh
+$docker commit ID new_image_name
+```
+
+```go
+// ContainerCommit applies changes into a container and creates a new tagged image.
+func (cli *Client) ContainerCommit(ctx context.Context, options types.ContainerCommitOptions) (types.ContainerCommitResponse, error) {
+    query := url.Values{}
+    query.Set("container", options.ContainerID)
+    query.Set("repo", options.RepositoryName)
+    query.Set("tag", options.Tag)
+    query.Set("comment", options.Comment)
+    query.Set("author", options.Author)
+    for _, change := range options.Changes {
+        query.Add("changes", change)
+    }
+    if options.Pause != true {
+        query.Set("pause", "0")
+    }
+
+    var response types.ContainerCommitResponse
+    resp, err := cli.post(ctx, "/commit", query, options.Config, nil)
+    if err != nil {
+        return response, err
+    }
+
+    err = json.NewDecoder(resp.body).Decode(&response)
+    ensureReaderClosed(resp)
+    return response, err
+}
+// initRoutes initializes the routes in the image router
+func (r *imageRouter) initRoutes() {
+    r.routes = []router.Route{
+        // GET
+        router.NewGetRoute("/images/json", r.getImagesJSON),
+        router.NewGetRoute("/images/search", r.getImagesSearch),
+        router.NewGetRoute("/images/get", r.getImagesGet),
+        router.NewGetRoute("/images/{name:.*}/get", r.getImagesGet),
+        router.NewGetRoute("/images/{name:.*}/history", r.getImagesHistory),
+        router.NewGetRoute("/images/{name:.*}/json", r.getImagesByName),
+        // POST
+        router.NewPostRoute("/commit", r.postCommit),
+        router.NewPostRoute("/images/create", r.postImagesCreate),
+        router.NewPostRoute("/images/load", r.postImagesLoad),
+        router.NewPostRoute("/images/{name:.*}/push", r.postImagesPush),
+        router.NewPostRoute("/images/{name:.*}/tag", r.postImagesTag),
+        // DELETE
+        router.NewDeleteRoute("/images/{name:.*}", r.deleteImages),
+    }
+}
+func (s *imageRouter) postCommit(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+    if err := httputils.ParseForm(r); err != nil {
+        return err
+    }
+
+    if err := httputils.CheckForJSON(r); err != nil {
+        return err
+    }
+
+    cname := r.Form.Get("container")
+
+    pause := httputils.BoolValue(r, "pause")
+    version := httputils.VersionFromContext(ctx)
+    if r.FormValue("pause") == "" && version.GreaterThanOrEqualTo("1.13") {
+        pause = true
+    }
+
+    c, _, _, err := runconfig.DecodeContainerConfig(r.Body)
+    if err != nil && err != io.EOF { //Do not fail if body is empty.
+        return err
+    }
+    if c == nil {
+        c = &container.Config{}
+    }
+
+    newConfig, err := dockerfile.BuildFromConfig(c, r.Form["changes"])
+    if err != nil {
+        return err
+    }
+
+    commitCfg := &types.ContainerCommitConfig{
+        Pause:        pause,
+        Repo:         r.Form.Get("repo"),
+        Tag:          r.Form.Get("tag"),
+        Author:       r.Form.Get("author"),
+        Comment:      r.Form.Get("comment"),
+        Config:       newConfig,
+        MergeConfigs: true,
+    }
+
+    imgID, err := s.backend.Commit(cname, commitCfg)
+    if err != nil {
+        return err
+    }
+
+    return httputils.WriteJSON(w, http.StatusCreated, &types.ContainerCommitResponse{
+        ID: string(imgID),
+    })
+}
+func initRouter(s *apiserver.Server, d *daemon.Daemon) {
+    routers := []router.Router{
+        container.NewRouter(d),
+        image.NewRouter(d),
+        systemrouter.NewRouter(d),
+        volume.NewRouter(d),
+        build.NewRouter(dockerfile.NewBuildManager(d)),
+    }
+    if d.NetworkControllerEnabled() {
+        routers = append(routers, network.NewRouter(d))
+    }
+
+    s.InitRouter(utils.IsDebugEnabled(), routers...)
+}
+// NewRouter initializes a new image router
+func NewRouter(backend Backend) router.Router {
+    r := &imageRouter{
+        backend: backend,
+    }
+    r.initRoutes()
+    return r
+}
+// imageRouter is a router to talk with the image controller
+type imageRouter struct {
+    backend Backend
+    routes  []router.Route
 }
 ```
