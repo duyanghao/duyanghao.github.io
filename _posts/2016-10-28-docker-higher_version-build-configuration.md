@@ -21,6 +21,23 @@ configuration文件`example`：
 $docker build -t image_name Dockerfile_path
 ```
 
+```sh
+$ docker build -t svendowideit/ambassador .
+Sending build context to Docker daemon 15.36 kB
+Step 1 : FROM alpine:3.2
+ ---> 31f630c65071
+Step 2 : MAINTAINER SvenDowideit@home.org.au
+ ---> Using cache
+ ---> 2a1c91448f5f
+Step 3 : RUN apk update &&      apk add socat &&        rm -r /var/cache/
+ ---> Using cache
+ ---> 21ed6e7fbb73
+Step 4 : CMD env | grep _TCP= | (sed 's/.*_PORT_\([0-9]*\)_TCP=tcp:\/\/\(.*\):\(.*\)/socat -t 100000000 TCP4-LISTEN:\1,fork,reuseaddr TCP4:\2:\3 \&/' && echo wait) | sh
+ ---> Using cache
+ ---> 7ea8aef582cc
+Successfully built 7ea8aef582cc
+```
+
 docker client
 
 ```go
@@ -1521,7 +1538,7 @@ func (b *Builder) commit(id string, autoCmd strslice.StrSlice, comment string) e
     if b.image == "" && !b.noBaseImage {
         return fmt.Errorf("Please provide a source image with `from` prior to commit")
     }
-    b.runConfig.Image = b.image //赋值parent image
+    b.runConfig.Image = b.image //赋值config.Image为目前为止的imageID
 
     if id == "" {
         cmd := b.runConfig.Cmd
@@ -1562,6 +1579,33 @@ func (b *Builder) commit(id string, autoCmd strslice.StrSlice, comment string) e
 
     b.image = imageID
     return nil
+}
+// probeCache checks if `b.docker` implements builder.ImageCache and image-caching
+// is enabled (`b.UseCache`).
+// If so attempts to look up the current `b.image` and `b.runConfig` pair with `b.docker`.
+// If an image is found, probeCache returns `(true, nil)`.
+// If no image is found, it returns `(false, nil)`.
+// If there is any error, it returns `(false, err)`.
+func (b *Builder) probeCache() (bool, error) {
+    c, ok := b.docker.(builder.ImageCache)
+    if !ok || b.options.NoCache || b.cacheBusted {
+        return false, nil
+    }
+    cache, err := c.GetCachedImageOnBuild(b.image, b.runConfig)
+    if err != nil {
+        return false, err
+    }
+    if len(cache) == 0 {
+        logrus.Debugf("[BUILDER] Cache miss: %s", b.runConfig.Cmd)
+        b.cacheBusted = true
+        return false, nil
+    }
+
+    fmt.Fprintf(b.Stdout, " ---> Using cache\n")
+    logrus.Debugf("[BUILDER] Use cached version: %s", b.runConfig.Cmd)
+    b.image = string(cache)
+
+    return true, nil
 }
 // Commit creates a new filesystem image from the current state of a container.
 // The image can optionally be tagged into a repository.
@@ -1729,7 +1773,522 @@ type Backend interface {
 
 问题：
 
-* Config与ContainerConfig区别？
+* `Config`与`ContainerConfig`区别？
 
-* Config.Image表示什么？是parent imageID？若不是有什么作用？
+* `Config.Image`表示什么？是`parent imageID`？若不是有什么作用？
 
+>Image           string                // Name of the image as it was passed by the operator (eg. could be symbolic)
+
+```go
+// Commit creates a new filesystem image from the current state of a container.
+// The image can optionally be tagged into a repository.
+func (daemon *Daemon) Commit(name string, c *types.ContainerCommitConfig) (string, error) {
+    ...
+    id, err := daemon.imageStore.Create(config)
+    ...
+}
+
+// Daemon holds information about the Docker daemon.
+type Daemon struct {
+    ID                        string
+    repository                string
+    containers                container.Store
+    execCommands              *exec.Store
+    referenceStore            reference.Store
+    downloadManager           *xfer.LayerDownloadManager
+    uploadManager             *xfer.LayerUploadManager
+    distributionMetadataStore dmetadata.Store
+    trustKey                  libtrust.PrivateKey
+    idIndex                   *truncindex.TruncIndex
+    configStore               *Config
+    statsCollector            *statsCollector
+    defaultLogConfig          containertypes.LogConfig
+    RegistryService           *registry.Service
+    EventsService             *events.Events
+    netController             libnetwork.NetworkController
+    volumes                   *store.VolumeStore
+    discoveryWatcher          discoveryReloader
+    root                      string
+    seccompEnabled            bool
+    shutdown                  bool
+    uidMaps                   []idtools.IDMap
+    gidMaps                   []idtools.IDMap
+    layerStore                layer.Store
+    imageStore                image.Store
+    nameIndex                 *registrar.Registrar
+    linkIndex                 *linkIndex
+    containerd                libcontainerd.Client
+    defaultIsolation          containertypes.Isolation // Default isolation mode on Windows
+}
+func (is *store) Create(config []byte) (ID, error) {
+    var img Image
+    err := json.Unmarshal(config, &img)
+    if err != nil {
+        return "", err
+    }
+
+    // Must reject any config that references diffIDs from the history
+    // which aren't among the rootfs layers.
+    rootFSLayers := make(map[layer.DiffID]struct{})
+    for _, diffID := range img.RootFS.DiffIDs {
+        rootFSLayers[diffID] = struct{}{}
+    }
+
+    layerCounter := 0
+    for _, h := range img.History {
+        if !h.EmptyLayer {
+            layerCounter++
+        }
+    }
+    if layerCounter > len(img.RootFS.DiffIDs) {
+        return "", errors.New("too many non-empty layers in History section")
+    }
+
+    dgst, err := is.fs.Set(config)
+    if err != nil {
+        return "", err
+    }
+    imageID := ID(dgst)
+
+    is.Lock()
+    defer is.Unlock()
+
+    if _, exists := is.images[imageID]; exists {
+        return imageID, nil
+    }
+
+    layerID := img.RootFS.ChainID()
+
+    var l layer.Layer
+    if layerID != "" {
+        l, err = is.ls.Get(layerID)
+        if err != nil {
+            return "", err
+        }
+    }
+
+    imageMeta := &imageMeta{
+        layer:    l,
+        children: make(map[ID]struct{}),
+    }
+
+    is.images[imageID] = imageMeta
+    if err := is.digestSet.Add(digest.Digest(imageID)); err != nil {
+        delete(is.images, imageID)
+        return "", err
+    }
+
+    return imageID, nil
+}
+```
+
+`config.Image`表示`docker build`过程中产生的`imageID`，例如（31f630c65071、2a1c91448f5f、21ed6e7fbb73）并不一定是父镜像`imageID`
+
+```sh
+$ docker build -t svendowideit/ambassador .
+Sending build context to Docker daemon 15.36 kB
+Step 1 : FROM alpine:3.2
+ ---> 31f630c65071
+Step 2 : MAINTAINER SvenDowideit@home.org.au
+ ---> Using cache
+ ---> 2a1c91448f5f
+Step 3 : RUN apk update &&      apk add socat &&        rm -r /var/cache/
+ ---> Using cache
+ ---> 21ed6e7fbb73
+Step 4 : CMD env | grep _TCP= | (sed 's/.*_PORT_\([0-9]*\)_TCP=tcp:\/\/\(.*\):\(.*\)/socat -t 100000000 TCP4-LISTEN:\1,fork,reuseaddr TCP4:\2:\3 \&/' && echo wait) | sh
+ ---> Using cache
+ ---> 7ea8aef582cc
+Successfully built 7ea8aef582cc
+```
+
+* `Config`与`ContainerConfig`区别？
+
+>// Config is the configuration of the container received from the client
+   
+>// ContainerConfig is the configuration of the container that is committed into the image
+
+```go
+// Commit creates a new filesystem image from the current state of a container.
+// The image can optionally be tagged into a repository.
+func (daemon *Daemon) Commit(name string, c *types.ContainerCommitConfig) (string, error) {
+    container, err := daemon.GetContainer(name)
+    if err != nil {
+        return "", err
+    }
+
+    // It is not possible to commit a running container on Windows
+    if runtime.GOOS == "windows" && container.IsRunning() {
+        return "", fmt.Errorf("Windows does not support commit of a running container")
+    }
+
+    if c.Pause && !container.IsPaused() {
+        daemon.containerPause(container)
+        defer daemon.containerUnpause(container)
+    }
+
+    if c.MergeConfigs {
+        if err := merge(c.Config, container.Config); err != nil {
+            return "", err
+        }
+    }
+
+    rwTar, err := daemon.exportContainerRw(container)
+    if err != nil {
+        return "", err
+    }
+    defer func() {
+        if rwTar != nil {
+            rwTar.Close()
+        }
+    }()
+
+    var history []image.History
+    rootFS := image.NewRootFS()
+
+    if container.ImageID != "" {
+        img, err := daemon.imageStore.Get(container.ImageID)
+        if err != nil {
+            return "", err
+        }
+        history = img.History
+        rootFS = img.RootFS
+    }
+
+    l, err := daemon.layerStore.Register(rwTar, rootFS.ChainID())
+    if err != nil {
+        return "", err
+    }
+    defer layer.ReleaseAndLog(daemon.layerStore, l)
+
+    h := image.History{
+        Author:     c.Author,
+        Created:    time.Now().UTC(),
+        CreatedBy:  strings.Join(container.Config.Cmd, " "),
+        Comment:    c.Comment,
+        EmptyLayer: true,
+    }
+
+    if diffID := l.DiffID(); layer.DigestSHA256EmptyTar != diffID {
+        h.EmptyLayer = false
+        rootFS.Append(diffID)
+    }
+
+    history = append(history, h)
+
+    config, err := json.Marshal(&image.Image{
+        V1Image: image.V1Image{
+            DockerVersion:   dockerversion.Version,
+            Config:          c.Config,
+            Architecture:    runtime.GOARCH,
+            OS:              runtime.GOOS,
+            Container:       container.ID,
+            ContainerConfig: *container.Config,
+            Author:          c.Author,
+            Created:         h.Created,
+        },
+        RootFS:  rootFS,
+        History: history,
+    })
+
+    if err != nil {
+        return "", err
+    }
+
+    id, err := daemon.imageStore.Create(config)
+    if err != nil {
+        return "", err
+    }
+
+    if container.ImageID != "" {
+        if err := daemon.imageStore.SetParent(id, container.ImageID); err != nil {
+            return "", err
+        }
+    }
+
+    if c.Repo != "" {
+        newTag, err := reference.WithName(c.Repo) // todo: should move this to API layer
+        if err != nil {
+            return "", err
+        }
+        if c.Tag != "" {
+            if newTag, err = reference.WithTag(newTag, c.Tag); err != nil {
+                return "", err
+            }
+        }
+        if err := daemon.TagImage(newTag, id.String()); err != nil {
+            return "", err
+        }
+    }
+
+    attributes := map[string]string{
+        "comment": c.Comment,
+    }
+    daemon.LogContainerEventWithAttributes(container, "commit", attributes)
+    return id.String(), nil
+}
+func (b *Builder) commit(id string, autoCmd strslice.StrSlice, comment string) error {
+    if b.disableCommit {
+        return nil
+    }
+    if b.image == "" && !b.noBaseImage {
+        return fmt.Errorf("Please provide a source image with `from` prior to commit")
+    }
+    b.runConfig.Image = b.image
+
+    if id == "" {
+        cmd := b.runConfig.Cmd
+        if runtime.GOOS != "windows" {
+            b.runConfig.Cmd = strslice.StrSlice{"/bin/sh", "-c", "#(nop) " + comment}
+        } else {
+            b.runConfig.Cmd = strslice.StrSlice{"cmd", "/S /C", "REM (nop) " + comment}
+        }
+        defer func(cmd strslice.StrSlice) { b.runConfig.Cmd = cmd }(cmd)
+
+        hit, err := b.probeCache()
+        if err != nil {
+            return err
+        } else if hit {
+            return nil
+        }
+        id, err = b.create()
+        if err != nil {
+            return err
+        }
+    }
+
+    // Note: Actually copy the struct
+    autoConfig := *b.runConfig
+    autoConfig.Cmd = autoCmd
+
+    commitCfg := &types.ContainerCommitConfig{
+        Author: b.maintainer,
+        Pause:  true,
+        Config: &autoConfig,
+    }
+
+    // Commit the container
+    imageID, err := b.docker.Commit(id, commitCfg)
+    if err != nil {
+        return err
+    }
+
+    b.image = imageID
+    return nil
+}
+func (b *Builder) create() (string, error) {
+    if b.image == "" && !b.noBaseImage {
+        return "", fmt.Errorf("Please provide a source image with `from` prior to run")
+    }
+    b.runConfig.Image = b.image
+
+    resources := container.Resources{
+        CgroupParent: b.options.CgroupParent,
+        CPUShares:    b.options.CPUShares,
+        CPUPeriod:    b.options.CPUPeriod,
+        CPUQuota:     b.options.CPUQuota,
+        CpusetCpus:   b.options.CPUSetCPUs,
+        CpusetMems:   b.options.CPUSetMems,
+        Memory:       b.options.Memory,
+        MemorySwap:   b.options.MemorySwap,
+        Ulimits:      b.options.Ulimits,
+    }
+
+    // TODO: why not embed a hostconfig in builder?
+    hostConfig := &container.HostConfig{
+        Isolation: b.options.Isolation,
+        ShmSize:   b.options.ShmSize,
+        Resources: resources,
+    }
+
+    config := *b.runConfig
+
+    // Create the container
+    c, err := b.docker.ContainerCreate(types.ContainerCreateConfig{
+        Config:     b.runConfig,
+        HostConfig: hostConfig,
+    })
+    if err != nil {
+        return "", err
+    }
+    for _, warning := range c.Warnings {
+        fmt.Fprintf(b.Stdout, " ---> [Warning] %s\n", warning)
+    }
+
+    b.tmpContainers[c.ID] = struct{}{}
+    fmt.Fprintf(b.Stdout, " ---> Running in %s\n", stringid.TruncateID(c.ID))
+
+    // override the entry point that may have been picked up from the base image
+    if err := b.docker.ContainerUpdateCmdOnBuild(c.ID, config.Cmd); err != nil {
+        return "", err
+    }
+
+    return c.ID, nil
+}
+// ContainerCreateConfig is the parameter set to ContainerCreate()
+type ContainerCreateConfig struct {
+    Name             string
+    Config           *container.Config
+    HostConfig       *container.HostConfig
+    NetworkingConfig *network.NetworkingConfig
+    AdjustCPUShares  bool
+}
+// ContainerCreate creates a container.
+func (daemon *Daemon) ContainerCreate(params types.ContainerCreateConfig) (types.ContainerCreateResponse, error) {
+    if params.Config == nil {
+        return types.ContainerCreateResponse{}, fmt.Errorf("Config cannot be empty in order to create a container")
+    }
+
+    warnings, err := daemon.verifyContainerSettings(params.HostConfig, params.Config, false)
+    if err != nil {
+        return types.ContainerCreateResponse{Warnings: warnings}, err
+    }
+
+    err = daemon.verifyNetworkingConfig(params.NetworkingConfig)
+    if err != nil {
+        return types.ContainerCreateResponse{}, err
+    }
+
+    if params.HostConfig == nil {
+        params.HostConfig = &containertypes.HostConfig{}
+    }
+    err = daemon.adaptContainerSettings(params.HostConfig, params.AdjustCPUShares)
+    if err != nil {
+        return types.ContainerCreateResponse{Warnings: warnings}, err
+    }
+
+    container, err := daemon.create(params)
+    if err != nil {
+        return types.ContainerCreateResponse{Warnings: warnings}, daemon.imageNotExistToErrcode(err)
+    }
+
+    return types.ContainerCreateResponse{ID: container.ID, Warnings: warnings}, nil
+}
+// Create creates a new container from the given configuration with a given name.
+func (daemon *Daemon) create(params types.ContainerCreateConfig) (retC *container.Container, retErr error) {
+    var (
+        container *container.Container
+        img       *image.Image
+        imgID     image.ID
+        err       error
+    )
+
+    if params.Config.Image != "" {
+        img, err = daemon.GetImage(params.Config.Image)
+        if err != nil {
+            return nil, err
+        }
+        imgID = img.ID()
+    }
+
+    if err := daemon.mergeAndVerifyConfig(params.Config, img); err != nil {
+        return nil, err
+    }
+
+    if container, err = daemon.newContainer(params.Name, params.Config, imgID); err != nil {
+        return nil, err
+    }
+    defer func() {
+        if retErr != nil {
+            if err := daemon.ContainerRm(container.ID, &types.ContainerRmConfig{ForceRemove: true}); err != nil {
+                logrus.Errorf("Clean up Error! Cannot destroy container %s: %v", container.ID, err)
+            }
+        }
+    }()
+
+    if err := daemon.setSecurityOptions(container, params.HostConfig); err != nil {
+        return nil, err
+    }
+
+    // Set RWLayer for container after mount labels have been set
+    if err := daemon.setRWLayer(container); err != nil {
+        return nil, err
+    }
+
+    if err := daemon.Register(container); err != nil {
+        return nil, err
+    }
+    rootUID, rootGID, err := idtools.GetRootUIDGID(daemon.uidMaps, daemon.gidMaps)
+    if err != nil {
+        return nil, err
+    }
+    if err := idtools.MkdirAs(container.Root, 0700, rootUID, rootGID); err != nil {
+        return nil, err
+    }
+
+    if err := daemon.setHostConfig(container, params.HostConfig); err != nil {
+        return nil, err
+    }
+    defer func() {
+        if retErr != nil {
+            if err := daemon.removeMountPoints(container, true); err != nil {
+                logrus.Error(err)
+            }
+        }
+    }()
+
+    if err := daemon.createContainerPlatformSpecificSettings(container, params.Config, params.HostConfig); err != nil {
+        return nil, err
+    }
+
+    var endpointsConfigs map[string]*networktypes.EndpointSettings
+    if params.NetworkingConfig != nil {
+        endpointsConfigs = params.NetworkingConfig.EndpointsConfig
+    }
+
+    if err := daemon.updateContainerNetworkSettings(container, endpointsConfigs); err != nil {
+        return nil, err
+    }
+
+    if err := container.ToDiskLocking(); err != nil {
+        logrus.Errorf("Error saving new container to disk: %v", err)
+        return nil, err
+    }
+    daemon.LogContainerEvent(container, "create")
+    return container, nil
+}
+// GetContainer looks for a container using the provided information, which could be
+// one of the following inputs from the caller:
+//  - A full container ID, which will exact match a container in daemon's list
+//  - A container name, which will only exact match via the GetByName() function
+//  - A partial container ID prefix (e.g. short ID) of any length that is
+//    unique enough to only return a single container object
+//  If none of these searches succeed, an error is returned
+func (daemon *Daemon) GetContainer(prefixOrName string) (*container.Container, error) {
+    if containerByID := daemon.containers.Get(prefixOrName); containerByID != nil {
+        // prefix is an exact match to a full container ID
+        return containerByID, nil
+    }
+
+    // GetByName will match only an exact name provided; we ignore errors
+    if containerByName, _ := daemon.GetByName(prefixOrName); containerByName != nil {
+        // prefix is an exact match to a full container Name
+        return containerByName, nil
+    }
+
+    containerID, indexError := daemon.idIndex.Get(prefixOrName)
+    if indexError != nil {
+        // When truncindex defines an error type, use that instead
+        if indexError == truncindex.ErrNotExist {
+            err := fmt.Errorf("No such container: %s", prefixOrName)
+            return nil, errors.NewRequestNotFoundError(err)
+        }
+        return nil, indexError
+    }
+    return daemon.containers.Get(containerID), nil
+}
+// MAINTAINER some text <maybe@an.email.address>
+//
+// Sets the maintainer metadata.
+func maintainer(b *Builder, args []string, attributes map[string]bool, original string) error {
+    if len(args) != 1 {
+        return errExactlyOneArgument("MAINTAINER")
+    }
+
+    if err := b.flags.Parse(); err != nil {
+        return err
+    }
+
+    b.maintainer = args[0]
+    return b.commit("", b.runConfig.Cmd, fmt.Sprintf("MAINTAINER %s", b.maintainer))
+}
+```
