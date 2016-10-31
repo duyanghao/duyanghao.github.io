@@ -3148,3 +3148,5 @@ func MakeConfigFromV1Config(imageJSON []byte, rootfs *image.RootFS, history []im
 * [Manifest Schema v2](https://github.com/docker/distribution/blob/master/docs/spec/manifest-v2-2.md)
 
 * [issues/22225](https://github.com/docker/docker/issues/22225)
+
+* [docker docs](https://github.com/aaronlehmann/docker/blob/updated-image-spec/image/spec/v1.1.md)
