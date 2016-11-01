@@ -266,7 +266,7 @@ Go语言[`Method sets`](https://golang.org/ref/spec#Method_sets)规定如下：
 
 具体原因参考[这里](https://golang.org/doc/faq#different_method_sets)
 
-上面，我们实现了指针类型`fz.(*Sx_inter)`的方法`Print_hello`，而值类型`fz.Sx_inter`并没有实现该方法。也即`fz.(*Sx_inter)`指针类型实现了`fz.Test_inter`接口，可以进行对接口进行赋值；而`fz.Sx_inter`值类型并没有实现`fz.Test_inter`接口，无法对接口进行赋值
+上面，我们实现了指针类型`fz.(*Sx_inter)`的方法`Print_hello`，而值类型`fz.Sx_inter`并没有实现该方法。也即`fz.(*Sx_inter)`指针类型实现了`fz.Test_inter`接口，可以对接口进行赋值；而`fz.Sx_inter`值类型并没有实现`fz.Test_inter`接口，无法对接口进行赋值
 
 **注意：这里的描述有一个上下文，就是给接口赋值。除此之外，不管是值类型还是指针类型，都实现了`receiver`为 T 和 *T的方法**
 
@@ -297,15 +297,15 @@ Should I define methods on values or pointers?
 
 那么什么时候用值方法，什么时候用指针方法呢？主要考虑以下一些因素：
 
-* 如果方法要修改`receiver`，那么必须是指针方法
+* **如果方法要修改`receiver`，那么必须是指针方法**
 
-* 指针方法是常用的，而值方法是不常用的
+* **指针方法是常用的，而值方法是不常用的**
 
-* 考虑到效率，指针方法更好（传递 值类型vs指针类型）
+* **考虑到效率，指针方法更好（传递 值类型vs指针类型）**
 
-* 一致性，要么全部都是指针方法，要么全部都是值方法
+* **一致性，要么全部都是指针方法，要么全部都是值方法**
 
-* 对于一些基本类型、切片、或者小的结构体，使用value receiver效率会更高一些
+* **对于一些基本类型、切片、或者小的结构体，使用value receiver效率会更高一些**
 
 总结：除非必须使用指针方法，一般情况下使用值方法效率更高，也更清晰
 
