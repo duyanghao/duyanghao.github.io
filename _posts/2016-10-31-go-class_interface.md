@@ -9,7 +9,7 @@ excerpt: Go类与接口的使用总结
 
 本文总结了Go类和接口的使用
 
-### Go类
+## Go类
 
 #### 封装
 
@@ -22,6 +22,7 @@ Go将封装简化为2层（不光是类，对Go语言中任何标识符都生效
 例子：
 
 目录结构：
+
 ```sh
 .
 ├── main.go
@@ -70,9 +71,9 @@ go run main.go
 ./main.go:8: ts.write undefined (cannot refer to unexported field or method fz.(*Fz_str)."".write)
 ```
 
-编译报错，显示`ts.write undefined`，将write改首字母改大写，运行成功！
+编译报错，显示`ts.write undefined`，将write首字母改大写，运行成功！
 
-同理，变量小写编译报错，转大写后，运行成功！
+同理，添加变量，变量小写访问编译报错，转大写后，运行成功！
 
 #### 继承
 
@@ -104,11 +105,6 @@ fz.go函数:
 package fz
 
 import "fmt"
-
-type int_fz interface{
-        Read()
-        Write()
-}
 
 type Fz_str struct{
         Str string
@@ -168,7 +164,7 @@ type Fz_jc struct{
 ./main.go:12: ts.Str2 undefined (type fz.Fz_jc has no field or method Str2)
 ```
 
-**必须只填写类型，不能填写名变量名，否则就是组合了**
+**必须只填写类型，不能填写变量名，否则就是组合，不能通过变量名直接访问组合成员的方法和变量了**f
 
 **Go在编译过程中会对组合类型逐项检查是否存在该变量和方法，若不存在或多于1个则报编译错误**
 
@@ -182,6 +178,59 @@ type Fz_jc struct{
 
 #### 多态
 
+用接口实现：某个类型的实例可以赋给它所实现的任意接口类型的变量，类型和接口是松耦合的
 
+如下例子：
 
-### Go接口
+main.go函数：
+
+```go
+package main
+
+import "fz"
+
+func main(){
+        var tst fz.Test_inter = new(fz.Sx_inter)
+        tst.Print_hello()
+        tst = new(fz.Sx2_inter)
+        tst.Print_hello()
+}
+```
+
+fz.go函数；
+
+```go
+package fz
+
+import "fmt"
+
+type Test_inter interface{
+        Print_hello()
+}
+
+type Sx_inter struct{
+        //...
+}
+
+type Sx2_inter struct{
+        //...
+}
+
+func ( *Sx_inter) Print_hello(){
+        fmt.Print("hello Sx_inter\n")
+}
+
+func ( *Sx2_inter) Print_hello(){
+        fmt.Print("hello Sx2_inter\n")
+}
+```
+
+运行:
+
+```sh
+# go run main.go 
+hello Sx_inter
+hello Sx2_inter
+```
+
+## Go接口
