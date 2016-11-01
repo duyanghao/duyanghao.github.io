@@ -266,7 +266,7 @@ Go语言[`Method sets`](https://golang.org/ref/spec#Method_sets)规定如下：
 
 具体原因参考[这里](https://golang.org/doc/faq#different_method_sets)
 
-上面，我们实现了指针类型`fz.(*Sx_inter)`的方法`Print_hello`，而值类型`fz.Sx_inter`并没有实现该方法。也即`fz.(*Sx_inter)`指针类型实现了`fz.Test_inter`接口，可以进行对接口进行赋值；而`fz.Sx_inter`值类型并没有实现`fz.Test_inter`接口，无法对接口进行赋值。
+上面，我们实现了指针类型`fz.(*Sx_inter)`的方法`Print_hello`，而值类型`fz.Sx_inter`并没有实现该方法。也即`fz.(*Sx_inter)`指针类型实现了`fz.Test_inter`接口，可以进行对接口进行赋值；而`fz.Sx_inter`值类型并没有实现`fz.Test_inter`接口，无法对接口进行赋值
 
 **注意：这里的描述有一个上下文，就是给接口赋值。除此之外，不管是值类型还是指针类型，都实现了`receiver`为 T 和 *T的方法**
 
