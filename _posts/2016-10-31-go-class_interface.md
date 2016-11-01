@@ -164,7 +164,7 @@ type Fz_jc struct{
 ./main.go:12: ts.Str2 undefined (type fz.Fz_jc has no field or method Str2)
 ```
 
-**必须只填写类型，不能填写变量名，否则就是组合，不能通过变量名直接访问组合成员的方法和变量了**f
+**必须只填写类型，不能填写变量名，否则就是组合，不能通过变量名直接访问组合成员的方法和变量**
 
 **Go在编译过程中会对组合类型逐项检查是否存在该变量和方法，若不存在或多于1个则报编译错误**
 
@@ -233,4 +233,7 @@ hello Sx_inter
 hello Sx2_inter
 ```
 
-## Go接口
+## 参考
+
+* [interface](http://hustcat.github.io/interface/)
+
