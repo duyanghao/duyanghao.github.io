@@ -1,13 +1,13 @@
 ---
 layout: post
-title: Go类与接口
+title: Go类
 date: 2016-10-31 22:49:51
 category: 技术
 tags: Go
-excerpt: Go类与接口的使用总结
+excerpt: Go语言类的概述
 ---
 
-本文总结了Go类和接口的使用
+本文概述了Go语言类的使用
 
 ## Go类
 
