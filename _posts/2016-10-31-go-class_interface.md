@@ -319,3 +319,4 @@ Should I define methods on values or pointers?
 
 * [Go by Example: Interfaces](https://gobyexample.com/interfaces)
 
+* [Cannot define new methods on non-local type](http://stackoverflow.com/questions/28800672/how-to-add-new-methods-to-an-existing-type-in-go)
