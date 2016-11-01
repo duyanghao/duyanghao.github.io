@@ -11,6 +11,8 @@ excerpt: Go语言类的概述
 
 ## Go类
 
+面向对象最重要的三个特征：封装、继承与多态，下面分别介绍：
+
 #### 封装
 
 Go将封装简化为2层（不光是类，对Go语言中任何标识符都生效）：
@@ -233,7 +235,87 @@ hello Sx_inter
 hello Sx2_inter
 ```
 
+>An interface type specifies a method set called its interface. A variable of interface type can store a value of any type with a method set that is any superset of the interface. Such a type is said to implement the interface. The value of an uninitialized variable of interface type is nil.
+
+也即接口是一些方法的集合（`method set`），接口类型的变量可以存储任何实现了该接口（**也即实现了接口声明的所有方法**）的类型变量，未初始化的接口变量值为`nil`
+
+所以上面例子中`fz.(*Sx_inter)`指针类型变量可以赋值给`fz.Test_inter`接口类型变量
+
+**注意**，如果将`fz.Sx_inter`值类型变量赋值给`fz.Test_inter`接口类型变量，如下：
+
+```sh
+var tst fz.Test_inter = fz.Sx_inter{} 
+```
+
+编译报错，如下：
+
+```sh
+# go run main.go 
+# command-line-arguments
+./main.go:6: cannot use fz.Sx_inter literal (type fz.Sx_inter) as type fz.Test_inter in assignment:
+        fz.Sx_inter does not implement fz.Test_inter (Print_hello method has pointer receiver)
+```
+
+Go语言[`Method sets`](https://golang.org/ref/spec#Method_sets)规定如下：
+
+>The method set of any other type T consists of all methods declared with receiver type T. The method set of the corresponding pointer type *T is the set of all methods declared with receiver *T or T (that is, it also contains the method set of T). 
+
+简单的讲就是：指针类型（*T）包含`receiver`为 T 或者 *T的方法，而值类型（T）只包含`receiver`为 T 的方法。[effective go](https://golang.org/doc/effective_go.html#pointers_vs_values)中有这样的描述：
+
+>We pass the address of a ByteSlice because only *ByteSlice satisfies io.Writer. The rule about pointers vs. values for receivers is that value methods can be invoked on pointers and values, but pointer methods can only be invoked on pointers.
+
+具体原因参考[这里](https://golang.org/doc/faq#different_method_sets)
+
+上面，我们实现了指针类型`fz.(*Sx_inter)`的方法`Print_hello`，而值类型`fz.Sx_inter`并没有实现该方法。也即`fz.(*Sx_inter)`指针类型实现了`fz.Test_inter`接口，可以进行对接口进行赋值；而`fz.Sx_inter`值类型并没有实现`fz.Test_inter`接口，无法对接口进行赋值。
+
+**注意：这里的描述有一个上下文，就是给接口赋值。除此之外，不管是值类型还是指针类型，都实现了`receiver`为 T 和 *T的方法**
+
+## 补充
+
+#### [值方法与指针方法](https://golang.org/doc/faq#methods_on_values_or_pointers)
+
+值方法（value method，receiver为value）与指针方法（pointer method，receiver与pointer）
+
+```go
+func (s *MyStruct) pointerMethod() { } // method on pointer
+func (s MyStruct)  valueMethod()   { } // method on value
+```
+
+Should I define methods on values or pointers?
+
+>For programmers unaccustomed to pointers, the distinction between these two examples can be confusing, but the situation is actually very simple. When defining a method on a type, the receiver (s in the above examples) behaves exactly as if it were an argument to the method. Whether to define the receiver as a value or as a pointer is the same question, then, as whether a function argument should be a value or a pointer. There are several considerations.
+
+>First, and most important, does the method need to modify the receiver? If it does, the receiver must be a pointer. (Slices and maps act as references, so their story is a little more subtle, but for instance to change the length of a slice in a method the receiver must still be a pointer.) In the examples above, if pointerMethod modifies the fields of s, the caller will see those changes, but valueMethod is called with a copy of the caller's argument (that's the definition of passing a value), so changes it makes will be invisible to the caller.
+
+>By the way, pointer receivers are identical to the situation in Java, although in Java the pointers are hidden under the covers; it's Go's value receivers that are unusual.
+
+>Second is the consideration of efficiency. If the receiver is large, a big struct for instance, it will be much cheaper to use a pointer receiver.
+
+>Next is consistency. If some of the methods of the type must have pointer receivers, the rest should too, so the method set is consistent regardless of how the type is used. See the section on method sets for details.
+
+>For types such as basic types, slices, and small structs, a value receiver is very cheap so unless the semantics of the method requires a pointer, a value receiver is efficient and clear.
+
+那么什么时候用值方法，什么时候用指针方法呢？主要考虑以下一些因素：
+
+* 如果方法要修改`receiver`，那么必须是指针方法
+
+* 指针方法是常用的，而值方法是不常用的
+
+* 考虑到效率，指针方法更好（传递 值类型vs指针类型）
+
+* 一致性，要么全部都是指针方法，要么全部都是值方法
+
+* 对于一些基本类型、切片、或者小的结构体，使用value receiver效率会更高一些
+
+总结：除非必须使用指针方法，一般情况下使用值方法效率更高，也更清晰
+
 ## 参考
 
 * [interface](http://hustcat.github.io/interface/)
+
+* [Effective Go](https://golang.org/doc/effective_go.html)
+
+* [Interface types](https://golang.org/ref/spec#Interface_types)
+
+* [Go by Example: Interfaces](https://gobyexample.com/interfaces)
 
