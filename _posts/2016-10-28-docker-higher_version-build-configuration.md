@@ -1908,6 +1908,11 @@ Successfully built 7ea8aef582cc
 >// ContainerConfig is the configuration of the container that is committed into the image
 
 ```go
+// DigestSHA256EmptyTar is the canonical sha256 digest of empty tar file -
+// (1024 NULL bytes)
+const DigestSHA256EmptyTar = DiffID("sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef")
+
+
 // Commit creates a new filesystem image from the current state of a container.
 // The image can optionally be tagged into a repository.
 func (daemon *Daemon) Commit(name string, c *types.ContainerCommitConfig) (string, error) {
