@@ -17,7 +17,7 @@ this article simply describes three Linux startup mechanisms.
 
 2、执行/etc/rc.d/rc(again driven by entries in /etc/inittab)
 
-工具：chkconfig(eg:/etc/rc.d/init.d/docker,/etc/sysconfig/docker,/etc/rc.d/rcX(0-6).d/docker)
+工具：chkconfig(eg:/etc/rc.d/init.d/docker,/etc/sysconfig/docker,/etc/rcX(0-6).d/S95docker)
 
 ## [Linux System Process Initialization Using Upstart (Upstart)](http://glennastory.net/boot/upstart.html)
 
@@ -68,11 +68,10 @@ Whereas [SysV Init](http://glennastory.net/boot/init.html) is made entirely from
 ## [Linux Login](http://glennastory.net/boot/login.html)
 ……
 
+## 参考
 
+* [chkconfig refer1](http://www.cnblogs.com/wangtao_20/archive/2014/04/04/3645690.html)
 
+* [chkconfig refer2](http://blog.csdn.net/taiyang1987912/article/details/41698817)
 
-
-
-
-
-
+* [systemd](https://blog.linuxeye.com/400.html)
