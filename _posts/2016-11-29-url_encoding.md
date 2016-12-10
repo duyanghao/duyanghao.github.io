@@ -63,9 +63,7 @@ Encoded URL is "http://www.example.com/some/path/or/other_with_funny_characters%
 ## Refs
 
 * [URL编码](http://www.ruanyifeng.com/blog/2010/02/url_encoding.html)
-
 * [Encode / decode URLs](http://stackoverflow.com/questions/13820280/encode-decode-urls)
-
 * [HTML URL Encoding Reference](http://www.w3schools.com/tags/ref_urlencode.asp)
 
 
