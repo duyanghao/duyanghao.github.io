@@ -10,6 +10,7 @@ excerpt: three methods to avoid zombie process……
 ## what is zombie process?
 
 From [Wikipedia](https://en.wikipedia.org/wiki/Zombie_process):
+
 >On Unix and Unix-like computer operating systems, a zombie process or defunct process is a process that has completed execution (via the exit system call) but still has an entry in the process table: it is a process in the "Terminated state". This occurs for child processes, where the entry is still needed to allow the parent process to read its child's exit status: once the exit status is read via the wait system call, the zombie's entry is removed from the process table and it is said to be "reaped". A child process always first becomes a zombie before being removed from the resource table. In most cases, under normal system operation zombies are immediately waited on by their parent and then reaped by the system – processes that stay zombies for a long time are generally an error and cause a resource leak.
 
 >The term zombie process derives from the common definition of zombie — an undead person. In the term's metaphor, the child process has "died" but has not yet been "reaped". Also, unlike normal processes, the kill command has no effect on a zombie process.
@@ -48,7 +49,7 @@ after 20s,both the process and child process disappear!
 
 ## ways to avoid zombie process
 
-There are always three methods to avoid zombie process as below(Perl language examples):
+There are normal three methods to avoid zombie process as below(Perl language examples):
 
 ### method 1
 
@@ -192,9 +193,9 @@ But,one drawback of this method is that it is slightly less portable than explic
 
 ## Attention
 
-* 1. signal inheritance
-* 2. signal handler setting(durable)
-* 3. variable save(signal handler)
+* 1.signal inheritance
+* 2.signal handler setting(durable)
+* 3.variable save(signal handler)
 
 ## Refs
 
