@@ -85,7 +85,7 @@ immediately,there are two normal process as below(child process's parent is `ini
 
 ![](/public/img/zombie_process/3.png)
 
-after 10s,the child disappear as below("reaped" by init):
+after 10s,the child disappear as below("reaped" by init process):
 
 ![](/public/img/zombie_process/4.png)
 
@@ -187,9 +187,9 @@ after 20s,the parent process disappear.
 
 Note that it is not sufficient for SIGCHLD to have a disposition that causes it to be ignored (as the default, SIG_DFL, would do): it is only by setting it to SIG_IGN that this behaviour is obtained.
 
-Compared to waitpid and two-forks methods,this method is more efficient and simple.So,it is the recommended method to avoid zombie process.
+**Compared to waitpid and two-forks methods,this method is more efficient and simple.So,it is the recommended method to avoid zombie process.**
 
-But,one drawback of this method is that it is slightly less portable than explicitly calling waitpid: the behaviour it depends on is required by POSIX.1-2001, and previously by the Single Unix Specification, but not by POSIX.1-1990.
+**But,one drawback of this method is that it is slightly less portable than explicitly calling waitpid: the behaviour it depends on is required by POSIX.1-2001, and previously by the Single Unix Specification, but not by POSIX.1-1990.**
 
 ## Attention
 
