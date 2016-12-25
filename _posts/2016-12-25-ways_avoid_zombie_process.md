@@ -132,7 +132,6 @@ print 'parent exit';
 
 ```bash
 child exit
-waitpid success.
 child process:20669 exit with code:1
 parent exit
 ```
