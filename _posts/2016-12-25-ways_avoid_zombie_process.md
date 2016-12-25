@@ -103,15 +103,11 @@ use POSIX ":sys_wait_h";# for nonblocking read
 sub REAPER {
         # don't change $! and $? outside handler
         local ($!, $?);
-        my $pid = waitpid( -1, WNOHANG );
-        if ( $pid > 0 ) {
-                print "waitpid success.\n";
+        while ( (my $pid = waitpid(-1, WNOHANG)) > 0 ) {
                 if ( WIFEXITED($?) ) {
                         my $ret_code = WEXITSTATUS($?);
                         print "child process:$pid exit with code:$ret_code\n";
                 }
-        }else {
-                print "waitpid failure: $!.\n";
         }
 }
 
@@ -187,16 +183,23 @@ after 20s,the parent process disappear.
 
 Note that it is not sufficient for SIGCHLD to have a disposition that causes it to be ignored (as the default, SIG_DFL, would do): it is only by setting it to SIG_IGN that this behaviour is obtained.
 
-**Compared to waitpid and two-forks methods,this method is more efficient and simple.So,it is the recommended method to avoid zombie process.**
+**<font color="#8B0000">Compared to waitpid and two-forks methods,this method is more efficient and simple.So,it is the recommended method to avoid zombie process.</font>**
 
-**But,one drawback of this method is that it is slightly less portable than explicitly calling waitpid: the behaviour it depends on is required by POSIX.1-2001, and previously by the Single Unix Specification, but not by POSIX.1-1990.**
+**<font color="#8B0000">But,one drawback of this method is that it is slightly less portable than explicitly calling waitpid: the behaviour it depends on is required by POSIX.1-2001, and previously by the Single Unix Specification, but not by POSIX.1-1990.</font>**
 
 ## Attention
 
 * 1.signal inheritance
 * 2.signal handler setting(durable)
 * 3.variable save(signal handler)
+* 4.loop waitpid in handler(signal processing mechanism)
 
 ## Refs
 
 * [Reap zombie processes using a SIGCHLD handler](http://www.microhowto.info/howto/reap_zombie_processes_using_a_sigchld_handler.html#idp16032)
+* [perldoc.perl.org](http://perldoc.perl.org/perlipc.html)
+* [waitpid](https://linux.die.net/man/2/waitpid)
+* [perl waitpid](http://perldoc.perl.org/functions/waitpid.html)
+* [example1](http://www.cnblogs.com/wuchanming/p/4020463.html)
+* [example2](https://www.coder4.com/archives/151)
+* [example3](http://www.cnblogs.com/baoguo/archive/2009/12/09/1619956.html)
