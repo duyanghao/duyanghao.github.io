@@ -202,3 +202,5 @@ Note that it is not sufficient for SIGCHLD to have a disposition that causes it 
 * [example1](http://www.cnblogs.com/wuchanming/p/4020463.html)
 * [example2](https://www.coder4.com/archives/151)
 * [example3](http://www.cnblogs.com/baoguo/archive/2009/12/09/1619956.html)
+* [example4](http://www.cnblogs.com/Anker/p/3271773.html)
+* [perl `errno`](http://stackoverflow.com/questions/3893019/why-does-perls-sysopen-report-success-but-has-an-error)
