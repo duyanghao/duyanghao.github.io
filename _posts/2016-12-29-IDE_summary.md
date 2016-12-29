@@ -132,7 +132,9 @@ follow these steps to install vscode-go after install VSCode.
 * 1.ctrl+shift+p(please input `ext install`)
 
 ![](/public/img/Tool_summary/10.png)
+
 * 2.choose vscode-go(with most downloads)
+
 * 3.install Tools
 
 1) create a directory for Tools(suppose to be "D://Go_project/Vs_code_project").
@@ -146,15 +148,25 @@ follow these steps to install vscode-go after install VSCode.
 5) install Tools as below:
 
 >go get -u -v github.com/nsf/gocode
+
 >go get -u -v github.com/rogpeppe/godef
+
 >go get -u -v github.com/zmb3/gogetdoc
+
 >go get -u -v github.com/golang/lint/golint
+
 >go get -u -v github.com/lukehoban/go-outline
+
 >go get -u -v sourcegraph.com/sqs/goreturns
+
 >go get -u -v golang.org/x/tools/cmd/gorename
+
 >go get -u -v github.com/tpng/gopkgs
+
 >go get -u -v github.com/newhook/go-symbols
+
 >go get -u -v golang.org/x/tools/cmd/guru
+
 >go get -u -v github.com/cweill/gotests/...
 
 ### vscode-go configuration
