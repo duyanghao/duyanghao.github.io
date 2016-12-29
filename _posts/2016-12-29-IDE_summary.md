@@ -11,7 +11,7 @@ This article gives a Summary of Tools usage during work(only for having a good v
 
 Now, i will introduce my IDE choice and basic usage for each of Language.   
 
-## c/c++ - [Insight3](http://www.sourceinsight.com/update.html)
+# c/c++ - [Insight3](http://www.sourceinsight.com/update.html)
 
 ### create project
 
@@ -51,7 +51,7 @@ Now, i will introduce my IDE choice and basic usage for each of Language.
 * find next -> F4 
 * jump to definition -> ctrl+=
 
-## script(bash,perl) - [sublime_text](https://www.sublimetext.com/)
+# script(bash,perl) - [sublime_text](https://www.sublimetext.com/)
 
 ### [Package Control Install](https://packagecontrol.io/packages/ModernPerl)
 
@@ -100,7 +100,7 @@ File->Open...(directly open project directory)
 * find(project scope) -> ctrl+shift+f
 * jump to definition -> ctrl+b
 
-## markdown,go - [VSCode](http://code.visualstudio.com/docs/setup/windows#_installation)
+# markdown,go - [VSCode](http://code.visualstudio.com/docs/setup/windows#_installation)
 
 ### Golang Install
 
@@ -132,9 +132,7 @@ follow these steps to install vscode-go after install VSCode.
 * 1.ctrl+shift+p(please input `ext install`)
 
 ![](/public/img/Tool_summary/10.png)
-
 * 2.choose vscode-go(with most downloads)
-
 * 3.install Tools
 
 1) create a directory for Tools(suppose to be "D://Go_project/Vs_code_project").
@@ -147,24 +145,23 @@ follow these steps to install vscode-go after install VSCode.
 
 5) install Tools as below:
 
->
-go get -u -v github.com/nsf/gocode
-go get -u -v github.com/rogpeppe/godef
-go get -u -v github.com/zmb3/gogetdoc
-go get -u -v github.com/golang/lint/golint
-go get -u -v github.com/lukehoban/go-outline
-go get -u -v sourcegraph.com/sqs/goreturns
-go get -u -v golang.org/x/tools/cmd/gorename
-go get -u -v github.com/tpng/gopkgs
-go get -u -v github.com/newhook/go-symbols
-go get -u -v golang.org/x/tools/cmd/guru
-go get -u -v github.com/cweill/gotests/...
+>go get -u -v github.com/nsf/gocode
+>go get -u -v github.com/rogpeppe/godef
+>go get -u -v github.com/zmb3/gogetdoc
+>go get -u -v github.com/golang/lint/golint
+>go get -u -v github.com/lukehoban/go-outline
+>go get -u -v sourcegraph.com/sqs/goreturns
+>go get -u -v golang.org/x/tools/cmd/gorename
+>go get -u -v github.com/tpng/gopkgs
+>go get -u -v github.com/newhook/go-symbols
+>go get -u -v golang.org/x/tools/cmd/guru
+>go get -u -v github.com/cweill/gotests/...
 
 ### vscode-go configuration
 
 文件-》首选项-》用户设置
 
->
+>>
 {
     //go
     "go.buildOnSave": true,
@@ -189,7 +186,7 @@ go get -u -v github.com/cweill/gotests/...
 
 * 1.文件-》首选项-》工作区设置
 
->
+>>
 {
     "go.goroot": "D://Go_dir",
     "go.gopath": "`your_project_GOPATH`;D://Go_project/Vs_code_project"
