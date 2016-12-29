@@ -110,6 +110,10 @@ please install [Go Language](https://golang.org/dl/) before install VSCode.
 
 * setting GOPATH and PATH environment variable
 
+### Git Install
+
+please install [Git](https://git-scm.com/downloads) for `go get` cmd before install VSCode.
+
 ### [VSCode Install](http://code.visualstudio.com/docs/setup/windows#_installation)
 
 ### proxy configuration
@@ -134,7 +138,6 @@ follow these steps to install vscode-go after install VSCode.
 ![](/public/img/Tool_summary/10.png)
 
 * 2.choose vscode-go(with most downloads)
-
 * 3.install Tools
 
 1) create a directory for Tools(suppose to be "D://Go_project/Vs_code_project").
