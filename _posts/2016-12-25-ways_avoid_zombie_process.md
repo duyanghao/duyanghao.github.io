@@ -1,7 +1,7 @@
 ---
 layout: post
 title: methods to avoid zombie process
-date: 2016-12-6 10:59:31
+date: 2016-12-26 10:59:31
 category: 技术
 tags: Linux Perl
 excerpt: three methods to avoid zombie process……
@@ -197,7 +197,7 @@ Note that it is not sufficient for SIGCHLD to have a disposition that causes it 
 
 * [Reap zombie processes using a SIGCHLD handler](http://www.microhowto.info/howto/reap_zombie_processes_using_a_sigchld_handler.html#idp16032)
 * [perldoc.perl.org](http://perldoc.perl.org/perlipc.html)
-* [waitpid](https://linux.die.net/man/2/waitpid)
+* [waitpid](http://man7.org/linux/man-pages/man2/waitpid.2.html)
 * [perl waitpid](http://perldoc.perl.org/functions/waitpid.html)
 * [example1](http://www.cnblogs.com/wuchanming/p/4020463.html)
 * [example2](https://www.coder4.com/archives/151)
