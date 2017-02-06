@@ -56,11 +56,13 @@ windows+R 打开运行 输入cmd 输入 java -version , javac , java查看是否
 
 * 3、配置icon
 
-step 1：菜单栏->File->Build Settings->
+step 1：菜单栏->File->Build Settings
 
-step 2：点击Play Settings->Icon
+step 2：Switch platform 切换到 Android平台
 
-step 3：`Enable Android Banner` Select logo图片，如下：
+step 3：点击Play Settings->Icon
+
+step 4：`Enable Android Banner` Select logo图片，如下：
 
 ![](/public/img/unity_apk/icon.png)
 
@@ -76,7 +78,7 @@ step 3：点击Play Settings->Other Settings,配置如下：
 
 **注意：**
 
-1、`Bundle Identifier`字段内容`com.Company.Productname`中的`Company`替换为任何其他字段
+1、`Bundle Identifier`字段内容`com.Company.ProductName`中的`Company`替换为任何其他字段
 
 2、`Minimum API Level`字段内容为发布的apk文件的运行环境
 
