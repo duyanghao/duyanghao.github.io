@@ -109,8 +109,6 @@ COMMAND — 进程名称（命令名/命令行）
 
 ![](/public/img/resource_monitor/top-1.png)
 
-![](/public/img/snowman/login.png)
-
 观察上图，服务器有16个逻辑CPU，实际上是4个物理CPU
 
 * top视图2（打开/关闭加亮效果）
@@ -179,7 +177,9 @@ COMMAND — 进程名称（命令名/命令行）
 
 #### free
 
+##### free输出
 
+![](/public/img/resource_monitor/memory-free.png)
 
 ### IO
 
@@ -188,6 +188,16 @@ COMMAND — 进程名称（命令名/命令行）
 ### Network
 
 #### sar
+
+##### 查看网卡命令
+
+`ethtool eth1`
+
+##### sar输出
+
+`sar -n DEV 1`输出如下：
+
+![](/public/img/resource_monitor/sar-dev.png)
 
 ## 参考
 
