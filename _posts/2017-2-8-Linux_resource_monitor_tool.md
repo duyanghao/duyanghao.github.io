@@ -109,6 +109,8 @@ COMMAND — 进程名称（命令名/命令行）
 
 ![](/public/img/resource_monitor/top-1.png)
 
+![](/public/img/snowman/login.png)
+
 观察上图，服务器有16个逻辑CPU，实际上是4个物理CPU
 
 * top视图2（打开/关闭加亮效果）
