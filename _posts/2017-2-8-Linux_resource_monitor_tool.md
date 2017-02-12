@@ -419,9 +419,51 @@ sda          3.06  41.84 444.90 54.08 14204.08 2048.98  7102.04  1024.49    32.5
 
 ##### sar输出
 
+sar命令如下：
+
+![](/public/img/resource_monitor/sar-info.png)
+
+sar可用于网络监控，如下:
+
+![](/public/img/resource_monitor/sar-n.png)
+
 `sar -n DEV 1`输出如下：
 
 ![](/public/img/resource_monitor/sar-dev.png)
+
+输出信息的含义：
+
+`IFACE`：__网络设备名（网卡）__
+
+>>Name of the network interface for which statistics are reported.
+
+`rxpck/s`：每秒接收的包
+
+>>Total number of packets received per second.
+
+`txpck/s`：每秒发送的包
+
+>>Total number of packets transmitted per second.
+
+`rxkB/s`：__每秒接收的数据量__
+
+>>Total number of kilobytes received per second.
+
+`txkB/s`: __每秒发送的数据量__
+
+>>Total number of kilobytes transmitted per second.
+
+`rxcmp/s`：每秒接收的压缩数据包
+
+>>Number of compressed packets received per second (for cslip etc.).
+
+`txcmp/s`：每秒发送的压缩数据包
+
+>>Number of compressed packets transmitted per second.
+
+`rxmcst/s`：每秒接收的多播数据包
+
+>>Number of multicast packets received per second.
 
 ## 参考
 
