@@ -213,3 +213,4 @@ follow these steps to install vscode-go after install VSCode.
 
 * find(file scope) -> ctrl+f
 * find(project scope) -> ctrl+shift+f
+* 选中按TAB右移，按SHIFT+TAB左移
