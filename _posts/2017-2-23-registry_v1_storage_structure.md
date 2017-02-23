@@ -158,7 +158,7 @@ def create_tag_json(user_agent):
 
 3、repositories/namespace/repository/json —— json
 
-文件内容为tag:`latest`对应镜像的`meta-data`信息，文件内容如下：，内容如下：
+文件内容为tag:`latest`对应镜像的`meta-data`信息，文件内容如下：
 
 >>{"kernel": "3.10.5-3.el6.x86_64", "arch": "amd64", "docker_go_version": "go1.3.3", "last_update": 1487028653, "docker_version": "1.4", "os": "linux"}
 
@@ -187,7 +187,7 @@ def repository_json_path(self, namespace, repository):
 
 文件内容为：`namespace/repository`所有tags对应镜像的layer id集合（还需通过docker源码验证），文件内容如下：
 
->>[{"id": "xxxxxxxxxxxxxxxxxxxxxxid"}, {"id": "xxxxxxxxxxxxxxxxxxxxxxid",{"id": "xxxxxxxxxxxxxxxxxxxxxxid"}]
+>>[{"id": "xxxxxxxxxxxxxxxxxxxxxxid"}, {"id": "xxxxxxxxxxxxxxxxxxxxxxid"},{"id": "xxxxxxxxxxxxxxxxxxxxxxid"}]
 
 对应代码如下：
 
@@ -251,7 +251,7 @@ def index_images_path(self, namespace, repository):
 
 文件内容是layer对应的元数据，内容如下：
 
->>{"id":"8fdbe71568cf4af7ea13c824676bda702f147a5890b9e304a914d00395a85ddd","comment":"Imported from -","created":"2015-02-09T09:44:28.227848546Z","container_config":{"Hostname":"","Domainname":"","User":"","Memory":0,"MemorySwap":0,"CpuShares":0,"Cpuset":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"PortSpecs":null,"ExposedPorts":null,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":null,"Cmd":null,"Image":"","Volumes":null,"WorkingDir":"","Entrypoint":null,"NetworkDisabled":false,"OnBuild":null,"SecurityOpt":null},"docker_version":"1.3.0","architecture":"amd64","os":"linux","Size":1373474869}
+>>{"id":"xxxxxxxxxxxxxxxxxxxxxxid","comment":"Imported from -","created":"2015-02-09T09:44:28.227848546Z","container_config":{"Hostname":"","Domainname":"","User":"","Memory":0,"MemorySwap":0,"CpuShares":0,"Cpuset":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"PortSpecs":null,"ExposedPorts":null,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":null,"Cmd":null,"Image":"","Volumes":null,"WorkingDir":"","Entrypoint":null,"NetworkDisabled":false,"OnBuild":null,"SecurityOpt":null},"docker_version":"1.3.0","architecture":"amd64","os":"linux","Size":1373474869}
 
 对应代码如下：
 
@@ -324,19 +324,25 @@ def image_mark_path(self, image_id):
 ```
 
 处理逻辑为：
+
 step1：检测json数据的有效性：
+
 * json文件中必须有id，且为该image_id
-* 有parent字段，且parent对应的json文件存在
+* 有parent字段，且parent对应layer的json文件存在
+
 step2：创建_inprogress文件
+
 step3：删除_checksum文件
+
 step4：写json文件
-step5：创建ancestry文件，若为base镜像则直接创建，否则获取parent Layer ancestry文件，然后插入到文件最开始（__也即ancestry文件表示了镜像的layer继承id，并且按照top-bottom顺序排序__）
+
+step5：创建ancestry文件，若为base镜像则直接创建（文件内容即为该`image_id`），否则获取parent Layer ancestry文件，然后将该`image_id`插入到文件最开始（__也即ancestry文件表示了镜像的layer继承id，并且按照top-to-bottom顺序排序__）
 
 6、images/image_id/ancestry —— images/xxxxxxxxxxxxxxxxxxxxxxid/ancestry
 
-ancestry文件表示了镜像的layer继承id，并且按照top-bottom顺序排序，文件内容如下：
+ancestry文件表示了镜像的layer继承id，并且按照top-to-bottom顺序排序，文件内容如下：
 
->>["32768772b5ce9f8f2b3c4fca32c7f6bab72821d1aa880920de544b0178f21c04", "2c7a60c4d912b1d660a2d3a4aa68b94153d5ce87d1a928335beebc5d68016e9e", "22b1b1fdc8def505afa833b60925e1d413bb6330e0b2ca59cc15e38f62131e66"]
+>>["xxxxxxxxxxxxxxxxxxxxxxid", "xxxxxxxxxxxxxxxxxxxxxxid", "xxxxxxxxxxxxxxxxxxxxxxid"]
 
 7、images/image_id/layer —— images/xxxxxxxxxxxxxxxxxxxxxxid/layer
 
@@ -408,7 +414,7 @@ def simple_checksum_handler(json_data):
 
 文件内容为id=image_id的json文件的sha256 hash值，内容如下：
 
->>["sha256:80b3026bc43a5c252e0ac008f778a2220d774ab4928cc29cec9bd6a67b39e26c"]
+>>["sha256:xxxxxxxxxxxxxxxxxxxxxxxx"]
 
 对应代码如下：
 
