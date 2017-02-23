@@ -7,7 +7,7 @@ tags: Docker-registry Docker
 excerpt: Registry v1 Storage Structure……
 ---
 
-本文从源码角度描述Registry v1 Storage Structure，如下是目录结构：
+本文从[源码](https://github.com/docker/docker-registry)角度描述Registry v1 Storage Structure，如下是目录结构：
 
 ```
 /data/docker-registry-local/
