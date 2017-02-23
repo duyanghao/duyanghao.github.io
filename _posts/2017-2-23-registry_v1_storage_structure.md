@@ -328,7 +328,7 @@ def image_mark_path(self, image_id):
 step1：检测json数据的有效性：
 
 * json文件中必须有id，且为该image_id
-* 有parent字段，且parent对应layer的json文件存在
+* 若有parent字段，则parent对应layer的json文件必须存在
 
 step2：创建_inprogress文件
 
