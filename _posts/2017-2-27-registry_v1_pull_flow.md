@@ -230,7 +230,9 @@ def _repository_path(self, namespace, repository):
 执行流程：
 
 1、列举出目录repositories/library/centos下的所有文件
+
 2、请求每个以`tag_`开头的文件内容
+
 3、将结果合并
 
 若为mirror，则执行如下`lookup_source_tag`函数：
@@ -428,7 +430,9 @@ def source_lookup(cache=False, stream=False, index_route=False,
 执行流程（local filesystem）：
 
 1、检查本地是否存在images/3333333333333333333333333333333333333333333333333333333333333333/ancestry
+
 2、若不存在，则向source发出请求获取文件内容
+
 3、将获取的文件内容存储到本地文件系统
 
 ## `GET /v1/images/1111111111111111111111111111111111111111111111111111111111111111/json`
@@ -497,7 +501,9 @@ def image_checksum_path(self, image_id):
 执行流程：
 
 1、获取images/1111111111111111111111111111111111111111111111111111111111111111/json文件内容
+
 2、获取images/1111111111111111111111111111111111111111111111111111111111111111/layer文件大小，并添加到`X-Docker-Size`回应报头字段
+
 3、获取images/1111111111111111111111111111111111111111111111111111111111111111/_checksum文件内容，并添加到`X-Docker-Checksum-Payload`回应报头字段
 
 若为mirror，则执行：
@@ -571,7 +577,9 @@ def source_lookup(cache=False, stream=False, index_route=False,
 执行流程（local filesystem）：
 
 1、检查本地是否存在images/3333333333333333333333333333333333333333333333333333333333333333/json
+
 2、若不存在，则向source发出请求获取文件内容
+
 3、将获取的文件内容存储到本地文件系统
 
 ## `GET /v1/images/1111111111111111111111111111111111111111111111111111111111111111/layer`
@@ -736,7 +744,9 @@ def source_lookup(cache=False, stream=False, index_route=False,
 执行流程（local filesystem）：
 
 1、检查本地是否存在images/3333333333333333333333333333333333333333333333333333333333333333/layer
+
 2、若不存在，则向source发出请求获取文件内容
+
 3、将获取的文件内容存储到本地文件系统
 
 ## 补充
