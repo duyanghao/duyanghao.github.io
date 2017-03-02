@@ -684,44 +684,6 @@ type App struct {
 configure as a pull through cache：
 
 ```go
-// App is a global registry application object. Shared resources can be placed
-// on this object that will be accessible from all requests. Any writable
-// fields should be protected.
-type App struct {
-	context.Context
-
-	Config *configuration.Configuration
-
-	router           *mux.Router                 // main application router, configured with dispatchers
-	driver           storagedriver.StorageDriver // driver maintains the app global storage driver instance.
-	registry         distribution.Namespace      // registry is the primary registry backend for the app instance.
-	accessController auth.AccessController       // main access controller for application
-
-	// httpHost is a parsed representation of the http.host parameter from
-	// the configuration. Only the Scheme and Host fields are used.
-	httpHost url.URL
-
-	// events contains notification related configuration.
-	events struct {
-		sink   notifications.Sink
-		source notifications.SourceRecord
-	}
-
-	redis *redis.Pool
-
-	// trustKey is a deprecated key used to sign manifests converted to
-	// schema1 for backward compatibility. It should not be used for any
-	// other purposes.
-	trustKey libtrust.PrivateKey
-
-	// isCache is true if this registry is configured as a pull through cache
-	isCache bool
-
-	// readOnly is true if the registry is in a read-only maintenance mode
-	readOnly bool
-}
-
-
 // configure as a pull through cache
 if config.Proxy.RemoteURL != "" {
     app.registry, err = proxy.NewRegistryPullThroughCache(ctx, app.registry, app.driver, config.Proxy)
@@ -1028,5 +990,237 @@ func newTCPListener(laddr string) (net.Listener, error) {
 	}
 
 	return tcpKeepAliveListener{ln.(*net.TCPListener)}, nil
+}
+```
+
+分析请求：`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`
+
+```go
+// register a handler with the application, by route name. The handler will be
+// passed through the application filters and context will be constructed at
+// request time.
+func (app *App) register(routeName string, dispatch dispatchFunc) {
+
+	// TODO(stevvooe): This odd dispatcher/route registration is by-product of
+	// some limitations in the gorilla/mux router. We are using it to keep
+	// routing consistent between the client and server, but we may want to
+	// replace it with manual routing and structure-based dispatch for better
+	// control over the request execution.
+
+	app.router.GetRoute(routeName).Handler(app.dispatcher(dispatch))
+}
+
+app.register(v2.RouteNameBlob, blobDispatcher)
+
+// dispatcher returns a handler that constructs a request specific context and
+// handler, using the dispatch factory function.
+func (app *App) dispatcher(dispatch dispatchFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for headerName, headerValues := range app.Config.HTTP.Headers {
+			for _, value := range headerValues {
+				w.Header().Add(headerName, value)
+			}
+		}
+
+		context := app.context(w, r)
+
+		if err := app.authorized(w, r, context); err != nil {
+			ctxu.GetLogger(context).Warnf("error authorizing context: %v", err)
+			return
+		}
+
+		// Add username to request logging
+		context.Context = ctxu.WithLogger(context.Context, ctxu.GetLogger(context.Context, auth.UserNameKey))
+
+		if app.nameRequired(r) {
+			nameRef, err := reference.ParseNamed(getName(context))
+			if err != nil {
+				ctxu.GetLogger(context).Errorf("error parsing reference from context: %v", err)
+				context.Errors = append(context.Errors, distribution.ErrRepositoryNameInvalid{
+					Name:   getName(context),
+					Reason: err,
+				})
+				if err := errcode.ServeJSON(w, context.Errors); err != nil {
+					ctxu.GetLogger(context).Errorf("error serving error json: %v (from %v)", err, context.Errors)
+				}
+				return
+			}
+			repository, err := app.registry.Repository(context, nameRef)
+
+			if err != nil {
+				ctxu.GetLogger(context).Errorf("error resolving repository: %v", err)
+
+				switch err := err.(type) {
+				case distribution.ErrRepositoryUnknown:
+					context.Errors = append(context.Errors, v2.ErrorCodeNameUnknown.WithDetail(err))
+				case distribution.ErrRepositoryNameInvalid:
+					context.Errors = append(context.Errors, v2.ErrorCodeNameInvalid.WithDetail(err))
+				case errcode.Error:
+					context.Errors = append(context.Errors, err)
+				}
+
+				if err := errcode.ServeJSON(w, context.Errors); err != nil {
+					ctxu.GetLogger(context).Errorf("error serving error json: %v (from %v)", err, context.Errors)
+				}
+				return
+			}
+
+			// assign and decorate the authorized repository with an event bridge.
+			context.Repository = notifications.Listen(
+				repository,
+				app.eventBridge(context, r))
+
+			context.Repository, err = applyRepoMiddleware(app, context.Repository, app.Config.Middleware["repository"])
+			if err != nil {
+				ctxu.GetLogger(context).Errorf("error initializing repository middleware: %v", err)
+				context.Errors = append(context.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+
+				if err := errcode.ServeJSON(w, context.Errors); err != nil {
+					ctxu.GetLogger(context).Errorf("error serving error json: %v (from %v)", err, context.Errors)
+				}
+				return
+			}
+		}
+
+		dispatch(context, r).ServeHTTP(w, r)
+		// Automated error response handling here. Handlers may return their
+		// own errors if they need different behavior (such as range errors
+		// for layer upload).
+		if context.Errors.Len() > 0 {
+			if err := errcode.ServeJSON(w, context.Errors); err != nil {
+				ctxu.GetLogger(context).Errorf("error serving error json: %v (from %v)", err, context.Errors)
+			}
+
+			app.logError(context, context.Errors)
+		}
+	})
+}
+
+// blobDispatcher uses the request context to build a blobHandler.
+func blobDispatcher(ctx *Context, r *http.Request) http.Handler {
+	dgst, err := getDigest(ctx)
+	if err != nil {
+
+		if err == errDigestNotAvailable {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx.Errors = append(ctx.Errors, v2.ErrorCodeDigestInvalid.WithDetail(err))
+			})
+		}
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx.Errors = append(ctx.Errors, v2.ErrorCodeDigestInvalid.WithDetail(err))
+		})
+	}
+
+	blobHandler := &blobHandler{
+		Context: ctx,
+		Digest:  dgst,
+	}
+
+	mhandler := handlers.MethodHandler{
+		"GET":  http.HandlerFunc(blobHandler.GetBlob),
+		"HEAD": http.HandlerFunc(blobHandler.GetBlob),
+	}
+
+	if !ctx.readOnly {
+		mhandler["DELETE"] = http.HandlerFunc(blobHandler.DeleteBlob)
+	}
+
+	return mhandler
+}
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
+
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
+// BlobServer can serve blobs via http.
+type BlobServer interface {
+	// ServeBlob attempts to serve the blob, identifed by dgst, via http. The
+	// service may decide to redirect the client elsewhere or serve the data
+	// directly.
+	//
+	// This handler only issues successful responses, such as 2xx or 3xx,
+	// meaning it serves data or issues a redirect. If the blob is not
+	// available, an error will be returned and the caller may still issue a
+	// response.
+	//
+	// The implementation may serve the same blob from a different digest
+	// domain. The appropriate headers will be set for the blob, unless they
+	// have already been set by the caller.
+	ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error
+}
+// blobHandler serves http blob requests.
+type blobHandler struct {
+	*Context
+
+	Digest digest.Digest
+}
+type proxyBlobStore struct {
+	localStore     distribution.BlobStore
+	remoteStore    distribution.BlobService
+	scheduler      *scheduler.TTLExpirationScheduler
+	repositoryName reference.Named
+	authChallenger authChallenger
+}
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
+
+	if served {
+		return nil
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 ```
