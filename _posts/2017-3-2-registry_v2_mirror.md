@@ -1504,6 +1504,309 @@ func (repo *repository) Blobs(ctx context.Context) distribution.BlobStore {
 		resumableDigestEnabled: repo.resumableDigestEnabled,
 	}
 }
+
+// blobLinkPath provides the path to the blob link, also known as layers.
+func blobLinkPath(name string, dgst digest.Digest) (string, error) {
+	return pathFor(layerLinkPathSpec{name: name, digest: dgst})
+}
+
+// blobLinkPathSpec specifies a path for a blob link, which is a file with a
+// blob id. The blob link will contain a content addressable blob id reference
+// into the blob store. The format of the contents is as follows:
+//
+// 	<algorithm>:<hex digest of layer data>
+//
+// The following example of the file contents is more illustrative:
+//
+// 	sha256:96443a84ce518ac22acb2e985eda402b58ac19ce6f91980bde63726a79d80b36
+//
+// This  indicates that there is a blob with the id/digest, calculated via
+// sha256 that can be fetched from the blob store.
+type layerLinkPathSpec struct {
+	name   string
+	digest digest.Digest
+}
+
+const (
+	storagePathVersion = "v2"                // fixed storage layout version
+	storagePathRoot    = "/docker/registry/" // all driver paths have a prefix
+
+	// TODO(stevvooe): Get rid of the "storagePathRoot". Initially, we though
+	// storage path root would configurable for all drivers through this
+	// package. In reality, we've found it simpler to do this on a per driver
+	// basis.
+)
+
+// pathFor maps paths based on "object names" and their ids. The "object
+// names" mapped by are internal to the storage system.
+//
+// The path layout in the storage backend is roughly as follows:
+//
+//		<root>/v2
+//			-> repositories/
+// 				-><name>/
+// 					-> _manifests/
+// 						revisions
+//							-> <manifest digest path>
+//								-> link
+// 						tags/<tag>
+//							-> current/link
+// 							-> index
+//								-> <algorithm>/<hex digest>/link
+// 					-> _layers/
+// 						<layer links to blob store>
+// 					-> _uploads/<id>
+// 						data
+// 						startedat
+// 						hashstates/<algorithm>/<offset>
+//			-> blob/<algorithm>
+//				<split directory content addressable storage>
+//
+// The storage backend layout is broken up into a content-addressable blob
+// store and repositories. The content-addressable blob store holds most data
+// throughout the backend, keyed by algorithm and digests of the underlying
+// content. Access to the blob store is controlled through links from the
+// repository to blobstore.
+//
+// A repository is made up of layers, manifests and tags. The layers component
+// is just a directory of layers which are "linked" into a repository. A layer
+// can only be accessed through a qualified repository name if it is linked in
+// the repository. Uploads of layers are managed in the uploads directory,
+// which is key by upload id. When all data for an upload is received, the
+// data is moved into the blob store and the upload directory is deleted.
+// Abandoned uploads can be garbage collected by reading the startedat file
+// and removing uploads that have been active for longer than a certain time.
+//
+// The third component of the repository directory is the manifests store,
+// which is made up of a revision store and tag store. Manifests are stored in
+// the blob store and linked into the revision store.
+// While the registry can save all revisions of a manifest, no relationship is
+// implied as to the ordering of changes to a manifest. The tag store provides
+// support for name, tag lookups of manifests, using "current/link" under a
+// named tag directory. An index is maintained to support deletions of all
+// revisions of a given manifest tag.
+//
+// We cover the path formats implemented by this path mapper below.
+//
+//	Manifests:
+//
+// 	manifestRevisionsPathSpec:      <root>/v2/repositories/<name>/_manifests/revisions/
+// 	manifestRevisionPathSpec:      <root>/v2/repositories/<name>/_manifests/revisions/<algorithm>/<hex digest>/
+// 	manifestRevisionLinkPathSpec:  <root>/v2/repositories/<name>/_manifests/revisions/<algorithm>/<hex digest>/link
+//
+//	Tags:
+//
+// 	manifestTagsPathSpec:                  <root>/v2/repositories/<name>/_manifests/tags/
+// 	manifestTagPathSpec:                   <root>/v2/repositories/<name>/_manifests/tags/<tag>/
+// 	manifestTagCurrentPathSpec:            <root>/v2/repositories/<name>/_manifests/tags/<tag>/current/link
+// 	manifestTagIndexPathSpec:              <root>/v2/repositories/<name>/_manifests/tags/<tag>/index/
+// 	manifestTagIndexEntryPathSpec:         <root>/v2/repositories/<name>/_manifests/tags/<tag>/index/<algorithm>/<hex digest>/
+// 	manifestTagIndexEntryLinkPathSpec:     <root>/v2/repositories/<name>/_manifests/tags/<tag>/index/<algorithm>/<hex digest>/link
+//
+// 	Blobs:
+//
+// 	layerLinkPathSpec:            <root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link
+//
+//	Uploads:
+//
+// 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
+// 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
+// 	uploadHashStatePathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/hashstates/<algorithm>/<offset>
+//
+//	Blob Store:
+//
+//	blobsPathSpec:                  <root>/v2/blobs/
+// 	blobPathSpec:                   <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>
+// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+// 	blobMediaTypePathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+//
+// For more information on the semantic meaning of each path and their
+// contents, please see the path spec documentation.
+func pathFor(spec pathSpec) (string, error) {
+
+	// Switch on the path object type and return the appropriate path. At
+	// first glance, one may wonder why we don't use an interface to
+	// accomplish this. By keep the formatting separate from the pathSpec, we
+	// keep separate the path generation componentized. These specs could be
+	// passed to a completely different mapper implementation and generate a
+	// different set of paths.
+	//
+	// For example, imagine migrating from one backend to the other: one could
+	// build a filesystem walker that converts a string path in one version,
+	// to an intermediate path object, than can be consumed and mapped by the
+	// other version.
+
+	rootPrefix := []string{storagePathRoot, storagePathVersion}
+	repoPrefix := append(rootPrefix, "repositories")
+
+	switch v := spec.(type) {
+
+	case manifestRevisionsPathSpec:
+		return path.Join(append(repoPrefix, v.name, "_manifests", "revisions")...), nil
+
+	case manifestRevisionPathSpec:
+		components, err := digestPathComponents(v.revision, false)
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(append(append(repoPrefix, v.name, "_manifests", "revisions"), components...)...), nil
+	case manifestRevisionLinkPathSpec:
+		root, err := pathFor(manifestRevisionPathSpec{
+			name:     v.name,
+			revision: v.revision,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, "link"), nil
+	case manifestTagsPathSpec:
+		return path.Join(append(repoPrefix, v.name, "_manifests", "tags")...), nil
+	case manifestTagPathSpec:
+		root, err := pathFor(manifestTagsPathSpec{
+			name: v.name,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, v.tag), nil
+	case manifestTagCurrentPathSpec:
+		root, err := pathFor(manifestTagPathSpec{
+			name: v.name,
+			tag:  v.tag,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, "current", "link"), nil
+	case manifestTagIndexPathSpec:
+		root, err := pathFor(manifestTagPathSpec{
+			name: v.name,
+			tag:  v.tag,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, "index"), nil
+	case manifestTagIndexEntryLinkPathSpec:
+		root, err := pathFor(manifestTagIndexEntryPathSpec{
+			name:     v.name,
+			tag:      v.tag,
+			revision: v.revision,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, "link"), nil
+	case manifestTagIndexEntryPathSpec:
+		root, err := pathFor(manifestTagIndexPathSpec{
+			name: v.name,
+			tag:  v.tag,
+		})
+
+		if err != nil {
+			return "", err
+		}
+
+		components, err := digestPathComponents(v.revision, false)
+		if err != nil {
+			return "", err
+		}
+
+		return path.Join(root, path.Join(components...)), nil
+	case layerLinkPathSpec:
+		components, err := digestPathComponents(v.digest, false)
+		if err != nil {
+			return "", err
+		}
+
+		// TODO(stevvooe): Right now, all blobs are linked under "_layers". If
+		// we have future migrations, we may want to rename this to "_blobs".
+		// A migration strategy would simply leave existing items in place and
+		// write the new paths, commit a file then delete the old files.
+
+		blobLinkPathComponents := append(repoPrefix, v.name, "_layers")
+
+		return path.Join(path.Join(append(blobLinkPathComponents, components...)...), "link"), nil
+	case blobsPathSpec:
+		blobsPathPrefix := append(rootPrefix, "blobs")
+		return path.Join(blobsPathPrefix...), nil
+	case blobPathSpec:
+		components, err := digestPathComponents(v.digest, true)
+		if err != nil {
+			return "", err
+		}
+
+		blobPathPrefix := append(rootPrefix, "blobs")
+		return path.Join(append(blobPathPrefix, components...)...), nil
+	case blobDataPathSpec:
+		components, err := digestPathComponents(v.digest, true)
+		if err != nil {
+			return "", err
+		}
+
+		components = append(components, "data")
+		blobPathPrefix := append(rootPrefix, "blobs")
+		return path.Join(append(blobPathPrefix, components...)...), nil
+
+	case uploadDataPathSpec:
+		return path.Join(append(repoPrefix, v.name, "_uploads", v.id, "data")...), nil
+	case uploadStartedAtPathSpec:
+		return path.Join(append(repoPrefix, v.name, "_uploads", v.id, "startedat")...), nil
+	case uploadHashStatePathSpec:
+		offset := fmt.Sprintf("%d", v.offset)
+		if v.list {
+			offset = "" // Limit to the prefix for listing offsets.
+		}
+		return path.Join(append(repoPrefix, v.name, "_uploads", v.id, "hashstates", string(v.alg), offset)...), nil
+	case repositoriesRootPathSpec:
+		return path.Join(repoPrefix...), nil
+	default:
+		// TODO(sday): This is an internal error. Ensure it doesn't escape (panic?).
+		return "", fmt.Errorf("unknown path spec: %#v", v)
+	}
+}
+
+// digestPathComponents provides a consistent path breakdown for a given
+// digest. For a generic digest, it will be as follows:
+//
+// 	<algorithm>/<hex digest>
+//
+// If multilevel is true, the first two bytes of the digest will separate
+// groups of digest folder. It will be as follows:
+//
+// 	<algorithm>/<first two bytes of digest>/<full digest>
+//
+func digestPathComponents(dgst digest.Digest, multilevel bool) ([]string, error) {
+	if err := dgst.Validate(); err != nil {
+		return nil, err
+	}
+
+	algorithm := blobAlgorithmReplacer.Replace(string(dgst.Algorithm()))
+	hex := dgst.Hex()
+	prefix := []string{algorithm}
+
+	var suffix []string
+
+	if multilevel {
+		suffix = append(suffix, hex[:2])
+	}
+
+	suffix = append(suffix, hex)
+
+	return append(prefix, suffix...), nil
+}
+
 // linkedBlobStore provides a full BlobService that namespaces the blobs to a
 // given repository. Effectively, it manages the links in a given repository
 // that grant access to the global blob store.
@@ -1531,5 +1834,112 @@ type linkedBlobStore struct {
 func (lbs *linkedBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
 	return lbs.blobAccessController.Stat(ctx, dgst)
 }
+type linkedBlobStatter struct {
+	*blobStore
+	repository distribution.Repository
+
+	// linkPathFns specifies one or more path functions allowing one to
+	// control the repository blob link set to which the blob store
+	// dispatches. This is required because manifest and layer blobs have not
+	// yet been fully merged. At some point, this functionality should be
+	// removed an the blob links folder should be merged. The first entry is
+	// treated as the "canonical" link location and will be used for writes.
+	linkPathFns []linkPathFunc
+}
+func (lbs *linkedBlobStatter) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	var (
+		found  bool
+		target digest.Digest
+	)
+
+	// try the many link path functions until we get success or an error that
+	// is not PathNotFoundError.
+	for _, linkPathFn := range lbs.linkPathFns {
+		var err error
+		target, err = lbs.resolveWithLinkFunc(ctx, dgst, linkPathFn)
+
+		if err == nil {
+			found = true
+			break // success!
+		}
+
+		switch err := err.(type) {
+		case driver.PathNotFoundError:
+			// do nothing, just move to the next linkPathFn
+		default:
+			return distribution.Descriptor{}, err
+		}
+	}
+
+	if !found {
+		return distribution.Descriptor{}, distribution.ErrBlobUnknown
+	}
+
+	if target != dgst {
+		// Track when we are doing cross-digest domain lookups. ie, sha512 to sha256.
+		context.GetLogger(ctx).Warnf("looking up blob with canonical target: %v -> %v", dgst, target)
+	}
+
+	// TODO(stevvooe): Look up repository local mediatype and replace that on
+	// the returned descriptor.
+
+	return lbs.blobStore.statter.Stat(ctx, target)
+}
+// resolveTargetWithFunc allows us to read a link to a resource with different
+// linkPathFuncs to let us try a few different paths before returning not
+// found.
+func (lbs *linkedBlobStatter) resolveWithLinkFunc(ctx context.Context, dgst digest.Digest, linkPathFn linkPathFunc) (digest.Digest, error) {
+	blobLinkPath, err := linkPathFn(lbs.repository.Named().Name(), dgst)
+	if err != nil {
+		return "", err
+	}
+
+	return lbs.blobStore.readlink(ctx, blobLinkPath)
+}
+// readlink returns the linked digest at path.
+func (bs *blobStore) readlink(ctx context.Context, path string) (digest.Digest, error) {
+	content, err := bs.driver.GetContent(ctx, path)
+	if err != nil {
+		return "", err
+	}
+
+	linked, err := digest.ParseDigest(string(content))
+	if err != nil {
+		return "", err
+	}
+
+	return linked, nil
+}
+// ParseDigest parses s and returns the validated digest object. An error will
+// be returned if the format is invalid.
+func ParseDigest(s string) (Digest, error) {
+	d := Digest(s)
+
+	return d, d.Validate()
+}
+// Digest allows simple protection of hex formatted digest strings, prefixed
+// by their algorithm. Strings of type Digest have some guarantee of being in
+// the correct format and it provides quick access to the components of a
+// digest string.
+//
+// The following is an example of the contents of Digest types:
+//
+// 	sha256:7173b809ca12ec5dee4506cd86be934c4596dd234ee82c0662eac04a8c2c71dc
+//
+// This allows to abstract the digest behind this type and work only in those
+// terms.
+type Digest string
 
 ```
+
+```
+// 	Blobs:
+//
+// 	layerLinkPathSpec:            <root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link
+//
+```
+
+
+
+<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+
