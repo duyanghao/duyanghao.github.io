@@ -1305,4 +1305,231 @@ func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter,
 }
 ```
 
+现在来看`ServeBlob`函数逻辑（具体mirror逻辑）：
 
+```go
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
+
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
+
+func (pbs *proxyBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	desc, err := pbs.localStore.Stat(ctx, dgst)
+	if err == nil {
+		return desc, err
+	}
+
+	if err != distribution.ErrBlobUnknown {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	return pbs.remoteStore.Stat(ctx, dgst)
+}
+
+func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
+	c := pr.authChallenger
+
+	tr := transport.NewTransport(http.DefaultTransport,
+		auth.NewAuthorizer(c.challengeManager(), auth.NewTokenHandler(http.DefaultTransport, c.credentialStore(), name.Name(), "pull")))
+
+	localRepo, err := pr.embedded.Repository(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	localManifests, err := localRepo.Manifests(ctx, storage.SkipLayerVerification())
+	if err != nil {
+		return nil, err
+	}
+
+	remoteRepo, err := client.NewRepository(ctx, name, pr.remoteURL.String(), tr)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteManifests, err := remoteRepo.Manifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxiedRepository{
+		blobStore: &proxyBlobStore{
+			localStore:     localRepo.Blobs(ctx),
+			remoteStore:    remoteRepo.Blobs(ctx),
+			scheduler:      pr.scheduler,
+			repositoryName: name,
+			authChallenger: pr.authChallenger,
+		},
+		manifests: &proxyManifestStore{
+			repositoryName:  name,
+			localManifests:  localManifests, // Options?
+			remoteManifests: remoteManifests,
+			ctx:             ctx,
+			scheduler:       pr.scheduler,
+			authChallenger:  pr.authChallenger,
+		},
+		name: name,
+		tags: &proxyTagService{
+			localTags:      localRepo.Tags(ctx),
+			remoteTags:     remoteRepo.Tags(ctx),
+			authChallenger: pr.authChallenger,
+		},
+	}, nil
+}
+
+// NewRegistry creates a new registry instance from the provided driver. The
+// resulting registry may be shared by multiple goroutines but is cheap to
+// allocate. If the Redirect option is specified, the backend blob server will
+// attempt to use (StorageDriver).URLFor to serve all blobs.
+func NewRegistry(ctx context.Context, driver storagedriver.StorageDriver, options ...RegistryOption) (distribution.Namespace, error) {
+	// create global statter
+	statter := &blobStatter{
+		driver: driver,
+	}
+
+	bs := &blobStore{
+		driver:  driver,
+		statter: statter,
+	}
+
+	registry := &registry{
+		blobStore: bs,
+		blobServer: &blobServer{
+			driver:  driver,
+			statter: statter,
+			pathFn:  bs.path,
+		},
+		statter:                statter,
+		resumableDigestEnabled: true,
+	}
+
+	for _, option := range options {
+		if err := option(registry); err != nil {
+			return nil, err
+		}
+	}
+
+	return registry, nil
+}
+// registry is the top-level implementation of Registry for use in the storage
+// package. All instances should descend from this object.
+type registry struct {
+	blobStore                    *blobStore
+	blobServer                   *blobServer
+	statter                      *blobStatter // global statter service.
+	blobDescriptorCacheProvider  cache.BlobDescriptorCacheProvider
+	deleteEnabled                bool
+	resumableDigestEnabled       bool
+	schema1SigningKey            libtrust.PrivateKey
+	blobDescriptorServiceFactory distribution.BlobDescriptorServiceFactory
+	manifestURLs                 manifestURLs
+}
+// Repository returns an instance of the repository tied to the registry.
+// Instances should not be shared between goroutines but are cheap to
+// allocate. In general, they should be request scoped.
+func (reg *registry) Repository(ctx context.Context, canonicalName reference.Named) (distribution.Repository, error) {
+	var descriptorCache distribution.BlobDescriptorService
+	if reg.blobDescriptorCacheProvider != nil {
+		var err error
+		descriptorCache, err = reg.blobDescriptorCacheProvider.RepositoryScoped(canonicalName.Name())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &repository{
+		ctx:             ctx,
+		registry:        reg,
+		name:            canonicalName,
+		descriptorCache: descriptorCache,
+	}, nil
+}
+// repository provides name-scoped access to various services.
+type repository struct {
+	*registry
+	ctx             context.Context
+	name            reference.Named
+	descriptorCache distribution.BlobDescriptorService
+}
+// Blobs returns an instance of the BlobStore. Instantiation is cheap and
+// may be context sensitive in the future. The instance should be used similar
+// to a request local.
+func (repo *repository) Blobs(ctx context.Context) distribution.BlobStore {
+	var statter distribution.BlobDescriptorService = &linkedBlobStatter{
+		blobStore:   repo.blobStore,
+		repository:  repo,
+		linkPathFns: []linkPathFunc{blobLinkPath},
+	}
+
+	if repo.descriptorCache != nil {
+		statter = cache.NewCachedBlobStatter(repo.descriptorCache, statter)
+	}
+
+	if repo.registry.blobDescriptorServiceFactory != nil {
+		statter = repo.registry.blobDescriptorServiceFactory.BlobAccessController(statter)
+	}
+
+	return &linkedBlobStore{
+		registry:             repo.registry,
+		blobStore:            repo.blobStore,
+		blobServer:           repo.blobServer,
+		blobAccessController: statter,
+		repository:           repo,
+		ctx:                  ctx,
+
+		// TODO(stevvooe): linkPath limits this blob store to only layers.
+		// This instance cannot be used for manifest checks.
+		linkPathFns:            []linkPathFunc{blobLinkPath},
+		deleteEnabled:          repo.registry.deleteEnabled,
+		resumableDigestEnabled: repo.resumableDigestEnabled,
+	}
+}
+// linkedBlobStore provides a full BlobService that namespaces the blobs to a
+// given repository. Effectively, it manages the links in a given repository
+// that grant access to the global blob store.
+type linkedBlobStore struct {
+	*blobStore
+	registry               *registry
+	blobServer             distribution.BlobServer
+	blobAccessController   distribution.BlobDescriptorService
+	repository             distribution.Repository
+	ctx                    context.Context // only to be used where context can't come through method args
+	deleteEnabled          bool
+	resumableDigestEnabled bool
+
+	// linkPathFns specifies one or more path functions allowing one to
+	// control the repository blob link set to which the blob store
+	// dispatches. This is required because manifest and layer blobs have not
+	// yet been fully merged. At some point, this functionality should be
+	// removed the blob links folder should be merged. The first entry is
+	// treated as the "canonical" link location and will be used for writes.
+	linkPathFns []linkPathFunc
+
+	// linkDirectoryPathSpec locates the root directories in which one might find links
+	linkDirectoryPathSpec pathSpec
+}
+func (lbs *linkedBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	return lbs.blobAccessController.Stat(ctx, dgst)
+}
+
+```
