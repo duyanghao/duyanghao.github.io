@@ -1095,7 +1095,39 @@ func (app *App) dispatcher(dispatch dispatchFunc) http.Handler {
 		}
 	})
 }
+// context constructs the context object for the application. This only be
+// called once per request.
+func (app *App) context(w http.ResponseWriter, r *http.Request) *Context {
+	ctx := defaultContextManager.context(app, w, r)
+	ctx = ctxu.WithVars(ctx, r)
+	ctx = ctxu.WithLogger(ctx, ctxu.GetLogger(ctx,
+		"vars.name",
+		"vars.reference",
+		"vars.digest",
+		"vars.uuid"))
 
+	context := &Context{
+		App:     app,
+		Context: ctx,
+	}
+
+	if app.httpHost.Scheme != "" && app.httpHost.Host != "" {
+		// A "host" item in the configuration takes precedence over
+		// X-Forwarded-Proto and X-Forwarded-Host headers, and the
+		// hostname in the request.
+		context.urlBuilder = v2.NewURLBuilder(&app.httpHost, false)
+	} else {
+		context.urlBuilder = v2.NewURLBuilderFromRequest(r, app.Config.HTTP.RelativeURLs)
+	}
+
+	return context
+}
+// nameRequired returns true if the route requires a name.
+func (app *App) nameRequired(r *http.Request) bool {
+	route := mux.CurrentRoute(r)
+	routeName := route.GetName()
+	return route == nil || (routeName != v2.RouteNameBase && routeName != v2.RouteNameCatalog)
+}
 // blobDispatcher uses the request context to build a blobHandler.
 func blobDispatcher(ctx *Context, r *http.Request) http.Handler {
 	dgst, err := getDigest(ctx)
@@ -1149,6 +1181,67 @@ func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
+	c := pr.authChallenger
+
+	tr := transport.NewTransport(http.DefaultTransport,
+		auth.NewAuthorizer(c.challengeManager(), auth.NewTokenHandler(http.DefaultTransport, c.credentialStore(), name.Name(), "pull")))
+
+	localRepo, err := pr.embedded.Repository(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	localManifests, err := localRepo.Manifests(ctx, storage.SkipLayerVerification())
+	if err != nil {
+		return nil, err
+	}
+
+	remoteRepo, err := client.NewRepository(ctx, name, pr.remoteURL.String(), tr)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteManifests, err := remoteRepo.Manifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxiedRepository{
+		blobStore: &proxyBlobStore{
+			localStore:     localRepo.Blobs(ctx),
+			remoteStore:    remoteRepo.Blobs(ctx),
+			scheduler:      pr.scheduler,
+			repositoryName: name,
+			authChallenger: pr.authChallenger,
+		},
+		manifests: &proxyManifestStore{
+			repositoryName:  name,
+			localManifests:  localManifests, // Options?
+			remoteManifests: remoteManifests,
+			ctx:             ctx,
+			scheduler:       pr.scheduler,
+			authChallenger:  pr.authChallenger,
+		},
+		name: name,
+		tags: &proxyTagService{
+			localTags:      localRepo.Tags(ctx),
+			remoteTags:     remoteRepo.Tags(ctx),
+			authChallenger: pr.authChallenger,
+		},
+	}, nil
+}
+
+func (pr *proxiedRepository) Blobs(ctx context.Context) distribution.BlobStore {
+	return pr.blobStore
+}
+
+type proxyBlobStore struct {
+	localStore     distribution.BlobStore
+	remoteStore    distribution.BlobService
+	scheduler      *scheduler.TTLExpirationScheduler
+	repositoryName reference.Named
+	authChallenger authChallenger
+}
 // BlobServer can serve blobs via http.
 type BlobServer interface {
 	// ServeBlob attempts to serve the blob, identifed by dgst, via http. The
@@ -1164,19 +1257,6 @@ type BlobServer interface {
 	// domain. The appropriate headers will be set for the blob, unless they
 	// have already been set by the caller.
 	ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error
-}
-// blobHandler serves http blob requests.
-type blobHandler struct {
-	*Context
-
-	Digest digest.Digest
-}
-type proxyBlobStore struct {
-	localStore     distribution.BlobStore
-	remoteStore    distribution.BlobService
-	scheduler      *scheduler.TTLExpirationScheduler
-	repositoryName reference.Named
-	authChallenger authChallenger
 }
 func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
 	served, err := pbs.serveLocal(ctx, w, r, dgst)
@@ -1224,3 +1304,5 @@ func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter,
 	return nil
 }
 ```
+
+
