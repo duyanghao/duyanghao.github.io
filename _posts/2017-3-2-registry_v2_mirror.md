@@ -683,7 +683,45 @@ type App struct {
 
 configure as a pull through cache：
 
-```
+```go
+// App is a global registry application object. Shared resources can be placed
+// on this object that will be accessible from all requests. Any writable
+// fields should be protected.
+type App struct {
+	context.Context
+
+	Config *configuration.Configuration
+
+	router           *mux.Router                 // main application router, configured with dispatchers
+	driver           storagedriver.StorageDriver // driver maintains the app global storage driver instance.
+	registry         distribution.Namespace      // registry is the primary registry backend for the app instance.
+	accessController auth.AccessController       // main access controller for application
+
+	// httpHost is a parsed representation of the http.host parameter from
+	// the configuration. Only the Scheme and Host fields are used.
+	httpHost url.URL
+
+	// events contains notification related configuration.
+	events struct {
+		sink   notifications.Sink
+		source notifications.SourceRecord
+	}
+
+	redis *redis.Pool
+
+	// trustKey is a deprecated key used to sign manifests converted to
+	// schema1 for backward compatibility. It should not be used for any
+	// other purposes.
+	trustKey libtrust.PrivateKey
+
+	// isCache is true if this registry is configured as a pull through cache
+	isCache bool
+
+	// readOnly is true if the registry is in a read-only maintenance mode
+	readOnly bool
+}
+
+
 // configure as a pull through cache
 if config.Proxy.RemoteURL != "" {
     app.registry, err = proxy.NewRegistryPullThroughCache(ctx, app.registry, app.driver, config.Proxy)
