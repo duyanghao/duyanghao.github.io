@@ -4110,7 +4110,7 @@ storage:
     maxthreads: 100
 
   delete:
-    enabled: false
+    enabled: true
 ```
 
 ```go
@@ -4371,6 +4371,7 @@ func (ttles *TTLExpirationScheduler) startTimer(entry *schedulerEntry, ttl time.
 		ttles.indexDirty = true
 	})
 }
+
 // OnBlobExpire is called when a scheduled blob's TTL expires
 func (ttles *TTLExpirationScheduler) OnBlobExpire(f expiryFunc) {
 	ttles.Lock()
@@ -4685,6 +4686,9 @@ func (d *driver) Delete(ctx context.Context, subPath string) error {
 }
 
 ```
+
+每隔7天删除目录`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>`和文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`
+
 
 
 
