@@ -2841,6 +2841,14 @@ const (
 
 也即向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回
 
+结构关系：
+
+proxiedRepository.localStore->linkedBlobStore
+
+proxiedRepository.remoteStore->repository
+
+app.registry->proxyingRegistry
+
 在执行完`desc, err := blobs.Stat(bh, bh.Digest)`后，接下来执行真正的获取blobs数据文件操作，如下：
 
 ```go
@@ -2957,32 +2965,278 @@ func (pbs *proxyBlobStore) storeLocal(ctx context.Context, dgst digest.Digest) e
 
 	return nil
 }
+```
 
-func (pbs *proxyBlobStore) copyContent(ctx context.Context, dgst digest.Digest, writer io.Writer) (distribution.Descriptor, error) {
-	desc, err := pbs.remoteStore.Stat(ctx, dgst)
+`bw, err = pbs.localStore.Create(ctx)`执行如下:
+
+```go
+// Blobs returns an instance of the BlobStore. Instantiation is cheap and
+// may be context sensitive in the future. The instance should be used similar
+// to a request local.
+func (repo *repository) Blobs(ctx context.Context) distribution.BlobStore {
+	var statter distribution.BlobDescriptorService = &linkedBlobStatter{
+		blobStore:   repo.blobStore,
+		repository:  repo,
+		linkPathFns: []linkPathFunc{blobLinkPath},
+	}
+
+	if repo.descriptorCache != nil {
+		statter = cache.NewCachedBlobStatter(repo.descriptorCache, statter)
+	}
+
+	if repo.registry.blobDescriptorServiceFactory != nil {
+		statter = repo.registry.blobDescriptorServiceFactory.BlobAccessController(statter)
+	}
+
+	return &linkedBlobStore{
+		registry:             repo.registry,
+		blobStore:            repo.blobStore,
+		blobServer:           repo.blobServer,
+		blobAccessController: statter,
+		repository:           repo,
+		ctx:                  ctx,
+
+		// TODO(stevvooe): linkPath limits this blob store to only layers.
+		// This instance cannot be used for manifest checks.
+		linkPathFns:            []linkPathFunc{blobLinkPath},
+		deleteEnabled:          repo.registry.deleteEnabled,
+		resumableDigestEnabled: repo.resumableDigestEnabled,
+	}
+}
+
+// Writer begins a blob write session, returning a handle.
+func (lbs *linkedBlobStore) Create(ctx context.Context, options ...distribution.BlobCreateOption) (distribution.BlobWriter, error) {
+	context.GetLogger(ctx).Debug("(*linkedBlobStore).Writer")
+
+	var opts distribution.CreateOptions
+
+	for _, option := range options {
+		err := option.Apply(&opts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if opts.Mount.ShouldMount {
+		desc, err := lbs.mount(ctx, opts.Mount.From, opts.Mount.From.Digest(), opts.Mount.Stat)
+		if err == nil {
+			// Mount successful, no need to initiate an upload session
+			return nil, distribution.ErrBlobMounted{From: opts.Mount.From, Descriptor: desc}
+		}
+	}
+
+	uuid := uuid.Generate().String()
+	startedAt := time.Now().UTC()
+
+	path, err := pathFor(uploadDataPathSpec{
+		name: lbs.repository.Named().Name(),
+		id:   uuid,
+	})
+
 	if err != nil {
-		return distribution.Descriptor{}, err
+		return nil, err
 	}
 
-	if w, ok := writer.(http.ResponseWriter); ok {
-		setResponseHeaders(w, desc.Size, desc.MediaType, dgst)
-	}
+	startedAtPath, err := pathFor(uploadStartedAtPathSpec{
+		name: lbs.repository.Named().Name(),
+		id:   uuid,
+	})
 
-	remoteReader, err := pbs.remoteStore.Open(ctx, dgst)
 	if err != nil {
-		return distribution.Descriptor{}, err
+		return nil, err
 	}
 
-	defer remoteReader.Close()
+	// Write a startedat file for this upload
+	if err := lbs.blobStore.driver.PutContent(ctx, startedAtPath, []byte(startedAt.Format(time.RFC3339))); err != nil {
+		return nil, err
+	}
 
-	_, err = io.CopyN(writer, remoteReader, desc.Size)
+	return lbs.newBlobUpload(ctx, uuid, path, startedAt, false)
+}
+// Generate creates a new, version 4 uuid.
+func Generate() (u UUID) {
+	const (
+		// ensures we backoff for less than 450ms total. Use the following to
+		// select new value, in units of 10ms:
+		// 	n*(n+1)/2 = d -> n^2 + n - 2d -> n = (sqrt(8d + 1) - 1)/2
+		maxretries = 9
+		backoff    = time.Millisecond * 10
+	)
+
+	var (
+		totalBackoff time.Duration
+		count        int
+		retries      int
+	)
+
+	for {
+		// This should never block but the read may fail. Because of this,
+		// we just try to read the random number generator until we get
+		// something. This is a very rare condition but may happen.
+		b := time.Duration(retries) * backoff
+		time.Sleep(b)
+		totalBackoff += b
+
+		n, err := io.ReadFull(rand.Reader, u[count:])
+		if err != nil {
+			if retryOnError(err) && retries < maxretries {
+				count += n
+				retries++
+				Loggerf("error generating version 4 uuid, retrying: %v", err)
+				continue
+			}
+
+			// Any other errors represent a system problem. What did someone
+			// do to /dev/urandom?
+			panic(fmt.Errorf("error reading random number generator, retried for %v: %v", totalBackoff.String(), err))
+		}
+
+		break
+	}
+
+	u[6] = (u[6] & 0x0f) | 0x40 // set version byte
+	u[8] = (u[8] & 0x3f) | 0x80 // set high order byte 0b10{8,9,a,b}
+
+	return u
+}
+//	Uploads:
+//
+// 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
+// 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
+// 	uploadHashStatePathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/hashstates/<algorithm>/<offset>
+//
+
+case uploadDataPathSpec:
+    return path.Join(append(repoPrefix, v.name, "_uploads", v.id, "data")...), nil
+case uploadStartedAtPathSpec:
+    return path.Join(append(repoPrefix, v.name, "_uploads", v.id, "startedat")...), nil
+
+// PutContent stores the []byte content at a location designated by "path".
+func (d *driver) PutContent(ctx context.Context, subPath string, contents []byte) error {
+	writer, err := d.Writer(ctx, subPath, false)
 	if err != nil {
-		return distribution.Descriptor{}, err
+		return err
+	}
+	defer writer.Close()
+	_, err = io.Copy(writer, bytes.NewReader(contents))
+	if err != nil {
+		writer.Cancel()
+		return err
+	}
+	return writer.Commit()
+}
+
+func (d *driver) Writer(ctx context.Context, subPath string, append bool) (storagedriver.FileWriter, error) {
+	fullPath := d.fullPath(subPath)
+	parentDir := path.Dir(fullPath)
+	if err := os.MkdirAll(parentDir, 0777); err != nil {
+		return nil, err
 	}
 
-	proxyMetrics.BlobPush(uint64(desc.Size))
+	fp, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
 
-	return desc, nil
+	var offset int64
+
+	if !append {
+		err := fp.Truncate(0)
+		if err != nil {
+			fp.Close()
+			return nil, err
+		}
+	} else {
+		n, err := fp.Seek(0, os.SEEK_END)
+		if err != nil {
+			fp.Close()
+			return nil, err
+		}
+		offset = int64(n)
+	}
+
+	return newFileWriter(fp, offset), nil
+}
+func newFileWriter(file *os.File, size int64) *fileWriter {
+	return &fileWriter{
+		file: file,
+		size: size,
+		bw:   bufio.NewWriter(file),
+	}
+}
+func (fw *fileWriter) Cancel() error {
+	if fw.closed {
+		return fmt.Errorf("already closed")
+	}
+
+	fw.cancelled = true
+	fw.file.Close()
+	return os.Remove(fw.file.Name())
+}
+
+func (fw *fileWriter) Commit() error {
+	if fw.closed {
+		return fmt.Errorf("already closed")
+	} else if fw.committed {
+		return fmt.Errorf("already committed")
+	} else if fw.cancelled {
+		return fmt.Errorf("already cancelled")
+	}
+
+	if err := fw.bw.Flush(); err != nil {
+		return err
+	}
+
+	if err := fw.file.Sync(); err != nil {
+		return err
+	}
+
+	fw.committed = true
+	return nil
+}
+// newBlobUpload allocates a new upload controller with the given state.
+func (lbs *linkedBlobStore) newBlobUpload(ctx context.Context, uuid, path string, startedAt time.Time, append bool) (distribution.BlobWriter, error) {
+	fw, err := lbs.driver.Writer(ctx, path, append)
+	if err != nil {
+		return nil, err
+	}
+
+	bw := &blobWriter{
+		ctx:        ctx,
+		blobStore:  lbs,
+		id:         uuid,
+		startedAt:  startedAt,
+		digester:   digest.Canonical.New(),
+		fileWriter: fw,
+		driver:     lbs.driver,
+		path:       path,
+		resumableDigestEnabled: lbs.resumableDigestEnabled,
+	}
+
+	return bw, nil
+}
+// blobWriter is used to control the various aspects of resumable
+// blob upload.
+type blobWriter struct {
+	ctx       context.Context
+	blobStore *linkedBlobStore
+
+	id        string
+	startedAt time.Time
+	digester  digest.Digester
+	written   int64 // track the contiguous write
+
+	fileWriter storagedriver.FileWriter
+	driver     storagedriver.StorageDriver
+	path       string
+
+	resumableDigestEnabled bool
+	committed              bool
 }
 ```
 
+`desc, err = pbs.copyContent(ctx, dgst, bw)`执行如下：
+
+```go
+
+```
