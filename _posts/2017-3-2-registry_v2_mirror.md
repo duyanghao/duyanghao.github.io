@@ -3238,5 +3238,133 @@ type blobWriter struct {
 `desc, err = pbs.copyContent(ctx, dgst, bw)`执行如下：
 
 ```go
+func (pbs *proxyBlobStore) storeLocal(ctx context.Context, dgst digest.Digest) error {
+	defer func() {
+		mu.Lock()
+		delete(inflight, dgst)
+		mu.Unlock()
+	}()
 
+	var desc distribution.Descriptor
+	var err error
+	var bw distribution.BlobWriter
+
+	bw, err = pbs.localStore.Create(ctx)
+	if err != nil {
+		return err
+	}
+
+	desc, err = pbs.copyContent(ctx, dgst, bw)
+	if err != nil {
+		return err
+	}
+
+	_, err = bw.Commit(ctx, desc)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+func (pbs *proxyBlobStore) copyContent(ctx context.Context, dgst digest.Digest, writer io.Writer) (distribution.Descriptor, error) {
+	desc, err := pbs.remoteStore.Stat(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if w, ok := writer.(http.ResponseWriter); ok {
+		setResponseHeaders(w, desc.Size, desc.MediaType, dgst)
+	}
+
+	remoteReader, err := pbs.remoteStore.Open(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	defer remoteReader.Close()
+
+	_, err = io.CopyN(writer, remoteReader, desc.Size)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	proxyMetrics.BlobPush(uint64(desc.Size))
+
+	return desc, nil
+}
+func setResponseHeaders(w http.ResponseWriter, length int64, mediaType string, digest digest.Digest) {
+	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("Docker-Content-Digest", digest.String())
+	w.Header().Set("Etag", digest.String())
+}
+func (bs *blobs) Open(ctx context.Context, dgst digest.Digest) (distribution.ReadSeekCloser, error) {
+	ref, err := reference.WithDigest(bs.name, dgst)
+	if err != nil {
+		return nil, err
+	}
+	blobURL, err := bs.ub.BuildBlobURL(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	return transport.NewHTTPReadSeeker(bs.client, blobURL,
+		func(resp *http.Response) error {
+			if resp.StatusCode == http.StatusNotFound {
+				return distribution.ErrBlobUnknown
+			}
+			return HandleErrorResponse(resp)
+		}), nil
+}
+// BuildBlobURL constructs the url for the blob identified by name and dgst.
+func (ub *URLBuilder) BuildBlobURL(ref reference.Canonical) (string, error) {
+	route := ub.cloneRoute(RouteNameBlob)
+
+	layerURL, err := route.URL("name", ref.Name(), "digest", ref.Digest().String())
+	if err != nil {
+		return "", err
+	}
+
+	return layerURL.String(), nil
+}
+// NewHTTPReadSeeker handles reading from an HTTP endpoint using a GET
+// request. When seeking and starting a read from a non-zero offset
+// the a "Range" header will be added which sets the offset.
+// TODO(dmcgowan): Move this into a separate utility package
+func NewHTTPReadSeeker(client *http.Client, url string, errorHandler func(*http.Response) error) ReadSeekCloser {
+	return &httpReadSeeker{
+		client:       client,
+		url:          url,
+		errorHandler: errorHandler,
+	}
+}
+// proxyMetrics tracks metrics about the proxy cache.  This is
+// kept globally and made available via expvar.
+var proxyMetrics = &proxyMetricsCollector{}
+
+// BlobPush tracks metrics about blobs pushed to clients
+func (pmc *proxyMetricsCollector) BlobPush(bytesPushed uint64) {
+	atomic.AddUint64(&pmc.blobMetrics.Requests, 1)
+	atomic.AddUint64(&pmc.blobMetrics.Hits, 1)
+	atomic.AddUint64(&pmc.blobMetrics.BytesPushed, bytesPushed)
+}
+// Metrics is used to hold metric counters
+// related to the proxy
+type Metrics struct {
+	Requests    uint64
+	Hits        uint64
+	Misses      uint64
+	BytesPulled uint64
+	BytesPushed uint64
+}
 ```
+
+执行逻辑为：
+
+* 向upstream发出`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件大小和内容类型
+* 利用HEAD获取的信息构建HTTP response回应报头
+* 向upstream发出`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件内容
+* 写入本地文件：`<root>/v2/repositories/<name>/_uploads/<id>/data`
+
+// 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
+// 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
