@@ -2841,15 +2841,148 @@ const (
 
 也即向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回
 
+在执行完`desc, err := blobs.Stat(bh, bh.Digest)`后，接下来执行真正的获取blobs数据文件操作，如下：
 
+```go
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
 
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
 
-```
-//	Blob Store:
-//
-//	blobsPathSpec:                  <root>/v2/blobs/
-// 	blobPathSpec:                   <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>
-// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
-// 	blobMediaTypePathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+	if served {
+		return nil
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func (pbs *proxyBlobStore) serveLocal(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) (bool, error) {
+	localDesc, err := pbs.localStore.Stat(ctx, dgst)
+	if err != nil {
+		// Stat can report a zero sized file here if it's checked between creation
+		// and population.  Return nil error, and continue
+		return false, nil
+	}
+
+	if err == nil {
+		proxyMetrics.BlobPush(uint64(localDesc.Size))
+		return true, pbs.localStore.ServeBlob(ctx, w, r, dgst)
+	}
+
+	return false, nil
+
+}
+// inflight tracks currently downloading blobs
+var inflight = make(map[digest.Digest]struct{})
+
+func (pbs *proxyBlobStore) storeLocal(ctx context.Context, dgst digest.Digest) error {
+	defer func() {
+		mu.Lock()
+		delete(inflight, dgst)
+		mu.Unlock()
+	}()
+
+	var desc distribution.Descriptor
+	var err error
+	var bw distribution.BlobWriter
+
+	bw, err = pbs.localStore.Create(ctx)
+	if err != nil {
+		return err
+	}
+
+	desc, err = pbs.copyContent(ctx, dgst, bw)
+	if err != nil {
+		return err
+	}
+
+	_, err = bw.Commit(ctx, desc)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (pbs *proxyBlobStore) copyContent(ctx context.Context, dgst digest.Digest, writer io.Writer) (distribution.Descriptor, error) {
+	desc, err := pbs.remoteStore.Stat(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if w, ok := writer.(http.ResponseWriter); ok {
+		setResponseHeaders(w, desc.Size, desc.MediaType, dgst)
+	}
+
+	remoteReader, err := pbs.remoteStore.Open(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	defer remoteReader.Close()
+
+	_, err = io.CopyN(writer, remoteReader, desc.Size)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	proxyMetrics.BlobPush(uint64(desc.Size))
+
+	return desc, nil
+}
 ```
 
