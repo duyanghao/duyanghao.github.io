@@ -4014,5 +4014,677 @@ func (lbs *linkedBlobStatter) SetDescriptor(ctx context.Context, dgst digest.Dig
 * 删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
 
 
+执行完`pbs.storeLocal(ctx, dgst)`后，执行`blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)`，如下：
+
+```go
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
+
+	if served {
+		return nil
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// WithDigest combines the name from "name" and the digest from "digest" to form
+// a reference incorporating both the name and the digest.
+func WithDigest(name Named, digest digest.Digest) (Canonical, error) {
+	if !anchoredDigestRegexp.MatchString(digest.String()) {
+		return nil, ErrDigestInvalidFormat
+	}
+	if tagged, ok := name.(Tagged); ok {
+		return reference{
+			name:   name.Name(),
+			tag:    tagged.Tag(),
+			digest: digest,
+		}, nil
+	}
+	return canonicalReference{
+		name:   name.Name(),
+		digest: digest,
+	}, nil
+}
+type canonicalReference struct {
+	name   string
+	digest digest.Digest
+}
+func (c canonicalReference) String() string {
+	return c.name + "@" + c.digest.String()
+}
+// MatchString reports whether the Regexp matches the string s.
+func (re *Regexp) MatchString(s string) bool {
+	return re.doExecute(nil, nil, s, 0, 0) != nil
+}
+
+// DigestRegexp matches valid digests.
+DigestRegexp = match(`[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*[:][[:xdigit:]]{32,}`)
+
+// anchoredDigestRegexp matches valid digests, anchored at the start and
+// end of the matched string.
+anchoredDigestRegexp = anchored(DigestRegexp)
+```
+
+`pbs.scheduler.AddBlob(blobRef, repositoryTTL)`主要负责定期清理功能(delete.enabled=true)，如下：
+
+```
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+    maxthreads: 100
+
+  delete:
+    enabled: false
+```
+
+```go
+// AddBlob schedules a blob cleanup after ttl expires
+func (ttles *TTLExpirationScheduler) AddBlob(blobRef reference.Canonical, ttl time.Duration) error {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	if ttles.stopped {
+		return fmt.Errorf("scheduler not started")
+	}
+
+	ttles.add(blobRef, ttl, entryTypeBlob)
+	return nil
+}
+// todo(richardscothern): from cache control header or config
+const repositoryTTL = time.Duration(24 * 7 * time.Hour)
+
+// TTLExpirationScheduler is a scheduler used to perform actions
+// when TTLs expire
+type TTLExpirationScheduler struct {
+	sync.Mutex
+
+	entries map[string]*schedulerEntry
+
+	driver          driver.StorageDriver
+	ctx             context.Context
+	pathToStateFile string
+
+	stopped bool
+
+	onBlobExpire     expiryFunc
+	onManifestExpire expiryFunc
+
+	indexDirty bool
+	saveTimer  *time.Ticker
+	doneChan   chan struct{}
+}
+
+// New returns a new instance of the scheduler
+func New(ctx context.Context, driver driver.StorageDriver, path string) *TTLExpirationScheduler {
+	return &TTLExpirationScheduler{
+		entries:         make(map[string]*schedulerEntry),
+		driver:          driver,
+		pathToStateFile: path,
+		ctx:             ctx,
+		stopped:         true,
+		doneChan:        make(chan struct{}),
+		saveTimer:       time.NewTicker(indexSaveFrequency),
+	}
+}
+// NewRegistryPullThroughCache creates a registry acting as a pull through cache
+func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (distribution.Namespace, error) {
+	remoteURL, err := url.Parse(config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	v := storage.NewVacuum(ctx, driver)
+	s := scheduler.New(ctx, driver, "/scheduler-state.json")
+	s.OnBlobExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		blobs := repo.Blobs(ctx)
+
+		// Clear the repository reference and descriptor caches
+		err = blobs.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+
+		err = v.RemoveBlob(r.Digest().String())
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	s.OnManifestExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		manifests, err := repo.Manifests(ctx)
+		if err != nil {
+			return err
+		}
+		err = manifests.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	err = s.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	cs, err := configureAuth(config.Username, config.Password, config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxyingRegistry{
+		embedded:  registry,
+		scheduler: s,
+		remoteURL: *remoteURL,
+		authChallenger: &remoteAuthChallenger{
+			remoteURL: *remoteURL,
+			cm:        challenge.NewSimpleManager(),
+			cs:        cs,
+		},
+	}, nil
+}
+
+// Start starts the scheduler
+func (ttles *TTLExpirationScheduler) Start() error {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	err := ttles.readState()
+	if err != nil {
+		return err
+	}
+
+	if !ttles.stopped {
+		return fmt.Errorf("Scheduler already started")
+	}
+
+	context.GetLogger(ttles.ctx).Infof("Starting cached object TTL expiration scheduler...")
+	ttles.stopped = false
+
+	// Start timer for each deserialized entry
+	for _, entry := range ttles.entries {
+		entry.timer = ttles.startTimer(entry, entry.Expiry.Sub(time.Now()))
+	}
+
+	// Start a ticker to periodically save the entries index
+
+	go func() {
+		for {
+			select {
+			case <-ttles.saveTimer.C:
+				ttles.Lock()
+				if !ttles.indexDirty {
+					ttles.Unlock()
+					continue
+				}
+
+				err := ttles.writeState()
+				if err != nil {
+					context.GetLogger(ttles.ctx).Errorf("Error writing scheduler state: %s", err)
+				} else {
+					ttles.indexDirty = false
+				}
+				ttles.Unlock()
+
+			case <-ttles.doneChan:
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (ttles *TTLExpirationScheduler) writeState() error {
+	jsonBytes, err := json.Marshal(ttles.entries)
+	if err != nil {
+		return err
+	}
+
+	err = ttles.driver.PutContent(ttles.ctx, ttles.pathToStateFile, jsonBytes)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const (
+	entryTypeBlob = iota
+	entryTypeManifest
+	indexSaveFrequency = 5 * time.Second
+)
+
+func (ttles *TTLExpirationScheduler) add(r reference.Reference, ttl time.Duration, eType int) {
+	entry := &schedulerEntry{
+		Key:       r.String(),
+		Expiry:    time.Now().Add(ttl),
+		EntryType: eType,
+	}
+	context.GetLogger(ttles.ctx).Infof("Adding new scheduler entry for %s with ttl=%s", entry.Key, entry.Expiry.Sub(time.Now()))
+	if oldEntry, present := ttles.entries[entry.Key]; present && oldEntry.timer != nil {
+		oldEntry.timer.Stop()
+	}
+	ttles.entries[entry.Key] = entry
+	entry.timer = ttles.startTimer(entry, ttl)
+	ttles.indexDirty = true
+}
+
+// schedulerEntry represents an entry in the scheduler
+// fields are exported for serialization
+type schedulerEntry struct {
+	Key       string    `json:"Key"`
+	Expiry    time.Time `json:"ExpiryData"`
+	EntryType int       `json:"EntryType"`
+
+	timer *time.Timer
+}
+
+func (ttles *TTLExpirationScheduler) startTimer(entry *schedulerEntry, ttl time.Duration) *time.Timer {
+	return time.AfterFunc(ttl, func() {
+		ttles.Lock()
+		defer ttles.Unlock()
+
+		var f expiryFunc
+
+		switch entry.EntryType {
+		case entryTypeBlob:
+			f = ttles.onBlobExpire
+		case entryTypeManifest:
+			f = ttles.onManifestExpire
+		default:
+			f = func(reference.Reference) error {
+				return fmt.Errorf("scheduler entry type")
+			}
+		}
+
+		ref, err := reference.Parse(entry.Key)
+		if err == nil {
+			if err := f(ref); err != nil {
+				context.GetLogger(ttles.ctx).Errorf("Scheduler error returned from OnExpire(%s): %s", entry.Key, err)
+			}
+		} else {
+			context.GetLogger(ttles.ctx).Errorf("Error unpacking reference: %s", err)
+		}
+
+		delete(ttles.entries, entry.Key)
+		ttles.indexDirty = true
+	})
+}
+// OnBlobExpire is called when a scheduled blob's TTL expires
+func (ttles *TTLExpirationScheduler) OnBlobExpire(f expiryFunc) {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	ttles.onBlobExpire = f
+}
+
+// NewRegistryPullThroughCache creates a registry acting as a pull through cache
+func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (distribution.Namespace, error) {
+	remoteURL, err := url.Parse(config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	v := storage.NewVacuum(ctx, driver)
+	s := scheduler.New(ctx, driver, "/scheduler-state.json")
+	s.OnBlobExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		blobs := repo.Blobs(ctx)
+
+		// Clear the repository reference and descriptor caches
+		err = blobs.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+
+		err = v.RemoveBlob(r.Digest().String())
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	s.OnManifestExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		manifests, err := repo.Manifests(ctx)
+		if err != nil {
+			return err
+		}
+		err = manifests.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	err = s.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	cs, err := configureAuth(config.Username, config.Password, config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxyingRegistry{
+		embedded:  registry,
+		scheduler: s,
+		remoteURL: *remoteURL,
+		authChallenger: &remoteAuthChallenger{
+			remoteURL: *remoteURL,
+			cm:        challenge.NewSimpleManager(),
+			cs:        cs,
+		},
+	}, nil
+}
+
+// Repository returns an instance of the repository tied to the registry.
+// Instances should not be shared between goroutines but are cheap to
+// allocate. In general, they should be request scoped.
+func (reg *registry) Repository(ctx context.Context, canonicalName reference.Named) (distribution.Repository, error) {
+	var descriptorCache distribution.BlobDescriptorService
+	if reg.blobDescriptorCacheProvider != nil {
+		var err error
+		descriptorCache, err = reg.blobDescriptorCacheProvider.RepositoryScoped(canonicalName.Name())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &repository{
+		ctx:             ctx,
+		registry:        reg,
+		name:            canonicalName,
+		descriptorCache: descriptorCache,
+	}, nil
+}
+
+// Blobs returns an instance of the BlobStore. Instantiation is cheap and
+// may be context sensitive in the future. The instance should be used similar
+// to a request local.
+func (repo *repository) Blobs(ctx context.Context) distribution.BlobStore {
+	var statter distribution.BlobDescriptorService = &linkedBlobStatter{
+		blobStore:   repo.blobStore,
+		repository:  repo,
+		linkPathFns: []linkPathFunc{blobLinkPath},
+	}
+
+	if repo.descriptorCache != nil {
+		statter = cache.NewCachedBlobStatter(repo.descriptorCache, statter)
+	}
+
+	if repo.registry.blobDescriptorServiceFactory != nil {
+		statter = repo.registry.blobDescriptorServiceFactory.BlobAccessController(statter)
+	}
+
+	return &linkedBlobStore{
+		registry:             repo.registry,
+		blobStore:            repo.blobStore,
+		blobServer:           repo.blobServer,
+		blobAccessController: statter,
+		repository:           repo,
+		ctx:                  ctx,
+
+		// TODO(stevvooe): linkPath limits this blob store to only layers.
+		// This instance cannot be used for manifest checks.
+		linkPathFns:            []linkPathFunc{blobLinkPath},
+		deleteEnabled:          repo.registry.deleteEnabled,
+		resumableDigestEnabled: repo.resumableDigestEnabled,
+	}
+}
+func (lbs *linkedBlobStore) Delete(ctx context.Context, dgst digest.Digest) error {
+	if !lbs.deleteEnabled {
+		return distribution.ErrUnsupported
+	}
+
+	// Ensure the blob is available for deletion
+	_, err := lbs.blobAccessController.Stat(ctx, dgst)
+	if err != nil {
+		return err
+	}
+
+	err = lbs.blobAccessController.Clear(ctx, dgst)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+// EnableDelete is a functional option for NewRegistry. It enables deletion on
+// the registry.
+func EnableDelete(registry *registry) error {
+	registry.deleteEnabled = true
+	return nil
+}
+func (lbs *linkedBlobStatter) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	var (
+		found  bool
+		target digest.Digest
+	)
+
+	// try the many link path functions until we get success or an error that
+	// is not PathNotFoundError.
+	for _, linkPathFn := range lbs.linkPathFns {
+		var err error
+		target, err = lbs.resolveWithLinkFunc(ctx, dgst, linkPathFn)
+
+		if err == nil {
+			found = true
+			break // success!
+		}
+
+		switch err := err.(type) {
+		case driver.PathNotFoundError:
+			// do nothing, just move to the next linkPathFn
+		default:
+			return distribution.Descriptor{}, err
+		}
+	}
+
+	if !found {
+		return distribution.Descriptor{}, distribution.ErrBlobUnknown
+	}
+
+	if target != dgst {
+		// Track when we are doing cross-digest domain lookups. ie, sha512 to sha256.
+		context.GetLogger(ctx).Warnf("looking up blob with canonical target: %v -> %v", dgst, target)
+	}
+
+	// TODO(stevvooe): Look up repository local mediatype and replace that on
+	// the returned descriptor.
+
+	return lbs.blobStore.statter.Stat(ctx, target)
+}
+
+// 	Blobs:
+//
+// 	layerLinkPathSpec:            <root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link
+//
+
+// resolveTargetWithFunc allows us to read a link to a resource with different
+// linkPathFuncs to let us try a few different paths before returning not
+// found.
+func (lbs *linkedBlobStatter) resolveWithLinkFunc(ctx context.Context, dgst digest.Digest, linkPathFn linkPathFunc) (digest.Digest, error) {
+	blobLinkPath, err := linkPathFn(lbs.repository.Named().Name(), dgst)
+	if err != nil {
+		return "", err
+	}
+
+	return lbs.blobStore.readlink(ctx, blobLinkPath)
+}
+
+func (lbs *linkedBlobStatter) Clear(ctx context.Context, dgst digest.Digest) (err error) {
+	// clear any possible existence of a link described in linkPathFns
+	for _, linkPathFn := range lbs.linkPathFns {
+		blobLinkPath, err := linkPathFn(lbs.repository.Named().Name(), dgst)
+		if err != nil {
+			return err
+		}
+
+		err = lbs.blobStore.driver.Delete(ctx, blobLinkPath)
+		if err != nil {
+			switch err := err.(type) {
+			case driver.PathNotFoundError:
+				continue // just ignore this error and continue
+			default:
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// vacuum contains functions for cleaning up repositories and blobs
+// These functions will only reliably work on strongly consistent
+// storage systems.
+// https://en.wikipedia.org/wiki/Consistency_model
+
+// NewVacuum creates a new Vacuum
+func NewVacuum(ctx context.Context, driver driver.StorageDriver) Vacuum {
+	return Vacuum{
+		ctx:    ctx,
+		driver: driver,
+	}
+}
+// Vacuum removes content from the filesystem
+type Vacuum struct {
+	driver driver.StorageDriver
+	ctx    context.Context
+}
+// RemoveBlob removes a blob from the filesystem
+func (v Vacuum) RemoveBlob(dgst string) error {
+	d, err := digest.ParseDigest(dgst)
+	if err != nil {
+		return err
+	}
+
+	blobPath, err := pathFor(blobPathSpec{digest: d})
+	if err != nil {
+		return err
+	}
+
+	context.GetLogger(v.ctx).Infof("Deleting blob: %s", blobPath)
+
+	err = v.driver.Delete(v.ctx, blobPath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+// blobPathSpec contains the path for the registry global blob store.
+type blobPathSpec struct {
+	digest digest.Digest
+}
+
+//	Blob Store:
+//
+//	blobsPathSpec:                  <root>/v2/blobs/
+// 	blobPathSpec:                   <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>
+// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+// 	blobMediaTypePathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+//
+
+// Delete recursively deletes all objects stored at "path" and its subpaths.
+func (d *driver) Delete(ctx context.Context, subPath string) error {
+	fullPath := d.fullPath(subPath)
+
+	_, err := os.Stat(fullPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	} else if err != nil {
+		return storagedriver.PathNotFoundError{Path: subPath}
+	}
+
+	err = os.RemoveAll(fullPath)
+	return err
+}
+
+```
+
 
 
