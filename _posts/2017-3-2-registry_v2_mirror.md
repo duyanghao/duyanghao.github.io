@@ -1930,6 +1930,124 @@ func ParseDigest(s string) (Digest, error) {
 // terms.
 type Digest string
 
+
+type blobStatter struct {
+	driver driver.StorageDriver
+}
+
+// Stat implements BlobStatter.Stat by returning the descriptor for the blob
+// in the main blob store. If this method returns successfully, there is
+// strong guarantee that the blob exists and is available.
+func (bs *blobStatter) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	path, err := pathFor(blobDataPathSpec{
+		digest: dgst,
+	})
+
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	fi, err := bs.driver.Stat(ctx, path)
+	if err != nil {
+		switch err := err.(type) {
+		case driver.PathNotFoundError:
+			return distribution.Descriptor{}, distribution.ErrBlobUnknown
+		default:
+			return distribution.Descriptor{}, err
+		}
+	}
+
+	if fi.IsDir() {
+		// NOTE(stevvooe): This represents a corruption situation. Somehow, we
+		// calculated a blob path and then detected a directory. We log the
+		// error and then error on the side of not knowing about the blob.
+		context.GetLogger(ctx).Warnf("blob path should not be a directory: %q", path)
+		return distribution.Descriptor{}, distribution.ErrBlobUnknown
+	}
+
+	// TODO(stevvooe): Add method to resolve the mediatype. We can store and
+	// cache a "global" media type for the blob, even if a specific repo has a
+	// mediatype that overrides the main one.
+
+	return distribution.Descriptor{
+		Size: fi.Size(),
+
+		// NOTE(stevvooe): The central blob store firewalls media types from
+		// other users. The caller should look this up and override the value
+		// for the specific repository.
+		MediaType: "application/octet-stream",
+		Digest:    dgst,
+	}, nil
+}
+// Descriptor describes targeted content. Used in conjunction with a blob
+// store, a descriptor can be used to fetch, store and target any kind of
+// blob. The struct also describes the wire protocol format. Fields should
+// only be added but never changed.
+type Descriptor struct {
+	// MediaType describe the type of the content. All text based formats are
+	// encoded as utf-8.
+	MediaType string `json:"mediaType,omitempty"`
+
+	// Size in bytes of content.
+	Size int64 `json:"size,omitempty"`
+
+	// Digest uniquely identifies the content. A byte stream can be verified
+	// against against this digest.
+	Digest digest.Digest `json:"digest,omitempty"`
+
+	// URLs contains the source URLs of this content.
+	URLs []string `json:"urls,omitempty"`
+
+	// NOTE: Before adding a field here, please ensure that all
+	// other options have been exhausted. Much of the type relationships
+	// depend on the simplicity of this type.
+}
+
+// blobDataPathSpec contains the path for the registry global blob store. For
+// now, this contains layer data, exclusively.
+type blobDataPathSpec struct {
+	digest digest.Digest
+}
+
+// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+
+case blobDataPathSpec:
+    components, err := digestPathComponents(v.digest, true)
+    if err != nil {
+        return "", err
+    }
+
+    components = append(components, "data")
+    blobPathPrefix := append(rootPrefix, "blobs")
+    return path.Join(append(blobPathPrefix, components...)...), nil
+
+// Stat retrieves the FileInfo for the given path, including the current size
+// in bytes and the creation time.
+func (d *driver) Stat(ctx context.Context, subPath string) (storagedriver.FileInfo, error) {
+	fullPath := d.fullPath(subPath)
+
+	fi, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, storagedriver.PathNotFoundError{Path: subPath}
+		}
+
+		return nil, err
+	}
+
+	return fileInfo{
+		path:     subPath,
+		FileInfo: fi,
+	}, nil
+}
+// fullPath returns the absolute path of a key within the Driver's storage.
+func (d *driver) fullPath(subPath string) string {
+	return path.Join(d.rootDirectory, subPath)
+}
+type fileInfo struct {
+	os.FileInfo
+	path string
+}
 ```
 
 ```
@@ -1939,7 +2057,7 @@ type Digest string
 //
 ```
 
-也即先验证是否存在`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件，若存在（文件内容应该与digest相同），则直接返回；否则进行如下操作：
+也即先验证是否存在`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件，若存在（文件内容应该与digest相同），则获取文件`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`信息并构建`Descriptor`结构返回；否则进行如下操作：
 
 ```go
 // GetBlob fetches the binary data from backend storage returns it in the
@@ -1979,6 +2097,166 @@ func (pbs *proxyBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distri
 	}
 
 	return pbs.remoteStore.Stat(ctx, dgst)
+}
+// NewRegistryPullThroughCache creates a registry acting as a pull through cache
+func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (distribution.Namespace, error) {
+	remoteURL, err := url.Parse(config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	v := storage.NewVacuum(ctx, driver)
+	s := scheduler.New(ctx, driver, "/scheduler-state.json")
+	s.OnBlobExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		blobs := repo.Blobs(ctx)
+
+		// Clear the repository reference and descriptor caches
+		err = blobs.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+
+		err = v.RemoveBlob(r.Digest().String())
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	s.OnManifestExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		manifests, err := repo.Manifests(ctx)
+		if err != nil {
+			return err
+		}
+		err = manifests.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	err = s.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	cs, err := configureAuth(config.Username, config.Password, config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxyingRegistry{
+		embedded:  registry,
+		scheduler: s,
+		remoteURL: *remoteURL,
+		authChallenger: &remoteAuthChallenger{
+			remoteURL: *remoteURL,
+			cm:        challenge.NewSimpleManager(),
+			cs:        cs,
+		},
+	}, nil
+}
+func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
+	c := pr.authChallenger
+
+	tr := transport.NewTransport(http.DefaultTransport,
+		auth.NewAuthorizer(c.challengeManager(), auth.NewTokenHandler(http.DefaultTransport, c.credentialStore(), name.Name(), "pull")))
+
+	localRepo, err := pr.embedded.Repository(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	localManifests, err := localRepo.Manifests(ctx, storage.SkipLayerVerification())
+	if err != nil {
+		return nil, err
+	}
+
+	remoteRepo, err := client.NewRepository(ctx, name, pr.remoteURL.String(), tr)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteManifests, err := remoteRepo.Manifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxiedRepository{
+		blobStore: &proxyBlobStore{
+			localStore:     localRepo.Blobs(ctx),
+			remoteStore:    remoteRepo.Blobs(ctx),
+			scheduler:      pr.scheduler,
+			repositoryName: name,
+			authChallenger: pr.authChallenger,
+		},
+		manifests: &proxyManifestStore{
+			repositoryName:  name,
+			localManifests:  localManifests, // Options?
+			remoteManifests: remoteManifests,
+			ctx:             ctx,
+			scheduler:       pr.scheduler,
+			authChallenger:  pr.authChallenger,
+		},
+		name: name,
+		tags: &proxyTagService{
+			localTags:      localRepo.Tags(ctx),
+			remoteTags:     remoteRepo.Tags(ctx),
+			authChallenger: pr.authChallenger,
+		},
+	}, nil
+}
+type remoteAuthChallenger struct {
+	remoteURL url.URL
+	sync.Mutex
+	cm challenge.Manager
+	cs auth.CredentialStore
+}
+// tryEstablishChallenges will attempt to get a challenge type for the upstream if none currently exist
+func (r *remoteAuthChallenger) tryEstablishChallenges(ctx context.Context) error {
+	r.Lock()
+	defer r.Unlock()
+
+	remoteURL := r.remoteURL
+	remoteURL.Path = "/v2/"
+	challenges, err := r.cm.GetChallenges(remoteURL)
+	if err != nil {
+		return err
+	}
+
+	if len(challenges) > 0 {
+		return nil
+	}
+
+	// establish challenge type with upstream
+	if err := ping(r.cm, remoteURL.String(), challengeHeader); err != nil {
+		return err
+	}
+
+	context.GetLogger(ctx).Infof("Challenge established with upstream : %s %s", remoteURL, r.cm)
+	return nil
 }
 ```
 
