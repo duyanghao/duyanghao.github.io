@@ -3235,6 +3235,8 @@ type blobWriter struct {
 }
 ```
 
+向文件`<root>/v2/repositories/<name>/_uploads/<id>/startedat`中写入当前日期
+
 `desc, err = pbs.copyContent(ctx, dgst, bw)`执行如下：
 
 ```go
@@ -3368,3 +3370,480 @@ type Metrics struct {
 
 // 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
 // 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
+
+`_, err = bw.Commit(ctx, desc)`执行如下：
+
+```go
+func (pbs *proxyBlobStore) storeLocal(ctx context.Context, dgst digest.Digest) error {
+	defer func() {
+		mu.Lock()
+		delete(inflight, dgst)
+		mu.Unlock()
+	}()
+
+	var desc distribution.Descriptor
+	var err error
+	var bw distribution.BlobWriter
+
+	bw, err = pbs.localStore.Create(ctx)
+	if err != nil {
+		return err
+	}
+
+	desc, err = pbs.copyContent(ctx, dgst, bw)
+	if err != nil {
+		return err
+	}
+
+	_, err = bw.Commit(ctx, desc)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+// Commit marks the upload as completed, returning a valid descriptor. The
+// final size and digest are checked against the first descriptor provided.
+func (bw *blobWriter) Commit(ctx context.Context, desc distribution.Descriptor) (distribution.Descriptor, error) {
+	context.GetLogger(ctx).Debug("(*blobWriter).Commit")
+
+	if err := bw.fileWriter.Commit(); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	bw.Close()
+	desc.Size = bw.Size()
+
+	canonical, err := bw.validateBlob(ctx, desc)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := bw.moveBlob(ctx, canonical); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := bw.blobStore.linkBlob(ctx, canonical, desc.Digest); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := bw.removeResources(ctx); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	err = bw.blobStore.blobAccessController.SetDescriptor(ctx, canonical.Digest, canonical)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	bw.committed = true
+	return canonical, nil
+}
+func (fw *fileWriter) Commit() error {
+	if fw.closed {
+		return fmt.Errorf("already closed")
+	} else if fw.committed {
+		return fmt.Errorf("already committed")
+	} else if fw.cancelled {
+		return fmt.Errorf("already cancelled")
+	}
+
+	if err := fw.bw.Flush(); err != nil {
+		return err
+	}
+
+	if err := fw.file.Sync(); err != nil {
+		return err
+	}
+
+	fw.committed = true
+	return nil
+}
+func (bw *blobWriter) Size() int64 {
+	return bw.fileWriter.Size()
+}
+func (fw *fileWriter) Size() int64 {
+	return fw.size
+}
+type fileWriter struct {
+	file      *os.File
+	size      int64
+	bw        *bufio.Writer
+	closed    bool
+	committed bool
+	cancelled bool
+}
+
+func newFileWriter(file *os.File, size int64) *fileWriter {
+	return &fileWriter{
+		file: file,
+		size: size,
+		bw:   bufio.NewWriter(file),
+	}
+}
+// validateBlob checks the data against the digest, returning an error if it
+// does not match. The canonical descriptor is returned.
+func (bw *blobWriter) validateBlob(ctx context.Context, desc distribution.Descriptor) (distribution.Descriptor, error) {
+	var (
+		verified, fullHash bool
+		canonical          digest.Digest
+	)
+
+	if desc.Digest == "" {
+		// if no descriptors are provided, we have nothing to validate
+		// against. We don't really want to support this for the registry.
+		return distribution.Descriptor{}, distribution.ErrBlobInvalidDigest{
+			Reason: fmt.Errorf("cannot validate against empty digest"),
+		}
+	}
+
+	var size int64
+
+	// Stat the on disk file
+	if fi, err := bw.driver.Stat(ctx, bw.path); err != nil {
+		switch err := err.(type) {
+		case storagedriver.PathNotFoundError:
+			// NOTE(stevvooe): We really don't care if the file is
+			// not actually present for the reader. We now assume
+			// that the desc length is zero.
+			desc.Size = 0
+		default:
+			// Any other error we want propagated up the stack.
+			return distribution.Descriptor{}, err
+		}
+	} else {
+		if fi.IsDir() {
+			return distribution.Descriptor{}, fmt.Errorf("unexpected directory at upload location %q", bw.path)
+		}
+
+		size = fi.Size()
+	}
+
+	if desc.Size > 0 {
+		if desc.Size != size {
+			return distribution.Descriptor{}, distribution.ErrBlobInvalidLength
+		}
+	} else {
+		// if provided 0 or negative length, we can assume caller doesn't know or
+		// care about length.
+		desc.Size = size
+	}
+
+	// TODO(stevvooe): This section is very meandering. Need to be broken down
+	// to be a lot more clear.
+
+	if err := bw.resumeDigest(ctx); err == nil {
+		canonical = bw.digester.Digest()
+
+		if canonical.Algorithm() == desc.Digest.Algorithm() {
+			// Common case: client and server prefer the same canonical digest
+			// algorithm - currently SHA256.
+			verified = desc.Digest == canonical
+		} else {
+			// The client wants to use a different digest algorithm. They'll just
+			// have to be patient and wait for us to download and re-hash the
+			// uploaded content using that digest algorithm.
+			fullHash = true
+		}
+	} else if err == errResumableDigestNotAvailable {
+		// Not using resumable digests, so we need to hash the entire layer.
+		fullHash = true
+	} else {
+		return distribution.Descriptor{}, err
+	}
+
+	if fullHash {
+		// a fantastic optimization: if the the written data and the size are
+		// the same, we don't need to read the data from the backend. This is
+		// because we've written the entire file in the lifecycle of the
+		// current instance.
+		if bw.written == size && digest.Canonical == desc.Digest.Algorithm() {
+			canonical = bw.digester.Digest()
+			verified = desc.Digest == canonical
+		}
+
+		// If the check based on size fails, we fall back to the slowest of
+		// paths. We may be able to make the size-based check a stronger
+		// guarantee, so this may be defensive.
+		if !verified {
+			digester := digest.Canonical.New()
+
+			digestVerifier, err := digest.NewDigestVerifier(desc.Digest)
+			if err != nil {
+				return distribution.Descriptor{}, err
+			}
+
+			// Read the file from the backend driver and validate it.
+			fr, err := newFileReader(ctx, bw.driver, bw.path, desc.Size)
+			if err != nil {
+				return distribution.Descriptor{}, err
+			}
+			defer fr.Close()
+
+			tr := io.TeeReader(fr, digester.Hash())
+
+			if _, err := io.Copy(digestVerifier, tr); err != nil {
+				return distribution.Descriptor{}, err
+			}
+
+			canonical = digester.Digest()
+			verified = digestVerifier.Verified()
+		}
+	}
+
+	if !verified {
+		context.GetLoggerWithFields(ctx,
+			map[interface{}]interface{}{
+				"canonical": canonical,
+				"provided":  desc.Digest,
+			}, "canonical", "provided").
+			Errorf("canonical digest does match provided digest")
+		return distribution.Descriptor{}, distribution.ErrBlobInvalidDigest{
+			Digest: desc.Digest,
+			Reason: fmt.Errorf("content does not match digest"),
+		}
+	}
+
+	// update desc with canonical hash
+	desc.Digest = canonical
+
+	if desc.MediaType == "" {
+		desc.MediaType = "application/octet-stream"
+	}
+
+	return desc, nil
+}
+// resumeHashAt is a noop when resumable digest support is disabled.
+func (bw *blobWriter) resumeDigest(ctx context.Context) error {
+	return errResumableDigestNotAvailable
+}
+// moveBlob moves the data into its final, hash-qualified destination,
+// identified by dgst. The layer should be validated before commencing the
+// move.
+func (bw *blobWriter) moveBlob(ctx context.Context, desc distribution.Descriptor) error {
+	blobPath, err := pathFor(blobDataPathSpec{
+		digest: desc.Digest,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Check for existence
+	if _, err := bw.blobStore.driver.Stat(ctx, blobPath); err != nil {
+		switch err := err.(type) {
+		case storagedriver.PathNotFoundError:
+			break // ensure that it doesn't exist.
+		default:
+			return err
+		}
+	} else {
+		// If the path exists, we can assume that the content has already
+		// been uploaded, since the blob storage is content-addressable.
+		// While it may be corrupted, detection of such corruption belongs
+		// elsewhere.
+		return nil
+	}
+
+	// If no data was received, we may not actually have a file on disk. Check
+	// the size here and write a zero-length file to blobPath if this is the
+	// case. For the most part, this should only ever happen with zero-length
+	// tars.
+	if _, err := bw.blobStore.driver.Stat(ctx, bw.path); err != nil {
+		switch err := err.(type) {
+		case storagedriver.PathNotFoundError:
+			// HACK(stevvooe): This is slightly dangerous: if we verify above,
+			// get a hash, then the underlying file is deleted, we risk moving
+			// a zero-length blob into a nonzero-length blob location. To
+			// prevent this horrid thing, we employ the hack of only allowing
+			// to this happen for the digest of an empty tar.
+			if desc.Digest == digest.DigestSha256EmptyTar {
+				return bw.blobStore.driver.PutContent(ctx, blobPath, []byte{})
+			}
+
+			// We let this fail during the move below.
+			logrus.
+				WithField("upload.id", bw.ID()).
+				WithField("digest", desc.Digest).Warnf("attempted to move zero-length content with non-zero digest")
+		default:
+			return err // unrelated error
+		}
+	}
+
+	// TODO(stevvooe): We should also write the mediatype when executing this move.
+
+	return bw.blobStore.driver.Move(ctx, bw.path, blobPath)
+}
+
+//	Blob Store:
+//
+//	blobsPathSpec:                  <root>/v2/blobs/
+// 	blobPathSpec:                   <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>
+// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+// 	blobMediaTypePathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+//
+
+const (
+	// DigestSha256EmptyTar is the canonical sha256 digest of empty data
+	DigestSha256EmptyTar = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+
+// Move moves an object stored at sourcePath to destPath, removing the original
+// object.
+func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) error {
+	source := d.fullPath(sourcePath)
+	dest := d.fullPath(destPath)
+
+	if _, err := os.Stat(source); os.IsNotExist(err) {
+		return storagedriver.PathNotFoundError{Path: sourcePath}
+	}
+
+	if err := os.MkdirAll(path.Dir(dest), 0755); err != nil {
+		return err
+	}
+
+	err := os.Rename(source, dest)
+	return err
+}
+// linkBlob links a valid, written blob into the registry under the named
+// repository for the upload controller.
+func (lbs *linkedBlobStore) linkBlob(ctx context.Context, canonical distribution.Descriptor, aliases ...digest.Digest) error {
+	dgsts := append([]digest.Digest{canonical.Digest}, aliases...)
+
+	// TODO(stevvooe): Need to write out mediatype for only canonical hash
+	// since we don't care about the aliases. They are generally unused except
+	// for tarsum but those versions don't care about mediatype.
+
+	// Don't make duplicate links.
+	seenDigests := make(map[digest.Digest]struct{}, len(dgsts))
+
+	// only use the first link
+	linkPathFn := lbs.linkPathFns[0]
+
+	for _, dgst := range dgsts {
+		if _, seen := seenDigests[dgst]; seen {
+			continue
+		}
+		seenDigests[dgst] = struct{}{}
+
+		blobLinkPath, err := linkPathFn(lbs.repository.Named().Name(), dgst)
+		if err != nil {
+			return err
+		}
+
+		if err := lbs.blobStore.link(ctx, blobLinkPath, canonical.Digest); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+// link links the path to the provided digest by writing the digest into the
+// target file. Caller must ensure that the blob actually exists.
+func (bs *blobStore) link(ctx context.Context, path string, dgst digest.Digest) error {
+	// The contents of the "link" file are the exact string contents of the
+	// digest, which is specified in that package.
+	return bs.driver.PutContent(ctx, path, []byte(dgst))
+}
+// blobLinkPath provides the path to the blob link, also known as layers.
+func blobLinkPath(name string, dgst digest.Digest) (string, error) {
+	return pathFor(layerLinkPathSpec{name: name, digest: dgst})
+}
+// 	Blobs:
+//
+// 	layerLinkPathSpec:            <root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link
+//
+
+
+// removeResources should clean up all resources associated with the upload
+// instance. An error will be returned if the clean up cannot proceed. If the
+// resources are already not present, no error will be returned.
+func (bw *blobWriter) removeResources(ctx context.Context) error {
+	dataPath, err := pathFor(uploadDataPathSpec{
+		name: bw.blobStore.repository.Named().Name(),
+		id:   bw.id,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Resolve and delete the containing directory, which should include any
+	// upload related files.
+	dirPath := path.Dir(dataPath)
+	if err := bw.blobStore.driver.Delete(ctx, dirPath); err != nil {
+		switch err := err.(type) {
+		case storagedriver.PathNotFoundError:
+			break // already gone!
+		default:
+			// This should be uncommon enough such that returning an error
+			// should be okay. At this point, the upload should be mostly
+			// complete, but perhaps the backend became unaccessible.
+			context.GetLogger(ctx).Errorf("unable to delete layer upload resources %q: %v", dirPath, err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+//	Uploads:
+//
+// 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
+// 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
+// 	uploadHashStatePathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/hashstates/<algorithm>/<offset>
+//
+
+// newBlobUpload allocates a new upload controller with the given state.
+func (lbs *linkedBlobStore) newBlobUpload(ctx context.Context, uuid, path string, startedAt time.Time, append bool) (distribution.BlobWriter, error) {
+	fw, err := lbs.driver.Writer(ctx, path, append)
+	if err != nil {
+		return nil, err
+	}
+
+	bw := &blobWriter{
+		ctx:        ctx,
+		blobStore:  lbs,
+		id:         uuid,
+		startedAt:  startedAt,
+		digester:   digest.Canonical.New(),
+		fileWriter: fw,
+		driver:     lbs.driver,
+		path:       path,
+		resumableDigestEnabled: lbs.resumableDigestEnabled,
+	}
+
+	return bw, nil
+}
+
+// Delete recursively deletes all objects stored at "path" and its subpaths.
+func (d *driver) Delete(ctx context.Context, subPath string) error {
+	fullPath := d.fullPath(subPath)
+
+	_, err := os.Stat(fullPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	} else if err != nil {
+		return storagedriver.PathNotFoundError{Path: subPath}
+	}
+
+	err = os.RemoveAll(fullPath)
+	return err
+}
+
+func (lbs *linkedBlobStatter) SetDescriptor(ctx context.Context, dgst digest.Digest, desc distribution.Descriptor) error {
+	// The canonical descriptor for a blob is set at the commit phase of upload
+	return nil
+}
+```
+
+执行逻辑：
+
+* 检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
+* 将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
+* 将`digest`写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
+* 删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）
+
+
+
+
