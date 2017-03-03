@@ -4770,6 +4770,27 @@ func (pmc *proxyMetricsCollector) BlobPush(bytesPushed uint64) {
 	atomic.AddUint64(&pmc.blobMetrics.Hits, 1)
 	atomic.AddUint64(&pmc.blobMetrics.BytesPushed, bytesPushed)
 }
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
+
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
 ```
 
 最后向upstream(后端)发出`GET/HEAD` `/v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
