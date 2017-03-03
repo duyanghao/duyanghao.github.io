@@ -3368,9 +3368,6 @@ type Metrics struct {
 * 向upstream发出`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件内容
 * 写入本地文件：`<root>/v2/repositories/<name>/_uploads/<id>/data`
 
-// 	uploadDataPathSpec:             <root>/v2/repositories/<name>/_uploads/<id>/data
-// 	uploadStartedAtPathSpec:        <root>/v2/repositories/<name>/_uploads/<id>/startedat
-
 `_, err = bw.Commit(ctx, desc)`执行如下：
 
 ```go
@@ -3617,6 +3614,162 @@ func (bw *blobWriter) validateBlob(ctx context.Context, desc distribution.Descri
 func (bw *blobWriter) resumeDigest(ctx context.Context) error {
 	return errResumableDigestNotAvailable
 }
+// newBlobUpload allocates a new upload controller with the given state.
+func (lbs *linkedBlobStore) newBlobUpload(ctx context.Context, uuid, path string, startedAt time.Time, append bool) (distribution.BlobWriter, error) {
+	fw, err := lbs.driver.Writer(ctx, path, append)
+	if err != nil {
+		return nil, err
+	}
+
+	bw := &blobWriter{
+		ctx:        ctx,
+		blobStore:  lbs,
+		id:         uuid,
+		startedAt:  startedAt,
+		digester:   digest.Canonical.New(),
+		fileWriter: fw,
+		driver:     lbs.driver,
+		path:       path,
+		resumableDigestEnabled: lbs.resumableDigestEnabled,
+	}
+
+	return bw, nil
+}
+// New returns a new digester for the specified algorithm. If the algorithm
+// does not have a digester implementation, nil will be returned. This can be
+// checked by calling Available before calling New.
+func (a Algorithm) New() Digester {
+	return &digester{
+		alg:  a,
+		hash: a.Hash(),
+	}
+}
+// digester provides a simple digester definition that embeds a hasher.
+type digester struct {
+	alg  Algorithm
+	hash hash.Hash
+}
+
+func (d *digester) Hash() hash.Hash {
+	return d.hash
+}
+
+func (d *digester) Digest() Digest {
+	return NewDigest(d.alg, d.hash)
+}
+// NewDigest returns a Digest from alg and a hash.Hash object.
+func NewDigest(alg Algorithm, h hash.Hash) Digest {
+	return NewDigestFromBytes(alg, h.Sum(nil))
+}
+// NewDigestFromBytes returns a new digest from the byte contents of p.
+// Typically, this can come from hash.Hash.Sum(...) or xxx.SumXXX(...)
+// functions. This is also useful for rebuilding digests from binary
+// serializations.
+func NewDigestFromBytes(alg Algorithm, p []byte) Digest {
+	return Digest(fmt.Sprintf("%s:%x", alg, p))
+}
+const (
+	// DigestSha256EmptyTar is the canonical sha256 digest of empty data
+	DigestSha256EmptyTar = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+
+// Digest allows simple protection of hex formatted digest strings, prefixed
+// by their algorithm. Strings of type Digest have some guarantee of being in
+// the correct format and it provides quick access to the components of a
+// digest string.
+//
+// The following is an example of the contents of Digest types:
+//
+// 	sha256:7173b809ca12ec5dee4506cd86be934c4596dd234ee82c0662eac04a8c2c71dc
+//
+// This allows to abstract the digest behind this type and work only in those
+// terms.
+type Digest string
+
+
+// Hash returns a new hash as used by the algorithm. If not available, the
+// method will panic. Check Algorithm.Available() before calling.
+func (a Algorithm) Hash() hash.Hash {
+	if !a.Available() {
+		// NOTE(stevvooe): A missing hash is usually a programming error that
+		// must be resolved at compile time. We don't import in the digest
+		// package to allow users to choose their hash implementation (such as
+		// when using stevvooe/resumable or a hardware accelerated package).
+		//
+		// Applications that may want to resolve the hash at runtime should
+		// call Algorithm.Available before call Algorithm.Hash().
+		panic(fmt.Sprintf("%v not available (make sure it is imported)", a))
+	}
+
+	return algorithms[a].New()
+}
+var (
+	// TODO(stevvooe): Follow the pattern of the standard crypto package for
+	// registration of digests. Effectively, we are a registerable set and
+	// common symbol access.
+
+	// algorithms maps values to hash.Hash implementations. Other algorithms
+	// may be available but they cannot be calculated by the digest package.
+	algorithms = map[Algorithm]crypto.Hash{
+		SHA256: crypto.SHA256,
+		SHA384: crypto.SHA384,
+		SHA512: crypto.SHA512,
+	}
+)
+// NewDigestVerifier returns a verifier that compares the written bytes
+// against a passed in digest.
+func NewDigestVerifier(d Digest) (Verifier, error) {
+	if err := d.Validate(); err != nil {
+		return nil, err
+	}
+
+	return hashVerifier{
+		hash:   d.Algorithm().Hash(),
+		digest: d,
+	}, nil
+}
+// Validate checks that the contents of d is a valid digest, returning an
+// error if not.
+func (d Digest) Validate() error {
+	s := string(d)
+
+	if !DigestRegexpAnchored.MatchString(s) {
+		return ErrDigestInvalidFormat
+	}
+
+	i := strings.Index(s, ":")
+	if i < 0 {
+		return ErrDigestInvalidFormat
+	}
+
+	// case: "sha256:" with no hex.
+	if i+1 == len(s) {
+		return ErrDigestInvalidFormat
+	}
+
+	switch algorithm := Algorithm(s[:i]); algorithm {
+	case SHA256, SHA384, SHA512:
+		if algorithm.Size()*2 != len(s[i+1:]) {
+			return ErrDigestInvalidLength
+		}
+		break
+	default:
+		return ErrDigestUnsupported
+	}
+
+	return nil
+}
+// Algorithm returns the algorithm portion of the digest. This will panic if
+// the underlying digest is not in a valid format.
+func (d Digest) Algorithm() Algorithm {
+	return Algorithm(d[:d.sepIndex()])
+}
+type hashVerifier struct {
+	digest Digest
+	hash   hash.Hash
+}
+
+
 // moveBlob moves the data into its final, hash-qualified destination,
 // identified by dgst. The layer should be validated before commencing the
 // move.
