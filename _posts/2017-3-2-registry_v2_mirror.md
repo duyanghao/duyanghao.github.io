@@ -4689,6 +4689,87 @@ func (d *driver) Delete(ctx context.Context, subPath string) error {
 
 每隔7天删除目录`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>`和文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`
 
+最后执行`_, err = pbs.copyContent(ctx, dgst, w)`，如下：
 
+```go
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
 
+	if served {
+		return nil
+	}
 
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (pbs *proxyBlobStore) copyContent(ctx context.Context, dgst digest.Digest, writer io.Writer) (distribution.Descriptor, error) {
+	desc, err := pbs.remoteStore.Stat(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	if w, ok := writer.(http.ResponseWriter); ok {
+		setResponseHeaders(w, desc.Size, desc.MediaType, dgst)
+	}
+
+	remoteReader, err := pbs.remoteStore.Open(ctx, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	defer remoteReader.Close()
+
+	_, err = io.CopyN(writer, remoteReader, desc.Size)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	proxyMetrics.BlobPush(uint64(desc.Size))
+
+	return desc, nil
+}
+// BlobPush tracks metrics about blobs pushed to clients
+func (pmc *proxyMetricsCollector) BlobPush(bytesPushed uint64) {
+	atomic.AddUint64(&pmc.blobMetrics.Requests, 1)
+	atomic.AddUint64(&pmc.blobMetrics.Hits, 1)
+	atomic.AddUint64(&pmc.blobMetrics.BytesPushed, bytesPushed)
+}
+```
+
+最后向upstream(后端)发出`GET/HEAD` `/v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
