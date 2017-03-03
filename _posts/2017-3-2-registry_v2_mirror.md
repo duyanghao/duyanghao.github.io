@@ -3478,6 +3478,11 @@ func newFileWriter(file *os.File, size int64) *fileWriter {
 		bw:   bufio.NewWriter(file),
 	}
 }
+```
+
+检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
+
+```go
 // validateBlob checks the data against the digest, returning an error if it
 // does not match. The canonical descriptor is returned.
 func (bw *blobWriter) validateBlob(ctx context.Context, desc distribution.Descriptor) (distribution.Descriptor, error) {
@@ -3768,8 +3773,11 @@ type hashVerifier struct {
 	digest Digest
 	hash   hash.Hash
 }
+```
 
+将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
 
+```go
 // moveBlob moves the data into its final, hash-qualified destination,
 // identified by dgst. The layer should be validated before commencing the
 // move.
@@ -3858,6 +3866,11 @@ func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) e
 	err := os.Rename(source, dest)
 	return err
 }
+```
+
+将`digest`写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
+
+```go
 // linkBlob links a valid, written blob into the registry under the named
 // repository for the upload controller.
 func (lbs *linkedBlobStore) linkBlob(ctx context.Context, canonical distribution.Descriptor, aliases ...digest.Digest) error {
@@ -3906,8 +3919,11 @@ func blobLinkPath(name string, dgst digest.Digest) (string, error) {
 //
 // 	layerLinkPathSpec:            <root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link
 //
+```
 
+删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
 
+```go
 // removeResources should clean up all resources associated with the upload
 // instance. An error will be returned if the clean up cannot proceed. If the
 // resources are already not present, no error will be returned.
@@ -3995,7 +4011,7 @@ func (lbs *linkedBlobStatter) SetDescriptor(ctx context.Context, dgst digest.Dig
 * 检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
 * 将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
 * 将`digest`写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
-* 删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）
+* 删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
 
 
 
