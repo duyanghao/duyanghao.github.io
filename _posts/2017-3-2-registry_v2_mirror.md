@@ -1939,7 +1939,56 @@ type Digest string
 //
 ```
 
+也即先验证是否存在`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件，若存在（文件内容应该与digest相同），则直接返回；否则进行如下操作：
+
+```go
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
+
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
+
+func (pbs *proxyBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	desc, err := pbs.localStore.Stat(ctx, dgst)
+	if err == nil {
+		return desc, err
+	}
+
+	if err != distribution.ErrBlobUnknown {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	return pbs.remoteStore.Stat(ctx, dgst)
+}
+```
 
 
-<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+```
+//	Blob Store:
+//
+//	blobsPathSpec:                  <root>/v2/blobs/
+// 	blobPathSpec:                   <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>
+// 	blobDataPathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+// 	blobMediaTypePathSpec:               <root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data
+```
 
