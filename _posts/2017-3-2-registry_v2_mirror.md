@@ -2258,7 +2258,590 @@ func (r *remoteAuthChallenger) tryEstablishChallenges(ctx context.Context) error
 	context.GetLogger(ctx).Infof("Challenge established with upstream : %s %s", remoteURL, r.cm)
 	return nil
 }
+// NewSimpleManager returns an instance of
+// Manger which only maps endpoints to challenges
+// based on the responses which have been added the
+// manager. The simple manager will make no attempt to
+// perform requests on the endpoints or cache the responses
+// to a backend.
+func NewSimpleManager() Manager {
+	return &simpleManager{
+		Challanges: make(map[string][]Challenge),
+	}
+}
+type simpleManager struct {
+	sync.RWMutex
+	Challanges map[string][]Challenge
+} 
+func (m *simpleManager) GetChallenges(endpoint url.URL) ([]Challenge, error) {
+	normalizeURL(&endpoint)
+
+	m.RLock()
+	defer m.RUnlock()
+	challenges := m.Challanges[endpoint.String()]
+	return challenges, nil
+}
+func ping(manager challenge.Manager, endpoint, versionHeader string) error {
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err := manager.AddResponse(resp); err != nil {
+		return err
+	}
+
+	return nil
+}
+func (m *simpleManager) AddResponse(resp *http.Response) error {
+	challenges := ResponseChallenges(resp)
+	if resp.Request == nil {
+		return fmt.Errorf("missing request reference")
+	}
+	urlCopy := url.URL{
+		Path:   resp.Request.URL.Path,
+		Host:   resp.Request.URL.Host,
+		Scheme: resp.Request.URL.Scheme,
+	}
+	normalizeURL(&urlCopy)
+
+	m.Lock()
+	defer m.Unlock()
+	m.Challanges[urlCopy.String()] = challenges
+	return nil
+}
+// ResponseChallenges returns a list of authorization challenges
+// for the given http Response. Challenges are only checked if
+// the response status code was a 401.
+func ResponseChallenges(resp *http.Response) []Challenge {
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Parse the WWW-Authenticate Header and store the challenges
+		// on this endpoint object.
+		return parseAuthHeader(resp.Header)
+	}
+
+	return nil
+}
+func parseAuthHeader(header http.Header) []Challenge {
+	challenges := []Challenge{}
+	for _, h := range header[http.CanonicalHeaderKey("WWW-Authenticate")] {
+		v, p := parseValueAndParams(h)
+		if v != "" {
+			challenges = append(challenges, Challenge{Scheme: v, Parameters: p})
+		}
+	}
+	return challenges
+}
+func parseValueAndParams(header string) (value string, params map[string]string) {
+	params = make(map[string]string)
+	value, s := expectToken(header)
+	if value == "" {
+		return
+	}
+	value = strings.ToLower(value)
+	s = "," + skipSpace(s)
+	for strings.HasPrefix(s, ",") {
+		var pkey string
+		pkey, s = expectToken(skipSpace(s[1:]))
+		if pkey == "" {
+			return
+		}
+		if !strings.HasPrefix(s, "=") {
+			return
+		}
+		var pvalue string
+		pvalue, s = expectTokenOrQuoted(s[1:])
+		if pvalue == "" {
+			return
+		}
+		pkey = strings.ToLower(pkey)
+		params[pkey] = pvalue
+		s = skipSpace(s)
+	}
+	return
+}
 ```
+
+在执行完`tryEstablishChallenges`后（……），检测到当前不存在文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`的情况下，执行`pbs.remoteStore.Stat(ctx, dgst)`操作，如下：
+
+```go
+func (pbs *proxyBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	desc, err := pbs.localStore.Stat(ctx, dgst)
+	if err == nil {
+		return desc, err
+	}
+
+	if err != distribution.ErrBlobUnknown {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	return pbs.remoteStore.Stat(ctx, dgst)
+}
+func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
+	c := pr.authChallenger
+
+	tr := transport.NewTransport(http.DefaultTransport,
+		auth.NewAuthorizer(c.challengeManager(), auth.NewTokenHandler(http.DefaultTransport, c.credentialStore(), name.Name(), "pull")))
+
+	localRepo, err := pr.embedded.Repository(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	localManifests, err := localRepo.Manifests(ctx, storage.SkipLayerVerification())
+	if err != nil {
+		return nil, err
+	}
+
+	remoteRepo, err := client.NewRepository(ctx, name, pr.remoteURL.String(), tr)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteManifests, err := remoteRepo.Manifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxiedRepository{
+		blobStore: &proxyBlobStore{
+			localStore:     localRepo.Blobs(ctx),
+			remoteStore:    remoteRepo.Blobs(ctx),
+			scheduler:      pr.scheduler,
+			repositoryName: name,
+			authChallenger: pr.authChallenger,
+		},
+		manifests: &proxyManifestStore{
+			repositoryName:  name,
+			localManifests:  localManifests, // Options?
+			remoteManifests: remoteManifests,
+			ctx:             ctx,
+			scheduler:       pr.scheduler,
+			authChallenger:  pr.authChallenger,
+		},
+		name: name,
+		tags: &proxyTagService{
+			localTags:      localRepo.Tags(ctx),
+			remoteTags:     remoteRepo.Tags(ctx),
+			authChallenger: pr.authChallenger,
+		},
+	}, nil
+}
+// NewRepository creates a new Repository for the given repository name and base URL.
+func NewRepository(ctx context.Context, name reference.Named, baseURL string, transport http.RoundTripper) (distribution.Repository, error) {
+	ub, err := v2.NewURLBuilderFromString(baseURL, false)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{
+		Transport:     transport,
+		CheckRedirect: checkHTTPRedirect,
+		// TODO(dmcgowan): create cookie jar
+	}
+
+	return &repository{
+		client:  client,
+		ub:      ub,
+		name:    name,
+		context: ctx,
+	}, nil
+}
+type repository struct {
+	client  *http.Client
+	ub      *v2.URLBuilder
+	context context.Context
+	name    reference.Named
+}
+func (r *repository) Blobs(ctx context.Context) distribution.BlobStore {
+	statter := &blobStatter{
+		name:   r.name,
+		ub:     r.ub,
+		client: r.client,
+	}
+	return &blobs{
+		name:    r.name,
+		ub:      r.ub,
+		client:  r.client,
+		statter: cache.NewCachedBlobStatter(memory.NewInMemoryBlobDescriptorCacheProvider(), statter),
+	}
+}
+func (bs *blobs) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	return bs.statter.Stat(ctx, dgst)
+
+}
+type blobStatter struct {
+	name   reference.Named
+	ub     *v2.URLBuilder
+	client *http.Client
+}
+// NewCachedBlobStatter creates a new statter which prefers a cache and
+// falls back to a backend.
+func NewCachedBlobStatter(cache distribution.BlobDescriptorService, backend distribution.BlobDescriptorService) distribution.BlobDescriptorService {
+	return &cachedBlobStatter{
+		cache:   cache,
+		backend: backend,
+	}
+}
+type cachedBlobStatter struct {
+	cache   distribution.BlobDescriptorService
+	backend distribution.BlobDescriptorService
+	tracker MetricsTracker
+}
+func (cbds *cachedBlobStatter) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	desc, err := cbds.cache.Stat(ctx, dgst)
+	if err != nil {
+		if err != distribution.ErrBlobUnknown {
+			context.GetLogger(ctx).Errorf("error retrieving descriptor from cache: %v", err)
+		}
+
+		goto fallback
+	}
+
+	if cbds.tracker != nil {
+		cbds.tracker.Hit()
+	}
+	return desc, nil
+fallback:
+	if cbds.tracker != nil {
+		cbds.tracker.Miss()
+	}
+	desc, err = cbds.backend.Stat(ctx, dgst)
+	if err != nil {
+		return desc, err
+	}
+
+	if err := cbds.cache.SetDescriptor(ctx, dgst, desc); err != nil {
+		context.GetLogger(ctx).Errorf("error adding descriptor %v to cache: %v", desc.Digest, err)
+	}
+
+	return desc, err
+
+}
+func (bs *blobStatter) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	ref, err := reference.WithDigest(bs.name, dgst)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+	u, err := bs.ub.BuildBlobURL(ref)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	resp, err := bs.client.Head(u)
+	if err != nil {
+		return distribution.Descriptor{}, err
+	}
+	defer resp.Body.Close()
+
+	if SuccessStatus(resp.StatusCode) {
+		lengthHeader := resp.Header.Get("Content-Length")
+		if lengthHeader == "" {
+			return distribution.Descriptor{}, fmt.Errorf("missing content-length header for request: %s", u)
+		}
+
+		length, err := strconv.ParseInt(lengthHeader, 10, 64)
+		if err != nil {
+			return distribution.Descriptor{}, fmt.Errorf("error parsing content-length: %v", err)
+		}
+
+		return distribution.Descriptor{
+			MediaType: resp.Header.Get("Content-Type"),
+			Size:      length,
+			Digest:    dgst,
+		}, nil
+	} else if resp.StatusCode == http.StatusNotFound {
+		return distribution.Descriptor{}, distribution.ErrBlobUnknown
+	}
+	return distribution.Descriptor{}, HandleErrorResponse(resp)
+}
+// WithDigest combines the name from "name" and the digest from "digest" to form
+// a reference incorporating both the name and the digest.
+func WithDigest(name Named, digest digest.Digest) (Canonical, error) {
+	if !anchoredDigestRegexp.MatchString(digest.String()) {
+		return nil, ErrDigestInvalidFormat
+	}
+	if tagged, ok := name.(Tagged); ok {
+		return reference{
+			name:   name.Name(),
+			tag:    tagged.Tag(),
+			digest: digest,
+		}, nil
+	}
+	return canonicalReference{
+		name:   name.Name(),
+		digest: digest,
+	}, nil
+}
+type canonicalReference struct {
+	name   string
+	digest digest.Digest
+}
+// BuildBlobURL constructs the url for the blob identified by name and dgst.
+func (ub *URLBuilder) BuildBlobURL(ref reference.Canonical) (string, error) {
+	route := ub.cloneRoute(RouteNameBlob)
+
+	layerURL, err := route.URL("name", ref.Name(), "digest", ref.Digest().String())
+	if err != nil {
+		return "", err
+	}
+
+	return layerURL.String(), nil
+}
+// The following are definitions of the name under which all V2 routes are
+// registered. These symbols can be used to look up a route based on the name.
+const (
+	RouteNameBase            = "base"
+	RouteNameManifest        = "manifest"
+	RouteNameTags            = "tags"
+	RouteNameBlob            = "blob"
+	RouteNameBlobUpload      = "blob-upload"
+	RouteNameBlobUploadChunk = "blob-upload-chunk"
+	RouteNameCatalog         = "catalog"
+)
+
+{
+    Name:        RouteNameBlob,
+    Path:        "/v2/{name:" + reference.NameRegexp.String() + "}/blobs/{digest:" + digest.DigestRegexp.String() + "}",
+    Entity:      "Blob",
+    Description: "Operations on blobs identified by `name` and `digest`. Used to fetch or delete layers by digest.",
+    Methods: []MethodDescriptor{
+        {
+            Method:      "GET",
+            Description: "Retrieve the blob from the registry identified by `digest`. A `HEAD` request can also be issued to this endpoint to obtain resource information without receiving all data.",
+            Requests: []RequestDescriptor{
+                {
+                    Name: "Fetch Blob",
+                    Headers: []ParameterDescriptor{
+                        hostHeader,
+                        authHeader,
+                    },
+                    PathParameters: []ParameterDescriptor{
+                        nameParameterDescriptor,
+                        digestPathParameter,
+                    },
+                    Successes: []ResponseDescriptor{
+                        {
+                            Description: "The blob identified by `digest` is available. The blob content will be present in the body of the request.",
+                            StatusCode:  http.StatusOK,
+                            Headers: []ParameterDescriptor{
+                                {
+                                    Name:        "Content-Length",
+                                    Type:        "integer",
+                                    Description: "The length of the requested blob content.",
+                                    Format:      "<length>",
+                                },
+                                digestHeader,
+                            },
+                            Body: BodyDescriptor{
+                                ContentType: "application/octet-stream",
+                                Format:      "<blob binary data>",
+                            },
+                        },
+                        {
+                            Description: "The blob identified by `digest` is available at the provided location.",
+                            StatusCode:  http.StatusTemporaryRedirect,
+                            Headers: []ParameterDescriptor{
+                                {
+                                    Name:        "Location",
+                                    Type:        "url",
+                                    Description: "The location where the layer should be accessible.",
+                                    Format:      "<blob location>",
+                                },
+                                digestHeader,
+                            },
+                        },
+                    },
+                    Failures: []ResponseDescriptor{
+                        {
+                            Description: "There was a problem with the request that needs to be addressed by the client, such as an invalid `name` or `tag`.",
+                            StatusCode:  http.StatusBadRequest,
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeNameInvalid,
+                                ErrorCodeDigestInvalid,
+                            },
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                        },
+                        {
+                            Description: "The blob, identified by `name` and `digest`, is unknown to the registry.",
+                            StatusCode:  http.StatusNotFound,
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeNameUnknown,
+                                ErrorCodeBlobUnknown,
+                            },
+                        },
+                        unauthorizedResponseDescriptor,
+                        repositoryNotFoundResponseDescriptor,
+                        deniedResponseDescriptor,
+                        tooManyRequestsDescriptor,
+                    },
+                },
+                {
+                    Name:        "Fetch Blob Part",
+                    Description: "This endpoint may also support RFC7233 compliant range requests. Support can be detected by issuing a HEAD request. If the header `Accept-Range: bytes` is returned, range requests can be used to fetch partial content.",
+                    Headers: []ParameterDescriptor{
+                        hostHeader,
+                        authHeader,
+                        {
+                            Name:        "Range",
+                            Type:        "string",
+                            Description: "HTTP Range header specifying blob chunk.",
+                            Format:      "bytes=<start>-<end>",
+                        },
+                    },
+                    PathParameters: []ParameterDescriptor{
+                        nameParameterDescriptor,
+                        digestPathParameter,
+                    },
+                    Successes: []ResponseDescriptor{
+                        {
+                            Description: "The blob identified by `digest` is available. The specified chunk of blob content will be present in the body of the request.",
+                            StatusCode:  http.StatusPartialContent,
+                            Headers: []ParameterDescriptor{
+                                {
+                                    Name:        "Content-Length",
+                                    Type:        "integer",
+                                    Description: "The length of the requested blob chunk.",
+                                    Format:      "<length>",
+                                },
+                                {
+                                    Name:        "Content-Range",
+                                    Type:        "byte range",
+                                    Description: "Content range of blob chunk.",
+                                    Format:      "bytes <start>-<end>/<size>",
+                                },
+                            },
+                            Body: BodyDescriptor{
+                                ContentType: "application/octet-stream",
+                                Format:      "<blob binary data>",
+                            },
+                        },
+                    },
+                    Failures: []ResponseDescriptor{
+                        {
+                            Description: "There was a problem with the request that needs to be addressed by the client, such as an invalid `name` or `tag`.",
+                            StatusCode:  http.StatusBadRequest,
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeNameInvalid,
+                                ErrorCodeDigestInvalid,
+                            },
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                        },
+                        {
+                            StatusCode: http.StatusNotFound,
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeNameUnknown,
+                                ErrorCodeBlobUnknown,
+                            },
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                        },
+                        {
+                            Description: "The range specification cannot be satisfied for the requested content. This can happen when the range is not formatted correctly or if the range is outside of the valid size of the content.",
+                            StatusCode:  http.StatusRequestedRangeNotSatisfiable,
+                        },
+                        unauthorizedResponseDescriptor,
+                        repositoryNotFoundResponseDescriptor,
+                        deniedResponseDescriptor,
+                        tooManyRequestsDescriptor,
+                    },
+                },
+            },
+        },
+        {
+            Method:      "DELETE",
+            Description: "Delete the blob identified by `name` and `digest`",
+            Requests: []RequestDescriptor{
+                {
+                    Headers: []ParameterDescriptor{
+                        hostHeader,
+                        authHeader,
+                    },
+                    PathParameters: []ParameterDescriptor{
+                        nameParameterDescriptor,
+                        digestPathParameter,
+                    },
+                    Successes: []ResponseDescriptor{
+                        {
+                            StatusCode: http.StatusAccepted,
+                            Headers: []ParameterDescriptor{
+                                {
+                                    Name:        "Content-Length",
+                                    Type:        "integer",
+                                    Description: "0",
+                                    Format:      "0",
+                                },
+                                digestHeader,
+                            },
+                        },
+                    },
+                    Failures: []ResponseDescriptor{
+                        {
+                            Name:       "Invalid Name or Digest",
+                            StatusCode: http.StatusBadRequest,
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeDigestInvalid,
+                                ErrorCodeNameInvalid,
+                            },
+                        },
+                        {
+                            Description: "The blob, identified by `name` and `digest`, is unknown to the registry.",
+                            StatusCode:  http.StatusNotFound,
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                            ErrorCodes: []errcode.ErrorCode{
+                                ErrorCodeNameUnknown,
+                                ErrorCodeBlobUnknown,
+                            },
+                        },
+                        {
+                            Description: "Blob delete is not allowed because the registry is configured as a pull-through cache or `delete` has been disabled",
+                            StatusCode:  http.StatusMethodNotAllowed,
+                            Body: BodyDescriptor{
+                                ContentType: "application/json; charset=utf-8",
+                                Format:      errorsBody,
+                            },
+                            ErrorCodes: []errcode.ErrorCode{
+                                errcode.ErrorCodeUnsupported,
+                            },
+                        },
+                        unauthorizedResponseDescriptor,
+                        repositoryNotFoundResponseDescriptor,
+                        deniedResponseDescriptor,
+                        tooManyRequestsDescriptor,
+                    },
+                },
+            },
+        },
+
+        // TODO(stevvooe): We may want to add a PUT request here to
+        // kickoff an upload of a blob, integrated with the blob upload
+        // API.
+    },
+}
+```
+
+也即向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回
+
+
 
 
 ```
