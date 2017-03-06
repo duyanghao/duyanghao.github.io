@@ -2988,6 +2988,38 @@ func (bs *blobServer) ServeBlob(ctx context.Context, w http.ResponseWriter, r *h
 	return nil
 }
 
+// newFileReader initializes a file reader for the remote file. The reader
+// takes on the size and path that must be determined externally with a stat
+// call. The reader operates optimistically, assuming that the file is already
+// there.
+func newFileReader(ctx context.Context, driver storagedriver.StorageDriver, path string, size int64) (*fileReader, error) {
+	return &fileReader{
+		ctx:    ctx,
+		driver: driver,
+		path:   path,
+		size:   size,
+	}, nil
+}
+
+// remoteFileReader provides a read seeker interface to files stored in
+// storagedriver. Used to implement part of layer interface and will be used
+// to implement read side of LayerUpload.
+type fileReader struct {
+	driver storagedriver.StorageDriver
+
+	ctx context.Context
+
+	// identifying fields
+	path string
+	size int64 // size is the total size, must be set.
+
+	// mutable fields
+	rc     io.ReadCloser // remote read closer
+	brd    *bufio.Reader // internal buffered io
+	offset int64         // offset is the current read offset
+	err    error         // terminal error, if set, reader is closed
+}
+
 // inflight tracks currently downloading blobs
 var inflight = make(map[digest.Digest]struct{})
 
