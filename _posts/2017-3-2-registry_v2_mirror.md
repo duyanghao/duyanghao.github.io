@@ -1305,7 +1305,7 @@ func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter,
 }
 ```
 
-现在来看`ServeBlob`函数逻辑（具体mirror逻辑）：
+现在来看`desc, err := blobs.Stat(bh, bh.Digest)`函数逻辑：
 
 ```go
 // GetBlob fetches the binary data from backend storage returns it in the
@@ -4794,3 +4794,121 @@ func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
 ```
 
 最后向upstream(后端)发出`GET/HEAD` `/v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
+
+对于请求：`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`,总结如下：
+
+```go
+// GetBlob fetches the binary data from backend storage returns it in the
+// response.
+func (bh *blobHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
+	context.GetLogger(bh).Debug("GetBlob")
+	blobs := bh.Repository.Blobs(bh)
+	desc, err := blobs.Stat(bh, bh.Digest)
+	if err != nil {
+		if err == distribution.ErrBlobUnknown {
+			bh.Errors = append(bh.Errors, v2.ErrorCodeBlobUnknown.WithDetail(bh.Digest))
+		} else {
+			bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		}
+		return
+	}
+
+	if err := blobs.ServeBlob(bh, w, r, desc.Digest); err != nil {
+		context.GetLogger(bh).Debugf("unexpected error getting blob HTTP handler: %v", err)
+		bh.Errors = append(bh.Errors, errcode.ErrorCodeUnknown.WithDetail(err))
+		return
+	}
+}
+
+func (pbs *proxyBlobStore) Stat(ctx context.Context, dgst digest.Digest) (distribution.Descriptor, error) {
+	desc, err := pbs.localStore.Stat(ctx, dgst)
+	if err == nil {
+		return desc, err
+	}
+
+	if err != distribution.ErrBlobUnknown {
+		return distribution.Descriptor{}, err
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return distribution.Descriptor{}, err
+	}
+
+	return pbs.remoteStore.Stat(ctx, dgst)
+}
+
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
+
+	if served {
+		return nil
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+```
+
+执行流程如下（本地不存在请求文件情况）：
+* 1、执行`desc, err := blobs.Stat(bh, bh.Digest)`
+
+>>1、判断`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件是否存在（不存在）
+
+>>2、向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回（远端存在该请求文件）
+
+* 2、执行`blobs.ServeBlob(bh, w, r, desc.Digest)`，具体如下：
+
+>>1、向文件`<root>/v2/repositories/<name>/_uploads/<id>/startedat`中写入当前日期
+
+>>2、向upstream发出`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`求，获取文件大小和内容类型
+
+>>3、利用HEAD获取的信息构建HTTP response回应报头
+
+>>4、向upstream发出`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件内容
+
+>>5、写入本地文件：`<root>/v2/repositories/<name>/_uploads/<id>/data`
+
+>>6、检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
+
+>>7、将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
+
+>>8、将digest写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
+
+>>9、删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
+
+>>10、最后向upstream(后端)发出`GET/HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
