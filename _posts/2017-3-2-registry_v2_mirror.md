@@ -4887,28 +4887,28 @@ func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter,
 执行流程如下（本地不存在请求文件情况）：
 * 1、执行`desc, err := blobs.Stat(bh, bh.Digest)`
 
->>1、判断`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件是否存在（不存在）
+>>判断`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`文件是否存在（不存在）
 
->>2、向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回（远端存在该请求文件）
+>>向upstream（后端：remoteurl: https://registry-1.docker.io）发出请求`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`，并构建`distribution.Descriptor`结构（包含`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`文件大小，内容类型和digest）返回（远端存在该请求文件）
 
 * 2、执行`blobs.ServeBlob(bh, w, r, desc.Digest)`，具体如下：
 
->>1、向文件`<root>/v2/repositories/<name>/_uploads/<id>/startedat`中写入当前日期
+>>向文件`<root>/v2/repositories/<name>/_uploads/<id>/startedat`中写入当前日期
 
->>2、向upstream发出`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`求，获取文件大小和内容类型
+>>向upstream发出`HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`求，获取文件大小和内容类型
 
->>3、利用HEAD获取的信息构建HTTP response回应报头
+>>利用HEAD获取的信息构建HTTP response回应报头
 
->>4、向upstream发出`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件内容
+>>向upstream发出`GET /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，获取文件内容
 
->>5、写入本地文件：`<root>/v2/repositories/<name>/_uploads/<id>/data`
+>>写入本地文件：`<root>/v2/repositories/<name>/_uploads/<id>/data`
 
->>6、检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
+>>检验写入`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件的内容和大小是否和原始请求一致(`validateBlob`)
 
->>7、将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
+>>将`<root>/v2/repositories/<name>/_uploads/<random_id>/data`文件移动到`<root>/v2/blobs/<algorithm>/<first two hex bytes of digest>/<hex digest>/data`(`moveBlob`)
 
->>8、将digest写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
+>>将digest写入到文件`<root>/v2/repositories/<name>/_layers/<algorithm>/<hex digest>/link`中(`linkBlob`)
 
->>9、删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
+>>删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
 
->>10、最后向upstream(后端)发出`GET/HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
+>>最后向upstream(后端)发出`GET/HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
