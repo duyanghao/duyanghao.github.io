@@ -3225,30 +3225,179 @@ WaitResponse:
 }
 ```
 
-`conn, err := net.Dial(proto, addr)`分析：
+Docker设置`httpTransport.Dial`，如下：
 
 ```go
+func newClient(jar http.CookieJar, roots *x509.CertPool, cert *tls.Certificate, timeout TimeoutType, secure bool) *http.Client {
+	tlsConfig := tls.Config{
+		RootCAs: roots,
+		// Avoid fallback to SSL protocols < TLS1.0
+		MinVersion: tls.VersionTLS10,
+	}
 
-conn, err := net.Dial(proto, addr)
+	if cert != nil {
+		tlsConfig.Certificates = append(tlsConfig.Certificates, *cert)
+	}
 
-func NewTimeoutConn(conn net.Conn, timeout time.Duration) net.Conn {
-	return &TimeoutConn{conn, timeout}
-}
+	if !secure {
+		tlsConfig.InsecureSkipVerify = true
+	}
 
-// A net.Conn that sets a deadline for every Read or Write operation
-type TimeoutConn struct {
-	net.Conn
-	timeout time.Duration
-}
+	httpTransport := &http.Transport{
+		DisableKeepAlives: true,
+		Proxy:             http.ProxyFromEnvironment,
+		TLSClientConfig:   &tlsConfig,
+	}
 
-func (c *TimeoutConn) Read(b []byte) (int, error) {
-	if c.timeout > 0 {
-		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
-		if err != nil {
-			return 0, err
+	switch timeout {
+	case ConnectTimeout:
+		httpTransport.Dial = func(proto string, addr string) (net.Conn, error) {
+			// Set the connect timeout to 5 seconds
+			conn, err := net.DialTimeout(proto, addr, 5*time.Second)
+			if err != nil {
+				return nil, err
+			}
+			// Set the recv timeout to 10 seconds
+			conn.SetDeadline(time.Now().Add(10 * time.Second))
+			return conn, nil
+		}
+	case ReceiveTimeout:
+		httpTransport.Dial = func(proto string, addr string) (net.Conn, error) {
+			conn, err := net.Dial(proto, addr)
+			if err != nil {
+				return nil, err
+			}
+			conn = utils.NewTimeoutConn(conn, 1*time.Minute)
+			return conn, nil
 		}
 	}
-	return c.Conn.Read(b)
+
+	return &http.Client{
+		Transport:     httpTransport,
+		CheckRedirect: AddRequiredHeadersToRedirectedRequests,
+		Jar:           jar,
+	}
+}
+```
+
+`dialConn`使用`httpTransport.Dial`如下：
+
+```go
+func (t *Transport) dialConn(cm connectMethod) (*persistConn, error) {
+	conn, err := t.dial("tcp", cm.addr())
+	if err != nil {
+		if cm.proxyURL != nil {
+			err = fmt.Errorf("http: error connecting to proxy %s: %v", cm.proxyURL, err)
+		}
+		return nil, err
+	}
+
+	pa := cm.proxyAuth()
+
+	pconn := &persistConn{
+		t:          t,
+		cacheKey:   cm.key(),
+		conn:       conn,
+		reqch:      make(chan requestAndChan, 1),
+		writech:    make(chan writeRequest, 1),
+		closech:    make(chan struct{}),
+		writeErrCh: make(chan error, 1),
+	}
+
+	switch {
+	case cm.proxyURL == nil:
+		// Do nothing.
+	case cm.targetScheme == "http":
+		pconn.isProxy = true
+		if pa != "" {
+			pconn.mutateHeaderFunc = func(h Header) {
+				h.Set("Proxy-Authorization", pa)
+			}
+		}
+	case cm.targetScheme == "https":
+		connectReq := &Request{
+			Method: "CONNECT",
+			URL:    &url.URL{Opaque: cm.targetAddr},
+			Host:   cm.targetAddr,
+			Header: make(Header),
+		}
+		if pa != "" {
+			connectReq.Header.Set("Proxy-Authorization", pa)
+		}
+		connectReq.Write(conn)
+
+		// Read response.
+		// Okay to use and discard buffered reader here, because
+		// TLS server will not speak until spoken to.
+		br := bufio.NewReader(conn)
+		resp, err := ReadResponse(br, connectReq)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if resp.StatusCode != 200 {
+			f := strings.SplitN(resp.Status, " ", 2)
+			conn.Close()
+			return nil, errors.New(f[1])
+		}
+	}
+
+	if cm.targetScheme == "https" {
+		// Initiate TLS and check remote host name against certificate.
+		cfg := t.TLSClientConfig
+		if cfg == nil || cfg.ServerName == "" {
+			host := cm.tlsHost()
+			if cfg == nil {
+				cfg = &tls.Config{ServerName: host}
+			} else {
+				clone := *cfg // shallow clone
+				clone.ServerName = host
+				cfg = &clone
+			}
+		}
+		plainConn := conn
+		tlsConn := tls.Client(plainConn, cfg)
+		errc := make(chan error, 2)
+		var timer *time.Timer // for canceling TLS handshake
+		if d := t.TLSHandshakeTimeout; d != 0 {
+			timer = time.AfterFunc(d, func() {
+				errc <- tlsHandshakeTimeoutError{}
+			})
+		}
+		go func() {
+			err := tlsConn.Handshake()
+			if timer != nil {
+				timer.Stop()
+			}
+			errc <- err
+		}()
+		if err := <-errc; err != nil {
+			plainConn.Close()
+			return nil, err
+		}
+		if !cfg.InsecureSkipVerify {
+			if err := tlsConn.VerifyHostname(cfg.ServerName); err != nil {
+				plainConn.Close()
+				return nil, err
+			}
+		}
+		cs := tlsConn.ConnectionState()
+		pconn.tlsState = &cs
+		pconn.conn = tlsConn
+	}
+
+	pconn.br = bufio.NewReader(noteEOFReader{pconn.conn, &pconn.sawEOF})
+	pconn.bw = bufio.NewWriter(pconn.conn)
+	go pconn.readLoop()
+	go pconn.writeLoop()
+	return pconn, nil
+}
+
+func (t *Transport) dial(network, addr string) (c net.Conn, err error) {
+	if t.Dial != nil {
+		return t.Dial(network, addr)
+	}
+	return net.Dial(network, addr)
 }
 
 // Dial connects to the address on the named network.
@@ -3313,6 +3462,49 @@ func (d *Dialer) Dial(network, address string) (Conn, error) {
 	return c, err
 }
 
+// A Dialer contains options for connecting to an address.
+//
+// The zero value for each field is equivalent to dialing
+// without that option. Dialing with the zero value of Dialer
+// is therefore equivalent to just calling the Dial function.
+type Dialer struct {
+	// Timeout is the maximum amount of time a dial will wait for
+	// a connect to complete. If Deadline is also set, it may fail
+	// earlier.
+	//
+	// The default is no timeout.
+	//
+	// With or without a timeout, the operating system may impose
+	// its own earlier timeout. For instance, TCP timeouts are
+	// often around 3 minutes.
+	Timeout time.Duration
+
+	// Deadline is the absolute point in time after which dials
+	// will fail. If Timeout is set, it may fail earlier.
+	// Zero means no deadline, or dependent on the operating system
+	// as with the Timeout option.
+	Deadline time.Time
+
+	// LocalAddr is the local address to use when dialing an
+	// address. The address must be of a compatible type for the
+	// network being dialed.
+	// If nil, a local address is automatically chosen.
+	LocalAddr Addr
+
+	// DualStack allows a single dial to attempt to establish
+	// multiple IPv4 and IPv6 connections and to return the first
+	// established connection when the network is "tcp" and the
+	// destination is a host name that has multiple address family
+	// DNS records.
+	DualStack bool
+
+	// KeepAlive specifies the keep-alive period for an active
+	// network connection.
+	// If zero, keep-alives are not enabled. Network protocols
+	// that do not support keep-alives ignore this field.
+	KeepAlive time.Duration
+}
+
 // dialSingle attempts to establish and returns a single connection to
 // the destination address.
 func dialSingle(net, addr string, la, ra Addr, deadline time.Time) (c Conn, err error) {
@@ -3339,10 +3531,6 @@ func dialSingle(net, addr string, la, ra Addr, deadline time.Time) (c Conn, err 
 		return nil, err // c is non-nil interface containing nil pointer
 	}
 	return c, nil
-}
-
-func dial(network string, ra Addr, dialer func(time.Time) (Conn, error), deadline time.Time) (Conn, error) {
-	return dialer(deadline)
 }
 
 func dialTCP(net string, laddr, raddr *TCPAddr, deadline time.Time) (*TCPConn, error) {
@@ -3475,10 +3663,88 @@ type netFD struct {
 	pd pollDesc
 }
 
+struct PollDesc
+{
+	PollDesc* link;	// in pollcache, protected by pollcache.Lock
+
+	// The lock protects pollOpen, pollSetDeadline, pollUnblock and deadlineimpl operations.
+	// This fully covers seq, rt and wt variables. fd is constant throughout the PollDesc lifetime.
+	// pollReset, pollWait, pollWaitCanceled and runtime·netpollready (IO rediness notification)
+	// proceed w/o taking the lock. So closing, rg, rd, wg and wd are manipulated
+	// in a lock-free way by all operations.
+	Lock;		// protectes the following fields
+	uintptr	fd;
+	bool	closing;
+	uintptr	seq;	// protects from stale timers and ready notifications
+	G*	rg;	// READY, WAIT, G waiting for read or nil
+	Timer	rt;	// read deadline timer (set if rt.fv != nil)
+	int64	rd;	// read deadline
+	G*	wg;	// READY, WAIT, G waiting for write or nil
+	Timer	wt;	// write deadline timer
+	int64	wd;	// write deadline
+	void*	user;	// user settable cookie
+};
+
+func (fd *netFD) init() error {
+	if err := fd.pd.Init(fd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (pd *pollDesc) Init(fd *netFD) error {
+	serverInit.Do(runtime_pollServerInit)
+	ctx, errno := runtime_pollOpen(uintptr(fd.sysfd))
+	if errno != 0 {
+		return syscall.Errno(errno)
+	}
+	pd.runtimeCtx = ctx
+	return nil
+}
+
+func (fd *netFD) dial(laddr, raddr sockaddr, deadline time.Time, toAddr func(syscall.Sockaddr) Addr) error {
+	var err error
+	var lsa syscall.Sockaddr
+	if laddr != nil {
+		if lsa, err = laddr.sockaddr(fd.family); err != nil {
+			return err
+		} else if lsa != nil {
+			if err := syscall.Bind(fd.sysfd, lsa); err != nil {
+				return os.NewSyscallError("bind", err)
+			}
+		}
+	}
+	var rsa syscall.Sockaddr
+	if raddr != nil {
+		if rsa, err = raddr.sockaddr(fd.family); err != nil {
+			return err
+		}
+		if err := fd.connect(lsa, rsa, deadline); err != nil {
+			return err
+		}
+		fd.isConnected = true
+	} else {
+		if err := fd.init(); err != nil {
+			return err
+		}
+	}
+	lsa, _ = syscall.Getsockname(fd.sysfd)
+	if rsa, _ = syscall.Getpeername(fd.sysfd); rsa != nil {
+		fd.setAddr(toAddr(lsa), toAddr(rsa))
+	} else {
+		fd.setAddr(toAddr(lsa), raddr)
+	}
+	return nil
+}
+
 func newTCPConn(fd *netFD) *TCPConn {
 	c := &TCPConn{conn{fd}}
 	c.SetNoDelay(true)
 	return c
+}
+
+type conn struct {
+	fd *netFD
 }
 
 // TCPConn is an implementation of the Conn interface for TCP network
@@ -3487,22 +3753,48 @@ type TCPConn struct {
 	conn
 }
 
-type conn struct {
-	fd *netFD
+func dial(network string, ra Addr, dialer func(time.Time) (Conn, error), deadline time.Time) (Conn, error) {
+	return dialer(deadline)
 }
 
-// SetReadDeadline implements the Conn SetReadDeadline method.
-func (c *conn) SetReadDeadline(t time.Time) error {
-	if !c.ok() {
-		return syscall.EINVAL
+func NewTimeoutConn(conn net.Conn, timeout time.Duration) net.Conn {
+	return &TimeoutConn{conn, timeout}
+}
+
+// A net.Conn that sets a deadline for every Read or Write operation
+type TimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *TimeoutConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+		if err != nil {
+			return 0, err
+		}
 	}
-	return c.fd.setReadDeadline(t)
+	return c.Conn.Read(b)
 }
 ```
+
+Docker tcp connection结构关系如下：
+
+![](/public/img/golang_client_flow/conn_struct.png)
 
 `SetReadDeadline`分析：
 
 ```go
+func (c *TimeoutConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+		if err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(b)
+}
+
 // SetReadDeadline implements the Conn SetReadDeadline method.
 func (c *conn) SetReadDeadline(t time.Time) error {
 	if !c.ok() {
