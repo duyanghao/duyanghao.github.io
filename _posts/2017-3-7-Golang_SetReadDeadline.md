@@ -1105,150 +1105,142 @@ type Conn interface {
 }
 
 // Do sends an HTTP request and returns an HTTP response, following
-// policy (such as redirects, cookies, auth) as configured on the
-// client.
+// policy (e.g. redirects, cookies, auth) as configured on the client.
 //
 // An error is returned if caused by client policy (such as
-// CheckRedirect), or failure to speak HTTP (such as a network
-// connectivity problem). A non-2xx status code doesn't cause an
-// error.
+// CheckRedirect), or if there was an HTTP protocol error.
+// A non-2xx response doesn't cause an error.
 //
-// If the returned error is nil, the Response will contain a non-nil
-// Body which the user is expected to close. If the Body is not
-// closed, the Client's underlying RoundTripper (typically Transport)
-// may not be able to re-use a persistent TCP connection to the server
-// for a subsequent "keep-alive" request.
+// When err is nil, resp always contains a non-nil resp.Body.
+//
+// Callers should close resp.Body when done reading from it. If
+// resp.Body is not closed, the Client's underlying RoundTripper
+// (typically Transport) may not be able to re-use a persistent TCP
+// connection to the server for a subsequent "keep-alive" request.
 //
 // The request Body, if non-nil, will be closed by the underlying
 // Transport, even on errors.
 //
-// On error, any Response can be ignored. A non-nil Response with a
-// non-nil error only occurs when CheckRedirect fails, and even then
-// the returned Response.Body is already closed.
-//
 // Generally Get, Post, or PostForm will be used instead of Do.
-func (c *Client) Do(req *Request) (*Response, error) {
-	method := valueOrDefault(req.Method, "GET")
-	if method == "GET" || method == "HEAD" {
+func (c *Client) Do(req *Request) (resp *Response, err error) {
+	if req.Method == "GET" || req.Method == "HEAD" {
 		return c.doFollowingRedirects(req, shouldRedirectGet)
 	}
-	if method == "POST" || method == "PUT" {
+	if req.Method == "POST" || req.Method == "PUT" {
 		return c.doFollowingRedirects(req, shouldRedirectPost)
 	}
-	return c.send(req, c.deadline())
+	return c.send(req)
 }
 
-// Return value if nonempty, def otherwise.
-func valueOrDefault(value, def string) string {
-	if value != "" {
-		return value
+func (c *Client) doFollowingRedirects(ireq *Request, shouldRedirect func(int) bool) (resp *Response, err error) {
+	var base *url.URL
+	redirectChecker := c.CheckRedirect
+	if redirectChecker == nil {
+		redirectChecker = defaultCheckRedirect
 	}
-	return def
-}
+	var via []*Request
 
-func (c *Client) doFollowingRedirects(req *Request, shouldRedirect func(int) bool) (*Response, error) {
-	if req.URL == nil {
-		req.closeBody()
+	if ireq.URL == nil {
+		ireq.closeBody()
 		return nil, errors.New("http: nil Request.URL")
 	}
 
-	var (
-		deadline = c.deadline()
-		reqs     []*Request
-		resp     *Response
-	)
-	uerr := func(err error) error {
-		req.closeBody()
-		method := valueOrDefault(reqs[0].Method, "GET")
-		var urlStr string
-		if resp != nil && resp.Request != nil {
-			urlStr = resp.Request.URL.String()
-		} else {
-			urlStr = req.URL.String()
+	var reqmu sync.Mutex // guards req
+	req := ireq
+
+	var timer *time.Timer
+	if c.Timeout > 0 {
+		type canceler interface {
+			CancelRequest(*Request)
 		}
-		return &url.Error{
-			Op:  method[:1] + strings.ToLower(method[1:]),
-			URL: urlStr,
-			Err: err,
+		tr, ok := c.transport().(canceler)
+		if !ok {
+			return nil, fmt.Errorf("net/http: Client Transport of type %T doesn't support CancelRequest; Timeout not supported", c.transport())
 		}
+		timer = time.AfterFunc(c.Timeout, func() {
+			reqmu.Lock()
+			defer reqmu.Unlock()
+			tr.CancelRequest(req)
+		})
 	}
-	for {
-		// For all but the first request, create the next
-		// request hop and replace req.
-		if len(reqs) > 0 {
-			loc := resp.Header.Get("Location")
-			if loc == "" {
-				return nil, uerr(fmt.Errorf("%d response missing Location header", resp.StatusCode))
-			}
-			u, err := req.URL.Parse(loc)
-			if err != nil {
-				return nil, uerr(fmt.Errorf("failed to parse Location header %q: %v", loc, err))
-			}
-			ireq := reqs[0]
-			req = &Request{
-				Method:   ireq.Method,
-				Response: resp,
-				URL:      u,
-				Header:   make(Header),
-				Cancel:   ireq.Cancel,
-				ctx:      ireq.ctx,
-			}
+
+	urlStr := "" // next relative or absolute URL to fetch (after first request)
+	redirectFailed := false
+	for redirect := 0; ; redirect++ {
+		if redirect != 0 {
+			nreq := new(Request)
+			nreq.Method = ireq.Method
 			if ireq.Method == "POST" || ireq.Method == "PUT" {
-				req.Method = "GET"
+				nreq.Method = "GET"
 			}
-			// Add the Referer header from the most recent
-			// request URL to the new one, if it's not https->http:
-			if ref := refererForURL(reqs[len(reqs)-1].URL, req.URL); ref != "" {
-				req.Header.Set("Referer", ref)
+			nreq.Header = make(Header)
+			nreq.URL, err = base.Parse(urlStr)
+			if err != nil {
+				break
 			}
-			err = c.checkRedirect(req, reqs)
+			if len(via) > 0 {
+				// Add the Referer header.
+				lastReq := via[len(via)-1]
+				if lastReq.URL.Scheme != "https" {
+					nreq.Header.Set("Referer", lastReq.URL.String())
+				}
 
-			// Sentinel error to let users select the
-			// previous response, without closing its
-			// body. See Issue 10069.
-			if err == ErrUseLastResponse {
-				return resp, nil
+				err = redirectChecker(nreq, via)
+				if err != nil {
+					redirectFailed = true
+					break
+				}
 			}
+			reqmu.Lock()
+			req = nreq
+			reqmu.Unlock()
+		}
 
-			// Close the previous response's body. But
-			// read at least some of the body so if it's
-			// small the underlying TCP connection will be
-			// re-used. No need to check for errors: if it
-			// fails, the Transport won't reuse it anyway.
+		urlStr = req.URL.String()
+		if resp, err = c.send(req); err != nil {
+			break
+		}
+
+		if shouldRedirect(resp.StatusCode) {
+			// Read the body if small so underlying TCP connection will be re-used.
+			// No need to check for errors: if it fails, Transport won't reuse it anyway.
 			const maxBodySlurpSize = 2 << 10
 			if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
 				io.CopyN(ioutil.Discard, resp.Body, maxBodySlurpSize)
 			}
 			resp.Body.Close()
-
-			if err != nil {
-				// Special case for Go 1 compatibility: return both the response
-				// and an error if the CheckRedirect function failed.
-				// See https://golang.org/issue/3795
-				// The resp.Body has already been closed.
-				ue := uerr(err)
-				ue.(*url.Error).URL = loc
-				return resp, ue
+			if urlStr = resp.Header.Get("Location"); urlStr == "" {
+				err = errors.New(fmt.Sprintf("%d response missing Location header", resp.StatusCode))
+				break
 			}
+			base = req.URL
+			via = append(via, req)
+			continue
 		}
-
-		reqs = append(reqs, req)
-
-		var err error
-		if resp, err = c.send(req, deadline); err != nil {
-			if !deadline.IsZero() && !time.Now().Before(deadline) {
-				err = &httpError{
-					err:     err.Error() + " (Client.Timeout exceeded while awaiting headers)",
-					timeout: true,
-				}
-			}
-			return nil, uerr(err)
+		if timer != nil {
+			resp.Body = &cancelTimerBody{timer, resp.Body}
 		}
-
-		if !shouldRedirect(resp.StatusCode) {
-			return resp, nil
-		}
+		return resp, nil
 	}
+
+	method := ireq.Method
+	urlErr := &url.Error{
+		Op:  method[0:1] + strings.ToLower(method[1:]),
+		URL: urlStr,
+		Err: err,
+	}
+
+	if redirectFailed {
+		// Special case for Go 1 compatibility: return both the response
+		// and an error if the CheckRedirect function failed.
+		// See http://golang.org/issue/3795
+		return resp, urlErr
+	}
+
+	if resp != nil {
+		resp.Body.Close()
+	}
+	return nil, urlErr
 }
 
 // True if the specified HTTP status code is one for which the Get utility should
@@ -1575,6 +1567,167 @@ func setDeadlineImpl(fd *netFD, t time.Time, mode int) error {
 	runtime_pollSetDeadline(fd.pd.runtimeCtx, d, mode)
 	fd.decref()
 	return nil
+}
+
+struct PollDesc
+{
+	PollDesc* link;	// in pollcache, protected by pollcache.Lock
+
+	// The lock protects pollOpen, pollSetDeadline, pollUnblock and deadlineimpl operations.
+	// This fully covers seq, rt and wt variables. fd is constant throughout the PollDesc lifetime.
+	// pollReset, pollWait, pollWaitCanceled and runtime·netpollready (IO rediness notification)
+	// proceed w/o taking the lock. So closing, rg, rd, wg and wd are manipulated
+	// in a lock-free way by all operations.
+	Lock;		// protectes the following fields
+	uintptr	fd;
+	bool	closing;
+	uintptr	seq;	// protects from stale timers and ready notifications
+	G*	rg;	// READY, WAIT, G waiting for read or nil
+	Timer	rt;	// read deadline timer (set if rt.fv != nil)
+	int64	rd;	// read deadline
+	G*	wg;	// READY, WAIT, G waiting for write or nil
+	Timer	wt;	// write deadline timer
+	int64	wd;	// write deadline
+	void*	user;	// user settable cookie
+};
+
+func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {
+	G *rg, *wg;
+
+	runtime·lock(pd);
+	if(pd->closing) {
+		runtime·unlock(pd);
+		return;
+	}
+	pd->seq++;  // invalidate current timers
+	// Reset current timers.
+	if(pd->rt.fv) {
+		runtime·deltimer(&pd->rt);
+		pd->rt.fv = nil;
+	}
+	if(pd->wt.fv) {
+		runtime·deltimer(&pd->wt);
+		pd->wt.fv = nil;
+	}
+	// Setup new timers.
+	if(d != 0 && d <= runtime·nanotime())
+		d = -1;
+	if(mode == 'r' || mode == 'r'+'w')
+		pd->rd = d;
+	if(mode == 'w' || mode == 'r'+'w')
+		pd->wd = d;
+	if(pd->rd > 0 && pd->rd == pd->wd) {
+		pd->rt.fv = &deadlineFn;
+		pd->rt.when = pd->rd;
+		// Copy current seq into the timer arg.
+		// Timer func will check the seq against current descriptor seq,
+		// if they differ the descriptor was reused or timers were reset.
+		pd->rt.arg.type = (Type*)pd->seq;
+		pd->rt.arg.data = pd;
+		runtime·addtimer(&pd->rt);
+	} else {
+		if(pd->rd > 0) {
+			pd->rt.fv = &readDeadlineFn;
+			pd->rt.when = pd->rd;
+			pd->rt.arg.type = (Type*)pd->seq;
+			pd->rt.arg.data = pd;
+			runtime·addtimer(&pd->rt);
+		}
+		if(pd->wd > 0) {
+			pd->wt.fv = &writeDeadlineFn;
+			pd->wt.when = pd->wd;
+			pd->wt.arg.type = (Type*)pd->seq;
+			pd->wt.arg.data = pd;
+			runtime·addtimer(&pd->wt);
+		}
+	}
+	// If we set the new deadline in the past, unblock currently pending IO if any.
+	rg = nil;
+	runtime·atomicstorep(&wg, nil);  // full memory barrier between stores to rd/wd and load of rg/wg in netpollunblock
+	if(pd->rd < 0)
+		rg = netpollunblock(pd, 'r', false);
+	if(pd->wd < 0)
+		wg = netpollunblock(pd, 'w', false);
+	runtime·unlock(pd);
+	if(rg)
+		runtime·ready(rg);
+	if(wg)
+		runtime·ready(wg);
+}
+
+static void
+readDeadline(int64 now, Eface arg)
+{
+	deadlineimpl(now, arg, true, false);
+}
+
+static void
+deadlineimpl(int64 now, Eface arg, bool read, bool write)
+{
+	PollDesc *pd;
+	uint32 seq;
+	G *rg, *wg;
+
+	USED(now);
+	pd = (PollDesc*)arg.data;
+	// This is the seq when the timer was set.
+	// If it's stale, ignore the timer event.
+	seq = (uintptr)arg.type;
+	rg = wg = nil;
+	runtime·lock(pd);
+	if(seq != pd->seq) {
+		// The descriptor was reused or timers were reset.
+		runtime·unlock(pd);
+		return;
+	}
+	if(read) {
+		if(pd->rd <= 0 || pd->rt.fv == nil)
+			runtime·throw("deadlineimpl: inconsistent read deadline");
+		pd->rd = -1;
+		runtime·atomicstorep(&pd->rt.fv, nil);  // full memory barrier between store to rd and load of rg in netpollunblock
+		rg = netpollunblock(pd, 'r', false);
+	}
+	if(write) {
+		if(pd->wd <= 0 || (pd->wt.fv == nil && !read))
+			runtime·throw("deadlineimpl: inconsistent write deadline");
+		pd->wd = -1;
+		runtime·atomicstorep(&pd->wt.fv, nil);  // full memory barrier between store to wd and load of wg in netpollunblock
+		wg = netpollunblock(pd, 'w', false);
+	}
+	runtime·unlock(pd);
+	if(rg)
+		runtime·ready(rg);
+	if(wg)
+		runtime·ready(wg);
+}
+
+static G*
+netpollunblock(PollDesc *pd, int32 mode, bool ioready)
+{
+	G **gpp, *old, *new;
+
+	gpp = &pd->rg;
+	if(mode == 'w')
+		gpp = &pd->wg;
+
+	for(;;) {
+		old = *gpp;
+		if(old == READY)
+			return nil;
+		if(old == nil && !ioready) {
+			// Only set READY for ioready. runtime_pollWait
+			// will check for timeout/cancel before waiting.
+			return nil;
+		}
+		new = nil;
+		if(ioready)
+			new = READY;
+		if(runtime·casp(gpp, old, new))
+			break;
+	}
+	if(old > WAIT)
+		return old;  // must be G*
+	return nil;
 }
 
 ```
