@@ -398,6 +398,47 @@ func (r *Session) GetRepositoryData(remote string) (*RepositoryData, error) {
 	}, nil
 }
 
+func (r *Session) GetRemoteTags(registries []string, repository string, token []string) (map[string]string, error) {
+	if strings.Count(repository, "/") == 0 {
+		// This will be removed once the Registry supports auto-resolution on
+		// the "library" namespace
+		repository = "library/" + repository
+	}
+	for _, host := range registries {
+		endpoint := fmt.Sprintf("%srepositories/%s/tags", host, repository)
+		req, err := r.reqFactory.NewRequest("GET", endpoint, nil)
+
+		if err != nil {
+			return nil, err
+		}
+		setTokenAuth(req, token)
+		res, _, err := r.doRequest(req)
+		if err != nil {
+			return nil, err
+		}
+
+		log.Debugf("Got status code %d from %s", res.StatusCode, endpoint)
+		defer res.Body.Close()
+
+		if res.StatusCode != 200 && res.StatusCode != 404 {
+			continue
+		} else if res.StatusCode == 404 {
+			return nil, fmt.Errorf("Repository not found")
+		}
+
+		result := make(map[string]string)
+		rawJSON, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawJSON, &result); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("Could not reach any registry endpoint")
+}
+
 // NewRequest() creates a new *http.Request,
 // applies all decorators in the HTTPRequestFactory on the request,
 // then applies decorators provided by d on the request.
@@ -765,7 +806,62 @@ func (r *Session) GetRemoteImageLayer(imgID, registry string, token []string, im
 	log.Debugf("server doesn't support resume")
 	return res.Body, nil
 }
+// Register imports a pre-existing image into the graph.
+func (graph *Graph) Register(img *image.Image, jsonData []byte, layerData archive.ArchiveReader) (err error) {
+	defer func() {
+		// If any error occurs, remove the new dir from the driver.
+		// Don't check for errors since the dir might not have been created.
+		// FIXME: this leaves a possible race condition.
+		if err != nil {
+			graph.driver.Remove(img.ID)
+		}
+	}()
+	if err := utils.ValidateID(img.ID); err != nil {
+		return err
+	}
+	// (This is a convenience to save time. Race conditions are taken care of by os.Rename)
+	if graph.Exists(img.ID) {
+		return fmt.Errorf("Image %s already exists", img.ID)
+	}
+
+	// Ensure that the image root does not exist on the filesystem
+	// when it is not registered in the graph.
+	// This is common when you switch from one graph driver to another
+	if err := os.RemoveAll(graph.ImageRoot(img.ID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// If the driver has this ID but the graph doesn't, remove it from the driver to start fresh.
+	// (the graph is the source of truth).
+	// Ignore errors, since we don't know if the driver correctly returns ErrNotExist.
+	// (FIXME: make that mandatory for drivers).
+	graph.driver.Remove(img.ID)
+
+	tmp, err := graph.Mktemp("")
+	defer os.RemoveAll(tmp)
+	if err != nil {
+		return fmt.Errorf("Mktemp failed: %s", err)
+	}
+
+	// Create root filesystem in the driver
+	if err := graph.driver.Create(img.ID, img.Parent); err != nil {
+		return fmt.Errorf("Driver %s failed to create image rootfs %s: %s", graph.driver, img.ID, err)
+	}
+	// Apply the diff/layer
+	img.SetGraph(graph)
+	if err := image.StoreImage(img, jsonData, layerData, tmp); err != nil {
+		return err
+	}
+	// Commit
+	if err := os.Rename(tmp, graph.ImageRoot(img.ID)); err != nil {
+		return err
+	}
+	graph.idIndex.Add(img.ID)
+	return nil
+}
 ```
+
+![](/public/img/golang_client_flow/docker_pull_flow.png)
 
 下面重点分析`SetReadDeadline`原理：
 
