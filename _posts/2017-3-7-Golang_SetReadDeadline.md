@@ -2644,9 +2644,197 @@ func (req *Request) write(w io.Writer, usingProxy bool, extraHeaders Header) err
 }
 ```
 
+使用`net/http client`的一般流程如下:
+
+```go
+tr := &http.Transport{
+	TLSClientConfig:    &tls.Config{RootCAs: pool},
+	DisableCompression: true,
+}
+
+tr.Dial = func(proto string, addr string) (net.Conn, error) {
+    conn, err := net.Dial(proto, addr)
+    if err != nil {
+        return nil, err
+    }
+    conn = utils.NewTimeoutConn(conn, 1*time.Minute)
+    return conn, nil
+}
+    
+client := &http.Client{
+	Transport: tr,
+	CheckRedirect: redirectPolicyFunc,
+}
+
+req, err := http.NewRequest("GET", "http://example.com", nil)
+// ...
+req.Header.Add("If-None-Match", `W/"wyzzy"`)
+resp, err := client.Do(req)
+// ...
+```
+
 如下是流程图：
 
 ![](/public/img/golang_client_flow/client_flow.png)
+
+数据结构：
+
+* Client
+
+`http.Client`是客户端请求数据结构，它包装了`RoundTripper`，客户端使用时应该创建一个`Client`实例，并重复使用(多goroutines安全)，如下：
+
+```go
+// A Client is an HTTP client. Its zero value (DefaultClient) is a
+// usable client that uses DefaultTransport.
+//
+// The Client's Transport typically has internal state (cached TCP
+// connections), so Clients should be reused instead of created as
+// needed. Clients are safe for concurrent use by multiple goroutines.
+//
+// A Client is higher-level than a RoundTripper (such as Transport)
+// and additionally handles HTTP details such as cookies and
+// redirects.
+type Client struct {
+	// Transport specifies the mechanism by which individual
+	// HTTP requests are made.
+	// If nil, DefaultTransport is used.
+	Transport RoundTripper
+
+	// CheckRedirect specifies the policy for handling redirects.
+	// If CheckRedirect is not nil, the client calls it before
+	// following an HTTP redirect. The arguments req and via are
+	// the upcoming request and the requests made already, oldest
+	// first. If CheckRedirect returns an error, the Client's Get
+	// method returns both the previous Response and
+	// CheckRedirect's error (wrapped in a url.Error) instead of
+	// issuing the Request req.
+	//
+	// If CheckRedirect is nil, the Client uses its default policy,
+	// which is to stop after 10 consecutive requests.
+	CheckRedirect func(req *Request, via []*Request) error
+
+	// Jar specifies the cookie jar.
+	// If Jar is nil, cookies are not sent in requests and ignored
+	// in responses.
+	Jar CookieJar
+
+	// Timeout specifies a time limit for requests made by this
+	// Client. The timeout includes connection time, any
+	// redirects, and reading the response body. The timer remains
+	// running after Get, Head, Post, or Do return and will
+	// interrupt reading of the Response.Body.
+	//
+	// A Timeout of zero means no timeout.
+	//
+	// The Client's Transport must support the CancelRequest
+	// method or Client will return errors when attempting to make
+	// a request with Get, Head, Post, or Do. Client's default
+	// Transport (DefaultTransport) supports CancelRequest.
+	Timeout time.Duration
+}
+```
+
+* Transport
+
+http.Transport代表client与server之间的传输管道，它比net.Conn更加高层，它基于net.Conn(实际上是http.persistConn)进行数据传输，并管理空闲的http.persistConn，如下：
+
+```go
+// Transport is an implementation of RoundTripper that supports http,
+// https, and http proxies (for either http or https with CONNECT).
+// Transport can also cache connections for future re-use.
+type Transport struct {
+	idleMu      sync.Mutex
+	idleConn    map[connectMethodKey][]*persistConn
+	idleConnCh  map[connectMethodKey]chan *persistConn
+	reqMu       sync.Mutex
+	reqCanceler map[*Request]func()
+	altMu       sync.RWMutex
+	altProto    map[string]RoundTripper // nil or map of URI scheme => RoundTripper
+
+	// Proxy specifies a function to return a proxy for a given
+	// Request. If the function returns a non-nil error, the
+	// request is aborted with the provided error.
+	// If Proxy is nil or returns a nil *URL, no proxy is used.
+	Proxy func(*Request) (*url.URL, error)
+
+	// Dial specifies the dial function for creating TCP
+	// connections.
+	// If Dial is nil, net.Dial is used.
+	Dial func(network, addr string) (net.Conn, error)
+
+	// TLSClientConfig specifies the TLS configuration to use with
+	// tls.Client. If nil, the default configuration is used.
+	TLSClientConfig *tls.Config
+
+	// TLSHandshakeTimeout specifies the maximum amount of time waiting to
+	// wait for a TLS handshake. Zero means no timeout.
+	TLSHandshakeTimeout time.Duration
+
+	// DisableKeepAlives, if true, prevents re-use of TCP connections
+	// between different HTTP requests.
+	DisableKeepAlives bool
+
+	// DisableCompression, if true, prevents the Transport from
+	// requesting compression with an "Accept-Encoding: gzip"
+	// request header when the Request contains no existing
+	// Accept-Encoding value. If the Transport requests gzip on
+	// its own and gets a gzipped response, it's transparently
+	// decoded in the Response.Body. However, if the user
+	// explicitly requested gzip it is not automatically
+	// uncompressed.
+	DisableCompression bool
+
+	// MaxIdleConnsPerHost, if non-zero, controls the maximum idle
+	// (keep-alive) to keep per-host.  If zero,
+	// DefaultMaxIdleConnsPerHost is used.
+	MaxIdleConnsPerHost int
+
+	// ResponseHeaderTimeout, if non-zero, specifies the amount of
+	// time to wait for a server's response headers after fully
+	// writing the request (including its body, if any). This
+	// time does not include the time to read the response body.
+	ResponseHeaderTimeout time.Duration
+
+	// TODO: tunable on global max cached connections
+	// TODO: tunable on timeout on cached connections
+}
+```
+
+* persistConn
+
+http.persistConn对net.Conn进行了包装，以实现持久的connection（keep-alive），如下：
+
+```go
+// persistConn wraps a connection, usually a persistent one
+// (but may be used for non-keep-alive requests as well)
+type persistConn struct {
+	t        *Transport
+	cacheKey connectMethodKey
+	conn     net.Conn
+	tlsState *tls.ConnectionState
+	br       *bufio.Reader       // from conn
+	sawEOF   bool                // whether we've seen EOF from conn; owned by readLoop
+	bw       *bufio.Writer       // to conn
+	reqch    chan requestAndChan // written by roundTrip; read by readLoop
+	writech  chan writeRequest   // written by roundTrip; read by writeLoop
+	closech  chan struct{}       // closed when conn closed
+	isProxy  bool
+	// writeErrCh passes the request write error (usually nil)
+	// from the writeLoop goroutine to the readLoop which passes
+	// it off to the res.Body reader, which then uses it to decide
+	// whether or not a connection can be reused. Issue 7569.
+	writeErrCh chan error
+
+	lk                   sync.Mutex // guards following fields
+	numExpectedResponses int
+	closed               bool // whether conn has been closed
+	broken               bool // an error has happened on this connection; marked broken so it's not reused.
+	// mutateHeaderFunc is an optional func to modify extra
+	// headers on each outbound request before it's written. (the
+	// original Request given to RoundTrip is not modified)
+	mutateHeaderFunc func(Header)
+}
+```
 
 执行流程：
 
