@@ -855,9 +855,205 @@ func (c *TimeoutConn) Read(b []byte) (int, error) {
 }
 ```
 
-分析原理：
+`res, err := client.Do(req)`：
 
 ```go
+// A Client is an HTTP client. Its zero value (DefaultClient) is a
+// usable client that uses DefaultTransport.
+//
+// The Client's Transport typically has internal state (cached TCP
+// connections), so Clients should be reused instead of created as
+// needed. Clients are safe for concurrent use by multiple goroutines.
+//
+// A Client is higher-level than a RoundTripper (such as Transport)
+// and additionally handles HTTP details such as cookies and
+// redirects.
+type Client struct {
+	// Transport specifies the mechanism by which individual
+	// HTTP requests are made.
+	// If nil, DefaultTransport is used.
+	Transport RoundTripper
+
+	// CheckRedirect specifies the policy for handling redirects.
+	// If CheckRedirect is not nil, the client calls it before
+	// following an HTTP redirect. The arguments req and via are
+	// the upcoming request and the requests made already, oldest
+	// first. If CheckRedirect returns an error, the Client's Get
+	// method returns both the previous Response (with its Body
+	// closed) and CheckRedirect's error (wrapped in a url.Error)
+	// instead of issuing the Request req.
+	// As a special case, if CheckRedirect returns ErrUseLastResponse,
+	// then the most recent response is returned with its body
+	// unclosed, along with a nil error.
+	//
+	// If CheckRedirect is nil, the Client uses its default policy,
+	// which is to stop after 10 consecutive requests.
+	CheckRedirect func(req *Request, via []*Request) error
+
+	// Jar specifies the cookie jar.
+	// If Jar is nil, cookies are not sent in requests and ignored
+	// in responses.
+	Jar CookieJar
+
+	// Timeout specifies a time limit for requests made by this
+	// Client. The timeout includes connection time, any
+	// redirects, and reading the response body. The timer remains
+	// running after Get, Head, Post, or Do return and will
+	// interrupt reading of the Response.Body.
+	//
+	// A Timeout of zero means no timeout.
+	//
+	// The Client cancels requests to the underlying Transport
+	// using the Request.Cancel mechanism. Requests passed
+	// to Client.Do may still set Request.Cancel; both will
+	// cancel the request.
+	//
+	// For compatibility, the Client will also use the deprecated
+	// CancelRequest method on Transport if found. New
+	// RoundTripper implementations should use Request.Cancel
+	// instead of implementing CancelRequest.
+	Timeout time.Duration
+}
+
+// DefaultMaxIdleConnsPerHost is the default value of Transport's
+// MaxIdleConnsPerHost.
+const DefaultMaxIdleConnsPerHost = 2
+
+// Transport is an implementation of RoundTripper that supports HTTP,
+// HTTPS, and HTTP proxies (for either HTTP or HTTPS with CONNECT).
+//
+// By default, Transport caches connections for future re-use.
+// This may leave many open connections when accessing many hosts.
+// This behavior can be managed using Transport's CloseIdleConnections method
+// and the MaxIdleConnsPerHost and DisableKeepAlives fields.
+//
+// Transports should be reused instead of created as needed.
+// Transports are safe for concurrent use by multiple goroutines.
+//
+// A Transport is a low-level primitive for making HTTP and HTTPS requests.
+// For high-level functionality, such as cookies and redirects, see Client.
+//
+// Transport uses HTTP/1.1 for HTTP URLs and either HTTP/1.1 or HTTP/2
+// for HTTPS URLs, depending on whether the server supports HTTP/2.
+// See the package docs for more about HTTP/2.
+type Transport struct {
+	idleMu     sync.Mutex
+	wantIdle   bool                                // user has requested to close all idle conns
+	idleConn   map[connectMethodKey][]*persistConn // most recently used at end
+	idleConnCh map[connectMethodKey]chan *persistConn
+	idleLRU    connLRU
+
+	reqMu       sync.Mutex
+	reqCanceler map[*Request]func()
+
+	altMu    sync.RWMutex
+	altProto map[string]RoundTripper // nil or map of URI scheme => RoundTripper
+
+	// Proxy specifies a function to return a proxy for a given
+	// Request. If the function returns a non-nil error, the
+	// request is aborted with the provided error.
+	// If Proxy is nil or returns a nil *URL, no proxy is used.
+	Proxy func(*Request) (*url.URL, error)
+
+	// DialContext specifies the dial function for creating unencrypted TCP connections.
+	// If DialContext is nil (and the deprecated Dial below is also nil),
+	// then the transport dials using package net.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// Dial specifies the dial function for creating unencrypted TCP connections.
+	//
+	// Deprecated: Use DialContext instead, which allows the transport
+	// to cancel dials as soon as they are no longer needed.
+	// If both are set, DialContext takes priority.
+	Dial func(network, addr string) (net.Conn, error)
+
+	// DialTLS specifies an optional dial function for creating
+	// TLS connections for non-proxied HTTPS requests.
+	//
+	// If DialTLS is nil, Dial and TLSClientConfig are used.
+	//
+	// If DialTLS is set, the Dial hook is not used for HTTPS
+	// requests and the TLSClientConfig and TLSHandshakeTimeout
+	// are ignored. The returned net.Conn is assumed to already be
+	// past the TLS handshake.
+	DialTLS func(network, addr string) (net.Conn, error)
+
+	// TLSClientConfig specifies the TLS configuration to use with
+	// tls.Client. If nil, the default configuration is used.
+	TLSClientConfig *tls.Config
+
+	// TLSHandshakeTimeout specifies the maximum amount of time waiting to
+	// wait for a TLS handshake. Zero means no timeout.
+	TLSHandshakeTimeout time.Duration
+
+	// DisableKeepAlives, if true, prevents re-use of TCP connections
+	// between different HTTP requests.
+	DisableKeepAlives bool
+
+	// DisableCompression, if true, prevents the Transport from
+	// requesting compression with an "Accept-Encoding: gzip"
+	// request header when the Request contains no existing
+	// Accept-Encoding value. If the Transport requests gzip on
+	// its own and gets a gzipped response, it's transparently
+	// decoded in the Response.Body. However, if the user
+	// explicitly requested gzip it is not automatically
+	// uncompressed.
+	DisableCompression bool
+
+	// MaxIdleConns controls the maximum number of idle (keep-alive)
+	// connections across all hosts. Zero means no limit.
+	MaxIdleConns int
+
+	// MaxIdleConnsPerHost, if non-zero, controls the maximum idle
+	// (keep-alive) connections to keep per-host. If zero,
+	// DefaultMaxIdleConnsPerHost is used.
+	MaxIdleConnsPerHost int
+
+	// IdleConnTimeout is the maximum amount of time an idle
+	// (keep-alive) connection will remain idle before closing
+	// itself.
+	// Zero means no limit.
+	IdleConnTimeout time.Duration
+
+	// ResponseHeaderTimeout, if non-zero, specifies the amount of
+	// time to wait for a server's response headers after fully
+	// writing the request (including its body, if any). This
+	// time does not include the time to read the response body.
+	ResponseHeaderTimeout time.Duration
+
+	// ExpectContinueTimeout, if non-zero, specifies the amount of
+	// time to wait for a server's first response headers after fully
+	// writing the request headers if the request has an
+	// "Expect: 100-continue" header. Zero means no timeout.
+	// This time does not include the time to send the request header.
+	ExpectContinueTimeout time.Duration
+
+	// TLSNextProto specifies how the Transport switches to an
+	// alternate protocol (such as HTTP/2) after a TLS NPN/ALPN
+	// protocol negotiation. If Transport dials an TLS connection
+	// with a non-empty protocol name and TLSNextProto contains a
+	// map entry for that key (such as "h2"), then the func is
+	// called with the request's authority (such as "example.com"
+	// or "example.com:1234") and the TLS connection. The function
+	// must return a RoundTripper that then handles the request.
+	// If TLSNextProto is nil, HTTP/2 support is enabled automatically.
+	TLSNextProto map[string]func(authority string, c *tls.Conn) RoundTripper
+
+	// MaxResponseHeaderBytes specifies a limit on how many
+	// response bytes are allowed in the server's response
+	// header.
+	//
+	// Zero means to use a default limit.
+	MaxResponseHeaderBytes int64
+
+	// nextProtoOnce guards initialization of TLSNextProto and
+	// h2transport (via onceSetNextProtoDefaults)
+	nextProtoOnce sync.Once
+	h2transport   *http2Transport // non-nil if http2 wired up
+
+	// TODO: tunable on max per-host TCP dials in flight (Issue 13957)
+}
+
 // Conn is a generic stream-oriented network connection.
 //
 // Multiple goroutines may invoke methods on a Conn simultaneously.
@@ -908,5 +1104,477 @@ type Conn interface {
 	SetWriteDeadline(t time.Time) error
 }
 
+// Do sends an HTTP request and returns an HTTP response, following
+// policy (such as redirects, cookies, auth) as configured on the
+// client.
+//
+// An error is returned if caused by client policy (such as
+// CheckRedirect), or failure to speak HTTP (such as a network
+// connectivity problem). A non-2xx status code doesn't cause an
+// error.
+//
+// If the returned error is nil, the Response will contain a non-nil
+// Body which the user is expected to close. If the Body is not
+// closed, the Client's underlying RoundTripper (typically Transport)
+// may not be able to re-use a persistent TCP connection to the server
+// for a subsequent "keep-alive" request.
+//
+// The request Body, if non-nil, will be closed by the underlying
+// Transport, even on errors.
+//
+// On error, any Response can be ignored. A non-nil Response with a
+// non-nil error only occurs when CheckRedirect fails, and even then
+// the returned Response.Body is already closed.
+//
+// Generally Get, Post, or PostForm will be used instead of Do.
+func (c *Client) Do(req *Request) (*Response, error) {
+	method := valueOrDefault(req.Method, "GET")
+	if method == "GET" || method == "HEAD" {
+		return c.doFollowingRedirects(req, shouldRedirectGet)
+	}
+	if method == "POST" || method == "PUT" {
+		return c.doFollowingRedirects(req, shouldRedirectPost)
+	}
+	return c.send(req, c.deadline())
+}
+
+// Return value if nonempty, def otherwise.
+func valueOrDefault(value, def string) string {
+	if value != "" {
+		return value
+	}
+	return def
+}
+
+func (c *Client) doFollowingRedirects(req *Request, shouldRedirect func(int) bool) (*Response, error) {
+	if req.URL == nil {
+		req.closeBody()
+		return nil, errors.New("http: nil Request.URL")
+	}
+
+	var (
+		deadline = c.deadline()
+		reqs     []*Request
+		resp     *Response
+	)
+	uerr := func(err error) error {
+		req.closeBody()
+		method := valueOrDefault(reqs[0].Method, "GET")
+		var urlStr string
+		if resp != nil && resp.Request != nil {
+			urlStr = resp.Request.URL.String()
+		} else {
+			urlStr = req.URL.String()
+		}
+		return &url.Error{
+			Op:  method[:1] + strings.ToLower(method[1:]),
+			URL: urlStr,
+			Err: err,
+		}
+	}
+	for {
+		// For all but the first request, create the next
+		// request hop and replace req.
+		if len(reqs) > 0 {
+			loc := resp.Header.Get("Location")
+			if loc == "" {
+				return nil, uerr(fmt.Errorf("%d response missing Location header", resp.StatusCode))
+			}
+			u, err := req.URL.Parse(loc)
+			if err != nil {
+				return nil, uerr(fmt.Errorf("failed to parse Location header %q: %v", loc, err))
+			}
+			ireq := reqs[0]
+			req = &Request{
+				Method:   ireq.Method,
+				Response: resp,
+				URL:      u,
+				Header:   make(Header),
+				Cancel:   ireq.Cancel,
+				ctx:      ireq.ctx,
+			}
+			if ireq.Method == "POST" || ireq.Method == "PUT" {
+				req.Method = "GET"
+			}
+			// Add the Referer header from the most recent
+			// request URL to the new one, if it's not https->http:
+			if ref := refererForURL(reqs[len(reqs)-1].URL, req.URL); ref != "" {
+				req.Header.Set("Referer", ref)
+			}
+			err = c.checkRedirect(req, reqs)
+
+			// Sentinel error to let users select the
+			// previous response, without closing its
+			// body. See Issue 10069.
+			if err == ErrUseLastResponse {
+				return resp, nil
+			}
+
+			// Close the previous response's body. But
+			// read at least some of the body so if it's
+			// small the underlying TCP connection will be
+			// re-used. No need to check for errors: if it
+			// fails, the Transport won't reuse it anyway.
+			const maxBodySlurpSize = 2 << 10
+			if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
+				io.CopyN(ioutil.Discard, resp.Body, maxBodySlurpSize)
+			}
+			resp.Body.Close()
+
+			if err != nil {
+				// Special case for Go 1 compatibility: return both the response
+				// and an error if the CheckRedirect function failed.
+				// See https://golang.org/issue/3795
+				// The resp.Body has already been closed.
+				ue := uerr(err)
+				ue.(*url.Error).URL = loc
+				return resp, ue
+			}
+		}
+
+		reqs = append(reqs, req)
+
+		var err error
+		if resp, err = c.send(req, deadline); err != nil {
+			if !deadline.IsZero() && !time.Now().Before(deadline) {
+				err = &httpError{
+					err:     err.Error() + " (Client.Timeout exceeded while awaiting headers)",
+					timeout: true,
+				}
+			}
+			return nil, uerr(err)
+		}
+
+		if !shouldRedirect(resp.StatusCode) {
+			return resp, nil
+		}
+	}
+}
+
+// True if the specified HTTP status code is one for which the Get utility should
+// automatically redirect.
+func shouldRedirectGet(statusCode int) bool {
+	switch statusCode {
+	case StatusMovedPermanently, StatusFound, StatusSeeOther, StatusTemporaryRedirect:
+		return true
+	}
+	return false
+}
+```
+
+`conn, err := net.Dial(proto, addr)`分析：
+
+```go
+
+conn, err := net.Dial(proto, addr)
+
+func NewTimeoutConn(conn net.Conn, timeout time.Duration) net.Conn {
+	return &TimeoutConn{conn, timeout}
+}
+
+// A net.Conn that sets a deadline for every Read or Write operation
+type TimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *TimeoutConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+		if err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(b)
+}
+
+// Dial connects to the address on the named network.
+//
+// Known networks are "tcp", "tcp4" (IPv4-only), "tcp6" (IPv6-only),
+// "udp", "udp4" (IPv4-only), "udp6" (IPv6-only), "ip", "ip4"
+// (IPv4-only), "ip6" (IPv6-only), "unix", "unixgram" and
+// "unixpacket".
+//
+// For TCP and UDP networks, addresses have the form host:port.
+// If host is a literal IPv6 address or host name, it must be enclosed
+// in square brackets as in "[::1]:80", "[ipv6-host]:http" or
+// "[ipv6-host%zone]:80".
+// The functions JoinHostPort and SplitHostPort manipulate addresses
+// in this form.
+//
+// Examples:
+//	Dial("tcp", "12.34.56.78:80")
+//	Dial("tcp", "google.com:http")
+//	Dial("tcp", "[2001:db8::1]:http")
+//	Dial("tcp", "[fe80::1%lo0]:80")
+//
+// For IP networks, the network must be "ip", "ip4" or "ip6" followed
+// by a colon and a protocol number or name and the addr must be a
+// literal IP address.
+//
+// Examples:
+//	Dial("ip4:1", "127.0.0.1")
+//	Dial("ip6:ospf", "::1")
+//
+// For Unix networks, the address must be a file system path.
+func Dial(network, address string) (Conn, error) {
+	var d Dialer
+	return d.Dial(network, address)
+}
+
+// Dial connects to the address on the named network.
+//
+// See func Dial for a description of the network and address
+// parameters.
+func (d *Dialer) Dial(network, address string) (Conn, error) {
+	ra, err := resolveAddr("dial", network, address, d.deadline())
+	if err != nil {
+		return nil, &OpError{Op: "dial", Net: network, Addr: nil, Err: err}
+	}
+	dialer := func(deadline time.Time) (Conn, error) {
+		return dialSingle(network, address, d.LocalAddr, ra.toAddr(), deadline)
+	}
+	if ras, ok := ra.(addrList); ok && d.DualStack && network == "tcp" {
+		dialer = func(deadline time.Time) (Conn, error) {
+			return dialMulti(network, address, d.LocalAddr, ras, deadline)
+		}
+	}
+	c, err := dial(network, ra.toAddr(), dialer, d.deadline())
+	if d.KeepAlive > 0 && err == nil {
+		if tc, ok := c.(*TCPConn); ok {
+			tc.SetKeepAlive(true)
+			tc.SetKeepAlivePeriod(d.KeepAlive)
+			testHookSetKeepAlive()
+		}
+	}
+	return c, err
+}
+
+// dialSingle attempts to establish and returns a single connection to
+// the destination address.
+func dialSingle(net, addr string, la, ra Addr, deadline time.Time) (c Conn, err error) {
+	if la != nil && la.Network() != ra.Network() {
+		return nil, &OpError{Op: "dial", Net: net, Addr: ra, Err: errors.New("mismatched local address type " + la.Network())}
+	}
+	switch ra := ra.(type) {
+	case *TCPAddr:
+		la, _ := la.(*TCPAddr)
+		c, err = dialTCP(net, la, ra, deadline)
+	case *UDPAddr:
+		la, _ := la.(*UDPAddr)
+		c, err = dialUDP(net, la, ra, deadline)
+	case *IPAddr:
+		la, _ := la.(*IPAddr)
+		c, err = dialIP(net, la, ra, deadline)
+	case *UnixAddr:
+		la, _ := la.(*UnixAddr)
+		c, err = dialUnix(net, la, ra, deadline)
+	default:
+		return nil, &OpError{Op: "dial", Net: net, Addr: ra, Err: &AddrError{Err: "unexpected address type", Addr: addr}}
+	}
+	if err != nil {
+		return nil, err // c is non-nil interface containing nil pointer
+	}
+	return c, nil
+}
+
+func dial(network string, ra Addr, dialer func(time.Time) (Conn, error), deadline time.Time) (Conn, error) {
+	return dialer(deadline)
+}
+
+func dialTCP(net string, laddr, raddr *TCPAddr, deadline time.Time) (*TCPConn, error) {
+	fd, err := internetSocket(net, laddr, raddr, deadline, syscall.SOCK_STREAM, 0, "dial", sockaddrToTCP)
+
+	// TCP has a rarely used mechanism called a 'simultaneous connection' in
+	// which Dial("tcp", addr1, addr2) run on the machine at addr1 can
+	// connect to a simultaneous Dial("tcp", addr2, addr1) run on the machine
+	// at addr2, without either machine executing Listen.  If laddr == nil,
+	// it means we want the kernel to pick an appropriate originating local
+	// address.  Some Linux kernels cycle blindly through a fixed range of
+	// local ports, regardless of destination port.  If a kernel happens to
+	// pick local port 50001 as the source for a Dial("tcp", "", "localhost:50001"),
+	// then the Dial will succeed, having simultaneously connected to itself.
+	// This can only happen when we are letting the kernel pick a port (laddr == nil)
+	// and when there is no listener for the destination address.
+	// It's hard to argue this is anything other than a kernel bug.  If we
+	// see this happen, rather than expose the buggy effect to users, we
+	// close the fd and try again.  If it happens twice more, we relent and
+	// use the result.  See also:
+	//	http://golang.org/issue/2690
+	//	http://stackoverflow.com/questions/4949858/
+	//
+	// The opposite can also happen: if we ask the kernel to pick an appropriate
+	// originating local address, sometimes it picks one that is already in use.
+	// So if the error is EADDRNOTAVAIL, we have to try again too, just for
+	// a different reason.
+	//
+	// The kernel socket code is no doubt enjoying watching us squirm.
+	for i := 0; i < 2 && (laddr == nil || laddr.Port == 0) && (selfConnect(fd, err) || spuriousENOTAVAIL(err)); i++ {
+		if err == nil {
+			fd.Close()
+		}
+		fd, err = internetSocket(net, laddr, raddr, deadline, syscall.SOCK_STREAM, 0, "dial", sockaddrToTCP)
+	}
+
+	if err != nil {
+		return nil, &OpError{Op: "dial", Net: net, Addr: raddr, Err: err}
+	}
+	return newTCPConn(fd), nil
+}
+
+// Internet sockets (TCP, UDP, IP)
+
+func internetSocket(net string, laddr, raddr sockaddr, deadline time.Time, sotype, proto int, mode string, toAddr func(syscall.Sockaddr) Addr) (fd *netFD, err error) {
+	family, ipv6only := favoriteAddrFamily(net, laddr, raddr, mode)
+	return socket(net, family, sotype, proto, ipv6only, laddr, raddr, deadline, toAddr)
+}
+
+// socket returns a network file descriptor that is ready for
+// asynchronous I/O using the network poller.
+func socket(net string, family, sotype, proto int, ipv6only bool, laddr, raddr sockaddr, deadline time.Time, toAddr func(syscall.Sockaddr) Addr) (fd *netFD, err error) {
+	s, err := sysSocket(family, sotype, proto)
+	if err != nil {
+		return nil, err
+	}
+	if err = setDefaultSockopts(s, family, sotype, ipv6only); err != nil {
+		closesocket(s)
+		return nil, err
+	}
+	if fd, err = newFD(s, family, sotype, net); err != nil {
+		closesocket(s)
+		return nil, err
+	}
+
+	// This function makes a network file descriptor for the
+	// following applications:
+	//
+	// - An endpoint holder that opens a passive stream
+	//   connenction, known as a stream listener
+	//
+	// - An endpoint holder that opens a destination-unspecific
+	//   datagram connection, known as a datagram listener
+	//
+	// - An endpoint holder that opens an active stream or a
+	//   destination-specific datagram connection, known as a
+	//   dialer
+	//
+	// - An endpoint holder that opens the other connection, such
+	//   as talking to the protocol stack inside the kernel
+	//
+	// For stream and datagram listeners, they will only require
+	// named sockets, so we can assume that it's just a request
+	// from stream or datagram listeners when laddr is not nil but
+	// raddr is nil. Otherwise we assume it's just for dialers or
+	// the other connection holders.
+
+	if laddr != nil && raddr == nil {
+		switch sotype {
+		case syscall.SOCK_STREAM, syscall.SOCK_SEQPACKET:
+			if err := fd.listenStream(laddr, listenerBacklog, toAddr); err != nil {
+				fd.Close()
+				return nil, err
+			}
+			return fd, nil
+		case syscall.SOCK_DGRAM:
+			if err := fd.listenDatagram(laddr, toAddr); err != nil {
+				fd.Close()
+				return nil, err
+			}
+			return fd, nil
+		}
+	}
+	if err := fd.dial(laddr, raddr, deadline, toAddr); err != nil {
+		fd.Close()
+		return nil, err
+	}
+	return fd, nil
+}
+
+func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
+	return &netFD{sysfd: sysfd, family: family, sotype: sotype, net: net}, nil
+}
+
+// Network file descriptor.
+type netFD struct {
+	// locking/lifetime of sysfd + serialize access to Read and Write methods
+	fdmu fdMutex
+
+	// immutable until Close
+	sysfd       int
+	family      int
+	sotype      int
+	isConnected bool
+	net         string
+	laddr       Addr
+	raddr       Addr
+
+	// wait server
+	pd pollDesc
+}
+
+func newTCPConn(fd *netFD) *TCPConn {
+	c := &TCPConn{conn{fd}}
+	c.SetNoDelay(true)
+	return c
+}
+
+// TCPConn is an implementation of the Conn interface for TCP network
+// connections.
+type TCPConn struct {
+	conn
+}
+
+type conn struct {
+	fd *netFD
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+func (c *conn) SetReadDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return c.fd.setReadDeadline(t)
+}
+```
+
+`SetReadDeadline`分析：
+
+```go
+// SetReadDeadline implements the Conn SetReadDeadline method.
+func (c *conn) SetReadDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return c.fd.setReadDeadline(t)
+}
+
+// file:/src/pkg/net/fd_plan9.go
+func (fd *netFD) setReadDeadline(t time.Time) error {
+	return syscall.EPLAN9
+}
+
+// file:/src/pkg/net/fd_poll_nacl.go
+func (fd *netFD) setReadDeadline(t time.Time) error {
+	return setDeadlineImpl(fd, t, 'r')
+}
+
+// file:/src/pkg/net/fd_poll_runtime.go
+func (fd *netFD) setReadDeadline(t time.Time) error {
+	return setDeadlineImpl(fd, t, 'r')
+}
+
+// file:/src/pkg/net/fd_poll_runtime.go
+func setDeadlineImpl(fd *netFD, t time.Time, mode int) error {
+	d := runtimeNano() + int64(t.Sub(time.Now()))
+	if t.IsZero() {
+		d = 0
+	}
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	runtime_pollSetDeadline(fd.pd.runtimeCtx, d, mode)
+	fd.decref()
+	return nil
+}
 
 ```
