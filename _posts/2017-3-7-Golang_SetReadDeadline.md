@@ -861,6 +861,8 @@ func (graph *Graph) Register(img *image.Image, jsonData []byte, layerData archiv
 }
 ```
 
+如下是docker pull流程图：
+
 ![](/public/img/golang_client_flow/docker_pull_flow.png)
 
 下面重点分析`SetReadDeadline`原理：
@@ -951,7 +953,7 @@ func (c *TimeoutConn) Read(b []byte) (int, error) {
 }
 ```
 
-`res, err := client.Do(req)`分析：
+`res, err := client.Do(req)`请求分析：
 
 ```go
 // A Client is an HTTP client. Its zero value (DefaultClient) is a
@@ -1994,6 +1996,42 @@ func (t *Transport) dialConn(cm connectMethod) (*persistConn, error) {
 	return pconn, nil
 }
 
+// Writer implements buffering for an io.Writer object.
+// If an error occurs writing to a Writer, no more data will be
+// accepted and all subsequent writes will return the error.
+// After all data has been written, the client should call the
+// Flush method to guarantee all data has been forwarded to
+// the underlying io.Writer.
+type Writer struct {
+	err error
+	buf []byte
+	n   int
+	wr  io.Writer
+}
+
+// NewWriterSize returns a new Writer whose buffer has at least the specified
+// size. If the argument io.Writer is already a Writer with large enough
+// size, it returns the underlying Writer.
+func NewWriterSize(w io.Writer, size int) *Writer {
+	// Is it already a Writer?
+	b, ok := w.(*Writer)
+	if ok && len(b.buf) >= size {
+		return b
+	}
+	if size <= 0 {
+		size = defaultBufSize
+	}
+	return &Writer{
+		buf: make([]byte, size),
+		wr:  w,
+	}
+}
+
+// NewWriter returns a new Writer whose buffer has the default size.
+func NewWriter(w io.Writer) *Writer {
+	return NewWriterSize(w, defaultBufSize)
+}
+
 // Reader implements buffering for an io.Reader object.
 type Reader struct {
 	buf          []byte
@@ -2233,6 +2271,680 @@ func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 	return resp, nil
 }
 
+// Response represents the response from an HTTP request.
+//
+type Response struct {
+	Status     string // e.g. "200 OK"
+	StatusCode int    // e.g. 200
+	Proto      string // e.g. "HTTP/1.0"
+	ProtoMajor int    // e.g. 1
+	ProtoMinor int    // e.g. 0
+
+	// Header maps header keys to values.  If the response had multiple
+	// headers with the same key, they may be concatenated, with comma
+	// delimiters.  (Section 4.2 of RFC 2616 requires that multiple headers
+	// be semantically equivalent to a comma-delimited sequence.) Values
+	// duplicated by other fields in this struct (e.g., ContentLength) are
+	// omitted from Header.
+	//
+	// Keys in the map are canonicalized (see CanonicalHeaderKey).
+	Header Header
+
+	// Body represents the response body.
+	//
+	// The http Client and Transport guarantee that Body is always
+	// non-nil, even on responses without a body or responses with
+	// a zero-length body. It is the caller's responsibility to
+	// close Body.
+	//
+	// The Body is automatically dechunked if the server replied
+	// with a "chunked" Transfer-Encoding.
+	Body io.ReadCloser
+
+	// ContentLength records the length of the associated content.  The
+	// value -1 indicates that the length is unknown.  Unless Request.Method
+	// is "HEAD", values >= 0 indicate that the given number of bytes may
+	// be read from Body.
+	ContentLength int64
+
+	// Contains transfer encodings from outer-most to inner-most. Value is
+	// nil, means that "identity" encoding is used.
+	TransferEncoding []string
+
+	// Close records whether the header directed that the connection be
+	// closed after reading Body.  The value is advice for clients: neither
+	// ReadResponse nor Response.Write ever closes a connection.
+	Close bool
+
+	// Trailer maps trailer keys to values, in the same
+	// format as the header.
+	Trailer Header
+
+	// The Request that was sent to obtain this Response.
+	// Request's Body is nil (having already been consumed).
+	// This is only populated for Client requests.
+	Request *Request
+
+	// TLS contains information about the TLS connection on which the
+	// response was received. It is nil for unencrypted responses.
+	// The pointer is shared between responses and should not be
+	// modified.
+	TLS *tls.ConnectionState
+}
+
+// msg is *Request or *Response.
+func readTransfer(msg interface{}, r *bufio.Reader) (err error) {
+	t := &transferReader{RequestMethod: "GET"}
+
+	// Unify input
+	isResponse := false
+	switch rr := msg.(type) {
+	case *Response:
+		t.Header = rr.Header
+		t.StatusCode = rr.StatusCode
+		t.ProtoMajor = rr.ProtoMajor
+		t.ProtoMinor = rr.ProtoMinor
+		t.Close = shouldClose(t.ProtoMajor, t.ProtoMinor, t.Header)
+		isResponse = true
+		if rr.Request != nil {
+			t.RequestMethod = rr.Request.Method
+		}
+	case *Request:
+		t.Header = rr.Header
+		t.ProtoMajor = rr.ProtoMajor
+		t.ProtoMinor = rr.ProtoMinor
+		// Transfer semantics for Requests are exactly like those for
+		// Responses with status code 200, responding to a GET method
+		t.StatusCode = 200
+	default:
+		panic("unexpected type")
+	}
+
+	// Default to HTTP/1.1
+	if t.ProtoMajor == 0 && t.ProtoMinor == 0 {
+		t.ProtoMajor, t.ProtoMinor = 1, 1
+	}
+
+	// Transfer encoding, content length
+	t.TransferEncoding, err = fixTransferEncoding(t.RequestMethod, t.Header)
+	if err != nil {
+		return err
+	}
+
+	realLength, err := fixLength(isResponse, t.StatusCode, t.RequestMethod, t.Header, t.TransferEncoding)
+	if err != nil {
+		return err
+	}
+	if isResponse && t.RequestMethod == "HEAD" {
+		if n, err := parseContentLength(t.Header.get("Content-Length")); err != nil {
+			return err
+		} else {
+			t.ContentLength = n
+		}
+	} else {
+		t.ContentLength = realLength
+	}
+
+	// Trailer
+	t.Trailer, err = fixTrailer(t.Header, t.TransferEncoding)
+	if err != nil {
+		return err
+	}
+
+	// If there is no Content-Length or chunked Transfer-Encoding on a *Response
+	// and the status is not 1xx, 204 or 304, then the body is unbounded.
+	// See RFC2616, section 4.4.
+	switch msg.(type) {
+	case *Response:
+		if realLength == -1 &&
+			!chunked(t.TransferEncoding) &&
+			bodyAllowedForStatus(t.StatusCode) {
+			// Unbounded body.
+			t.Close = true
+		}
+	}
+
+	// Prepare body reader.  ContentLength < 0 means chunked encoding
+	// or close connection when finished, since multipart is not supported yet
+	switch {
+	case chunked(t.TransferEncoding):
+		if noBodyExpected(t.RequestMethod) {
+			t.Body = eofReader
+		} else {
+			t.Body = &body{src: newChunkedReader(r), hdr: msg, r: r, closing: t.Close}
+		}
+	case realLength == 0:
+		t.Body = eofReader
+	case realLength > 0:
+		t.Body = &body{src: io.LimitReader(r, realLength), closing: t.Close}
+	default:
+		// realLength < 0, i.e. "Content-Length" not mentioned in header
+		if t.Close {
+			// Close semantics (i.e. HTTP/1.0)
+			t.Body = &body{src: r, closing: t.Close}
+		} else {
+			// Persistent connection (i.e. HTTP/1.1)
+			t.Body = eofReader
+		}
+	}
+
+	// Unify output
+	switch rr := msg.(type) {
+	case *Request:
+		rr.Body = t.Body
+		rr.ContentLength = t.ContentLength
+		rr.TransferEncoding = t.TransferEncoding
+		rr.Close = t.Close
+		rr.Trailer = t.Trailer
+	case *Response:
+		rr.Body = t.Body
+		rr.ContentLength = t.ContentLength
+		rr.TransferEncoding = t.TransferEncoding
+		rr.Close = t.Close
+		rr.Trailer = t.Trailer
+	}
+
+	return nil
+}
+
+type transferReader struct {
+	// Input
+	Header        Header
+	StatusCode    int
+	RequestMethod string
+	ProtoMajor    int
+	ProtoMinor    int
+	// Output
+	Body             io.ReadCloser
+	ContentLength    int64
+	TransferEncoding []string
+	Close            bool
+	Trailer          Header
+}
+
+func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err error) {
+	pc.t.setReqCanceler(req.Request, pc.cancelRequest)
+	pc.lk.Lock()
+	pc.numExpectedResponses++
+	headerFn := pc.mutateHeaderFunc
+	pc.lk.Unlock()
+
+	if headerFn != nil {
+		headerFn(req.extraHeaders())
+	}
+
+	// Ask for a compressed version if the caller didn't set their
+	// own value for Accept-Encoding. We only attempted to
+	// uncompress the gzip stream if we were the layer that
+	// requested it.
+	requestedGzip := false
+	if !pc.t.DisableCompression && req.Header.Get("Accept-Encoding") == "" && req.Method != "HEAD" {
+		// Request gzip only, not deflate. Deflate is ambiguous and
+		// not as universally supported anyway.
+		// See: http://www.gzip.org/zlib/zlib_faq.html#faq38
+		//
+		// Note that we don't request this for HEAD requests,
+		// due to a bug in nginx:
+		//   http://trac.nginx.org/nginx/ticket/358
+		//   http://golang.org/issue/5522
+		requestedGzip = true
+		req.extraHeaders().Set("Accept-Encoding", "gzip")
+	}
+
+	// Write the request concurrently with waiting for a response,
+	// in case the server decides to reply before reading our full
+	// request body.
+	writeErrCh := make(chan error, 1)
+	pc.writech <- writeRequest{req, writeErrCh}
+
+	resc := make(chan responseAndError, 1)
+	pc.reqch <- requestAndChan{req.Request, resc, requestedGzip}
+
+	var re responseAndError
+	var pconnDeadCh = pc.closech
+	var failTicker <-chan time.Time
+	var respHeaderTimer <-chan time.Time
+WaitResponse:
+	for {
+		select {
+		case err := <-writeErrCh:
+			if err != nil {
+				re = responseAndError{nil, err}
+				pc.close()
+				break WaitResponse
+			}
+			if d := pc.t.ResponseHeaderTimeout; d > 0 {
+				respHeaderTimer = time.After(d)
+			}
+		case <-pconnDeadCh:
+			// The persist connection is dead. This shouldn't
+			// usually happen (only with Connection: close responses
+			// with no response bodies), but if it does happen it
+			// means either a) the remote server hung up on us
+			// prematurely, or b) the readLoop sent us a response &
+			// closed its closech at roughly the same time, and we
+			// selected this case first, in which case a response
+			// might still be coming soon.
+			//
+			// We can't avoid the select race in b) by using a unbuffered
+			// resc channel instead, because then goroutines can
+			// leak if we exit due to other errors.
+			pconnDeadCh = nil                               // avoid spinning
+			failTicker = time.After(100 * time.Millisecond) // arbitrary time to wait for resc
+		case <-failTicker:
+			re = responseAndError{err: errClosed}
+			break WaitResponse
+		case <-respHeaderTimer:
+			pc.close()
+			re = responseAndError{err: errTimeout}
+			break WaitResponse
+		case re = <-resc:
+			break WaitResponse
+		}
+	}
+
+	pc.lk.Lock()
+	pc.numExpectedResponses--
+	pc.lk.Unlock()
+
+	if re.err != nil {
+		pc.t.setReqCanceler(req.Request, nil)
+	}
+	return re.res, re.err
+}
+
+// A writeRequest is sent by the readLoop's goroutine to the
+// writeLoop's goroutine to write a request while the read loop
+// concurrently waits on both the write response and the server's
+// reply.
+type writeRequest struct {
+	req *transportRequest
+	ch  chan<- error
+}
+// extraHeaders may be nil
+func (req *Request) write(w io.Writer, usingProxy bool, extraHeaders Header) error {
+	host := req.Host
+	if host == "" {
+		if req.URL == nil {
+			return errors.New("http: Request.Write on Request with no Host or URL set")
+		}
+		host = req.URL.Host
+	}
+
+	ruri := req.URL.RequestURI()
+	if usingProxy && req.URL.Scheme != "" && req.URL.Opaque == "" {
+		ruri = req.URL.Scheme + "://" + host + ruri
+	} else if req.Method == "CONNECT" && req.URL.Path == "" {
+		// CONNECT requests normally give just the host and port, not a full URL.
+		ruri = host
+	}
+	// TODO(bradfitz): escape at least newlines in ruri?
+
+	// Wrap the writer in a bufio Writer if it's not already buffered.
+	// Don't always call NewWriter, as that forces a bytes.Buffer
+	// and other small bufio Writers to have a minimum 4k buffer
+	// size.
+	var bw *bufio.Writer
+	if _, ok := w.(io.ByteWriter); !ok {
+		bw = bufio.NewWriter(w)
+		w = bw
+	}
+
+	fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", valueOrDefault(req.Method, "GET"), ruri)
+
+	// Header lines
+	fmt.Fprintf(w, "Host: %s\r\n", host)
+
+	// Use the defaultUserAgent unless the Header contains one, which
+	// may be blank to not send the header.
+	userAgent := defaultUserAgent
+	if req.Header != nil {
+		if ua := req.Header["User-Agent"]; len(ua) > 0 {
+			userAgent = ua[0]
+		}
+	}
+	if userAgent != "" {
+		fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+	}
+
+	// Process Body,ContentLength,Close,Trailer
+	tw, err := newTransferWriter(req)
+	if err != nil {
+		return err
+	}
+	err = tw.WriteHeader(w)
+	if err != nil {
+		return err
+	}
+
+	err = req.Header.WriteSubset(w, reqWriteExcludeHeader)
+	if err != nil {
+		return err
+	}
+
+	if extraHeaders != nil {
+		err = extraHeaders.Write(w)
+		if err != nil {
+			return err
+		}
+	}
+
+	io.WriteString(w, "\r\n")
+
+	// Write body and trailer
+	err = tw.WriteBody(w)
+	if err != nil {
+		return err
+	}
+
+	if bw != nil {
+		return bw.Flush()
+	}
+	return nil
+}
+```
+
+如下是流程图：
+
+![](/public/img/golang_client_flow/client_flow.png)
+
+执行流程：
+
+* 1、`roundTrip`向`pc.writech`管道发消息，`writeLoop`接收该消息，之后向tcp socket写http request，如下：
+
+```go
+// Write the request concurrently with waiting for a response,
+// in case the server decides to reply before reading our full
+// request body.
+writeErrCh := make(chan error, 1)
+pc.writech <- writeRequest{req, writeErrCh}
+
+// persistConn wraps a connection, usually a persistent one
+// (but may be used for non-keep-alive requests as well)
+type persistConn struct {
+	t        *Transport
+	cacheKey connectMethodKey
+	conn     net.Conn
+	tlsState *tls.ConnectionState
+	br       *bufio.Reader       // from conn
+	sawEOF   bool                // whether we've seen EOF from conn; owned by readLoop
+	bw       *bufio.Writer       // to conn
+	reqch    chan requestAndChan // written by roundTrip; read by readLoop
+	writech  chan writeRequest   // written by roundTrip; read by writeLoop
+	closech  chan struct{}       // closed when conn closed
+	isProxy  bool
+	// writeErrCh passes the request write error (usually nil)
+	// from the writeLoop goroutine to the readLoop which passes
+	// it off to the res.Body reader, which then uses it to decide
+	// whether or not a connection can be reused. Issue 7569.
+	writeErrCh chan error
+
+	lk                   sync.Mutex // guards following fields
+	numExpectedResponses int
+	closed               bool // whether conn has been closed
+	broken               bool // an error has happened on this connection; marked broken so it's not reused.
+	// mutateHeaderFunc is an optional func to modify extra
+	// headers on each outbound request before it's written. (the
+	// original Request given to RoundTrip is not modified)
+	mutateHeaderFunc func(Header)
+}
+
+func (t *Transport) dialConn(cm connectMethod) (*persistConn, error) {
+	conn, err := t.dial("tcp", cm.addr())
+	if err != nil {
+		if cm.proxyURL != nil {
+			err = fmt.Errorf("http: error connecting to proxy %s: %v", cm.proxyURL, err)
+		}
+		return nil, err
+	}
+
+	pa := cm.proxyAuth()
+
+	pconn := &persistConn{
+		t:          t,
+		cacheKey:   cm.key(),
+		conn:       conn,
+		reqch:      make(chan requestAndChan, 1),
+		writech:    make(chan writeRequest, 1),
+		closech:    make(chan struct{}),
+		writeErrCh: make(chan error, 1),
+	}
+
+	switch {
+	case cm.proxyURL == nil:
+		// Do nothing.
+	case cm.targetScheme == "http":
+		pconn.isProxy = true
+		if pa != "" {
+			pconn.mutateHeaderFunc = func(h Header) {
+				h.Set("Proxy-Authorization", pa)
+			}
+		}
+	case cm.targetScheme == "https":
+		connectReq := &Request{
+			Method: "CONNECT",
+			URL:    &url.URL{Opaque: cm.targetAddr},
+			Host:   cm.targetAddr,
+			Header: make(Header),
+		}
+		if pa != "" {
+			connectReq.Header.Set("Proxy-Authorization", pa)
+		}
+		connectReq.Write(conn)
+
+		// Read response.
+		// Okay to use and discard buffered reader here, because
+		// TLS server will not speak until spoken to.
+		br := bufio.NewReader(conn)
+		resp, err := ReadResponse(br, connectReq)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if resp.StatusCode != 200 {
+			f := strings.SplitN(resp.Status, " ", 2)
+			conn.Close()
+			return nil, errors.New(f[1])
+		}
+	}
+
+	if cm.targetScheme == "https" {
+		// Initiate TLS and check remote host name against certificate.
+		cfg := t.TLSClientConfig
+		if cfg == nil || cfg.ServerName == "" {
+			host := cm.tlsHost()
+			if cfg == nil {
+				cfg = &tls.Config{ServerName: host}
+			} else {
+				clone := *cfg // shallow clone
+				clone.ServerName = host
+				cfg = &clone
+			}
+		}
+		plainConn := conn
+		tlsConn := tls.Client(plainConn, cfg)
+		errc := make(chan error, 2)
+		var timer *time.Timer // for canceling TLS handshake
+		if d := t.TLSHandshakeTimeout; d != 0 {
+			timer = time.AfterFunc(d, func() {
+				errc <- tlsHandshakeTimeoutError{}
+			})
+		}
+		go func() {
+			err := tlsConn.Handshake()
+			if timer != nil {
+				timer.Stop()
+			}
+			errc <- err
+		}()
+		if err := <-errc; err != nil {
+			plainConn.Close()
+			return nil, err
+		}
+		if !cfg.InsecureSkipVerify {
+			if err := tlsConn.VerifyHostname(cfg.ServerName); err != nil {
+				plainConn.Close()
+				return nil, err
+			}
+		}
+		cs := tlsConn.ConnectionState()
+		pconn.tlsState = &cs
+		pconn.conn = tlsConn
+	}
+
+	pconn.br = bufio.NewReader(noteEOFReader{pconn.conn, &pconn.sawEOF})
+	pconn.bw = bufio.NewWriter(pconn.conn)
+	go pconn.readLoop()
+	go pconn.writeLoop()
+	return pconn, nil
+}
+
+func (pc *persistConn) writeLoop() {
+	for {
+		select {
+		case wr := <-pc.writech:
+			if pc.isBroken() {
+				wr.ch <- errors.New("http: can't write HTTP request on broken connection")
+				continue
+			}
+			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra)
+			if err == nil {
+				err = pc.bw.Flush()
+			}
+			if err != nil {
+				pc.markBroken()
+				wr.req.Request.closeBody()
+			}
+			pc.writeErrCh <- err // to the body reader, which might recycle us
+			wr.ch <- err         // to the roundTrip function
+		case <-pc.closech:
+			return
+		}
+	}
+}
+```
+
+* 2、`roundTrip`向`pc.reqch`发消息，`readLoop`接收该消息，并从tcp socket读取http response，如下:
+
+```go
+...
+resc := make(chan responseAndError, 1)
+pc.reqch <- requestAndChan{req.Request, resc, requestedGzip}
+...
+
+func (pc *persistConn)  readLoop() {
+	alive := true
+
+	for alive {
+		pb, err := pc.br.Peek(1)
+
+		pc.lk.Lock()
+		if pc.numExpectedResponses == 0 {
+			if !pc.closed {
+				pc.closeLocked()
+				if len(pb) > 0 {
+					log.Printf("Unsolicited response received on idle HTTP channel starting with %q; err=%v",
+						string(pb), err)
+				}
+			}
+			pc.lk.Unlock()
+			return
+		}
+		pc.lk.Unlock()
+
+		rc := <-pc.reqch
+
+		var resp *Response
+		if err == nil {
+			resp, err = ReadResponse(pc.br, rc.req)
+			if err == nil && resp.StatusCode == 100 {
+				// Skip any 100-continue for now.
+				// TODO(bradfitz): if rc.req had "Expect: 100-continue",
+				// actually block the request body write and signal the
+				// writeLoop now to begin sending it. (Issue 2184) For now we
+				// eat it, since we're never expecting one.
+				resp, err = ReadResponse(pc.br, rc.req)
+			}
+		}
+
+		if resp != nil {
+			resp.TLS = pc.tlsState
+		}
+
+		hasBody := resp != nil && rc.req.Method != "HEAD" && resp.ContentLength != 0
+
+		if err != nil {
+			pc.close()
+		} else {
+			if rc.addedGzip && hasBody && resp.Header.Get("Content-Encoding") == "gzip" {
+				resp.Header.Del("Content-Encoding")
+				resp.Header.Del("Content-Length")
+				resp.ContentLength = -1
+				resp.Body = &gzipReader{body: resp.Body}
+			}
+			resp.Body = &bodyEOFSignal{body: resp.Body}
+		}
+
+		if err != nil || resp.Close || rc.req.Close || resp.StatusCode <= 199 {
+			// Don't do keep-alive on error if either party requested a close
+			// or we get an unexpected informational (1xx) response.
+			// StatusCode 100 is already handled above.
+			alive = false
+		}
+
+		var waitForBodyRead chan bool
+		if hasBody {
+			waitForBodyRead = make(chan bool, 2)
+			resp.Body.(*bodyEOFSignal).earlyCloseFn = func() error {
+				// Sending false here sets alive to
+				// false and closes the connection
+				// below.
+				waitForBodyRead <- false
+				return nil
+			}
+			resp.Body.(*bodyEOFSignal).fn = func(err error) {
+				waitForBodyRead <- alive &&
+					err == nil &&
+					!pc.sawEOF &&
+					pc.wroteRequest() &&
+					pc.t.putIdleConn(pc)
+			}
+		}
+
+		if alive && !hasBody {
+			alive = !pc.sawEOF &&
+				pc.wroteRequest() &&
+				pc.t.putIdleConn(pc)
+		}
+
+		rc.ch <- responseAndError{resp, err}
+
+		// Wait for the just-returned response body to be fully consumed
+		// before we race and peek on the underlying bufio reader.
+		if waitForBodyRead != nil {
+			select {
+			case alive = <-waitForBodyRead:
+			case <-pc.closech:
+				alive = false
+			}
+		}
+
+		pc.t.setReqCanceler(rc.req, nil)
+
+		if !alive {
+			pc.close()
+		}
+	}
+}
+```
+
+* 3、`readLoop`读取http response后，将response写入到`rc.ch`管道中，roundTrip读取该消息，取消请求`pc.t.setReqCanceler(req.Request, nil)`,并返回http response，如下：
+
+```go
+...
+rc.ch <- responseAndError{resp, err}
+...
+
 func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err error) {
 	pc.t.setReqCanceler(req.Request, pc.cancelRequest)
 	pc.lk.Lock()
@@ -2324,10 +3036,6 @@ WaitResponse:
 	return re.res, re.err
 }
 ```
-
-如下是流程图：
-
-![](/public/img/golang_client_flow/client_flow.png)
 
 `conn, err := net.Dial(proto, addr)`分析：
 
