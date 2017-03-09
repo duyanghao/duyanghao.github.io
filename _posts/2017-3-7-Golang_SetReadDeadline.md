@@ -3785,51 +3785,22 @@ Docker tcp connection结构关系如下：
 `SetReadDeadline`分析：
 
 ```go
-func (c *TimeoutConn) Read(b []byte) (int, error) {
-	if c.timeout > 0 {
-		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
-		if err != nil {
-			return 0, err
-		}
-	}
-	return c.Conn.Read(b)
-}
+// Network file descriptor.
+type netFD struct {
+	// locking/lifetime of sysfd + serialize access to Read and Write methods
+	fdmu fdMutex
 
-// SetReadDeadline implements the Conn SetReadDeadline method.
-func (c *conn) SetReadDeadline(t time.Time) error {
-	if !c.ok() {
-		return syscall.EINVAL
-	}
-	return c.fd.setReadDeadline(t)
-}
+	// immutable until Close
+	sysfd       int
+	family      int
+	sotype      int
+	isConnected bool
+	net         string
+	laddr       Addr
+	raddr       Addr
 
-// file:/src/pkg/net/fd_plan9.go
-func (fd *netFD) setReadDeadline(t time.Time) error {
-	return syscall.EPLAN9
-}
-
-// file:/src/pkg/net/fd_poll_nacl.go
-func (fd *netFD) setReadDeadline(t time.Time) error {
-	return setDeadlineImpl(fd, t, 'r')
-}
-
-// file:/src/pkg/net/fd_poll_runtime.go
-func (fd *netFD) setReadDeadline(t time.Time) error {
-	return setDeadlineImpl(fd, t, 'r')
-}
-
-// file:/src/pkg/net/fd_poll_runtime.go
-func setDeadlineImpl(fd *netFD, t time.Time, mode int) error {
-	d := runtimeNano() + int64(t.Sub(time.Now()))
-	if t.IsZero() {
-		d = 0
-	}
-	if err := fd.incref(); err != nil {
-		return err
-	}
-	runtime_pollSetDeadline(fd.pd.runtimeCtx, d, mode)
-	fd.decref()
-	return nil
+	// wait server
+	pd pollDesc
 }
 
 struct PollDesc
@@ -3853,6 +3824,57 @@ struct PollDesc
 	int64	wd;	// write deadline
 	void*	user;	// user settable cookie
 };
+
+// A net.Conn that sets a deadline for every Read or Write operation
+type TimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+type conn struct {
+	fd *netFD
+}
+
+// TCPConn is an implementation of the Conn interface for TCP network
+// connections.
+type TCPConn struct {
+	conn
+}
+func (c *TimeoutConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+		if err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(b)
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+func (c *conn) SetReadDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	return c.fd.setReadDeadline(t)
+}
+
+// file:/src/pkg/net/fd_poll_runtime.go
+func (fd *netFD) setReadDeadline(t time.Time) error {
+	return setDeadlineImpl(fd, t, 'r')
+}
+
+// file:/src/pkg/net/fd_poll_runtime.go
+func setDeadlineImpl(fd *netFD, t time.Time, mode int) error {
+	d := runtimeNano() + int64(t.Sub(time.Now()))
+	if t.IsZero() {
+		d = 0
+	}
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	runtime_pollSetDeadline(fd.pd.runtimeCtx, d, mode)
+	fd.decref()
+	return nil
+}
 
 func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {
 	G *rg, *wg;
