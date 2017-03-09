@@ -4176,6 +4176,288 @@ runtime·netpollopen(uintptr fd, PollDesc *pd)
 
 也即创建epoll，初始化`pd pollDesc`结构，并将`network file descriptor`添加到epoll中
 
+`sysmon main goroutine`会定期检查epoll事件，并将READY的G加入到全局队列中，如下：
+
+```go
+//src/pkg/runtime/proc.c
+// The main goroutine.
+// Note: C frames in general are not copyable during stack growth, for two reasons:
+//   1) We don't know where in a frame to find pointers to other stack locations.
+//   2) There's no guarantee that globals or heap values do not point into the frame.
+//
+// The C frame for runtime.main is copyable, because:
+//   1) There are no pointers to other stack locations in the frame
+//      (d.fn points at a global, d.link is nil, d.argp is -1).
+//   2) The only pointer into this frame is from the defer chain,
+//      which is explicitly handled during stack copying.
+void
+runtime·main(void)
+{
+	Defer d;
+	
+	// Max stack size is 1 GB on 64-bit, 250 MB on 32-bit.
+	// Using decimal instead of binary GB and MB because
+	// they look nicer in the stack overflow failure message.
+	if(sizeof(void*) == 8)
+		runtime·maxstacksize = 1000000000;
+	else
+		runtime·maxstacksize = 250000000;
+
+	newm(sysmon, nil);
+
+	// Lock the main goroutine onto this, the main OS thread,
+	// during initialization.  Most programs won't care, but a few
+	// do require certain calls to be made by the main thread.
+	// Those can arrange for main.main to run in the main thread
+	// by calling runtime.LockOSThread during initialization
+	// to preserve the lock.
+	runtime·lockOSThread();
+	
+	// Defer unlock so that runtime.Goexit during init does the unlock too.
+	d.fn = &initDone;
+	d.siz = 0;
+	d.link = g->defer;
+	d.argp = NoArgs;
+	d.special = true;
+	g->defer = &d;
+
+	if(m != &runtime·m0)
+		runtime·throw("runtime·main not on m0");
+	runtime·newproc1(&scavenger, nil, 0, 0, runtime·main);
+	main·init();
+
+	if(g->defer != &d || d.fn != &initDone)
+		runtime·throw("runtime: bad defer entry after init");
+	g->defer = d.link;
+	runtime·unlockOSThread();
+
+	main·main();
+	if(raceenabled)
+		runtime·racefini();
+
+	// Make racy client program work: if panicking on
+	// another goroutine at the same time as main returns,
+	// let the other goroutine finish printing the panic trace.
+	// Once it does, it will exit. See issue 3934.
+	if(runtime·panicking)
+		runtime·park(nil, nil, "panicwait");
+
+	runtime·exit(0);
+	for(;;)
+		*(int32*)runtime·main = 0;
+}
+
+static void
+sysmon(void)
+{
+	uint32 idle, delay;
+	int64 now, lastpoll, lasttrace;
+	G *gp;
+
+	lasttrace = 0;
+	idle = 0;  // how many cycles in succession we had not wokeup somebody
+	delay = 0;
+	for(;;) {
+		if(idle == 0)  // start with 20us sleep...
+			delay = 20;
+		else if(idle > 50)  // start doubling the sleep after 1ms...
+			delay *= 2;
+		if(delay > 10*1000)  // up to 10ms
+			delay = 10*1000;
+		runtime·usleep(delay);
+		if(runtime·debug.schedtrace <= 0 &&
+			(runtime·sched.gcwaiting || runtime·atomicload(&runtime·sched.npidle) == runtime·gomaxprocs)) {  // TODO: fast atomic
+			runtime·lock(&runtime·sched);
+			if(runtime·atomicload(&runtime·sched.gcwaiting) || runtime·atomicload(&runtime·sched.npidle) == runtime·gomaxprocs) {
+				runtime·atomicstore(&runtime·sched.sysmonwait, 1);
+				runtime·unlock(&runtime·sched);
+				runtime·notesleep(&runtime·sched.sysmonnote);
+				runtime·noteclear(&runtime·sched.sysmonnote);
+				idle = 0;
+				delay = 20;
+			} else
+				runtime·unlock(&runtime·sched);
+		}
+		// poll network if not polled for more than 10ms
+		lastpoll = runtime·atomicload64(&runtime·sched.lastpoll);
+		now = runtime·nanotime();
+		if(lastpoll != 0 && lastpoll + 10*1000*1000 < now) {
+			runtime·cas64(&runtime·sched.lastpoll, lastpoll, now);
+			gp = runtime·netpoll(false);  // non-blocking
+			if(gp) {
+				// Need to decrement number of idle locked M's
+				// (pretending that one more is running) before injectglist.
+				// Otherwise it can lead to the following situation:
+				// injectglist grabs all P's but before it starts M's to run the P's,
+				// another M returns from syscall, finishes running its G,
+				// observes that there is no work to do and no other running M's
+				// and reports deadlock.
+				incidlelocked(-1);
+				injectglist(gp); //Put gp on the global runnable queue
+				incidlelocked(1);
+			}
+		}
+		// retake P's blocked in syscalls
+		// and preempt long running G's
+		if(retake(now))
+			idle = 0;
+		else
+			idle++;
+
+		if(runtime·debug.schedtrace > 0 && lasttrace + runtime·debug.schedtrace*1000000ll <= now) {
+			lasttrace = now;
+			runtime·schedtrace(runtime·debug.scheddetail);
+		}
+	}
+}
+
+static int32 epfd = -1;  // epoll descriptor
+
+void
+runtime·netpollinit(void)
+{
+	epfd = runtime·epollcreate1(EPOLL_CLOEXEC);
+	if(epfd >= 0)
+		return;
+	epfd = runtime·epollcreate(1024);
+	if(epfd >= 0) {
+		runtime·closeonexec(epfd);
+		return;
+	}
+	runtime·printf("netpollinit: failed to create descriptor (%d)\n", -epfd);
+	runtime·throw("netpollinit: failed to create descriptor");
+}
+
+// polls for ready network connections
+// returns list of goroutines that become runnable
+G*
+runtime·netpoll(bool block)
+{
+	static int32 lasterr;
+	EpollEvent events[128], *ev;
+	int32 n, i, waitms, mode;
+	G *gp;
+
+	if(epfd == -1)
+		return nil;
+	waitms = -1;
+	if(!block)
+		waitms = 0;
+retry:
+	n = runtime·epollwait(epfd, events, nelem(events), waitms);
+	if(n < 0) {
+		if(n != -EINTR && n != lasterr) {
+			lasterr = n;
+			runtime·printf("runtime: epollwait on fd %d failed with %d\n", epfd, -n);
+		}
+		goto retry;
+	}
+	gp = nil;
+	for(i = 0; i < n; i++) {
+		ev = &events[i];
+		if(ev->events == 0)
+			continue;
+		mode = 0;
+		if(ev->events & (EPOLLIN|EPOLLRDHUP|EPOLLHUP|EPOLLERR))
+			mode += 'r';
+		if(ev->events & (EPOLLOUT|EPOLLHUP|EPOLLERR))
+			mode += 'w';
+		if(mode)
+			runtime·netpollready(&gp, (void*)ev->data, mode);
+	}
+	if(block && gp == nil)
+		goto retry;
+	return gp;
+}
+
+// make pd ready, newly runnable goroutines (if any) are enqueued info gpp list
+void
+runtime·netpollready(G **gpp, PollDesc *pd, int32 mode)
+{
+	G *rg, *wg;
+
+	rg = wg = nil;
+	if(mode == 'r' || mode == 'r'+'w')
+		rg = netpollunblock(pd, 'r', true);
+	if(mode == 'w' || mode == 'r'+'w')
+		wg = netpollunblock(pd, 'w', true);
+	if(rg) {
+		rg->schedlink = *gpp;
+		*gpp = rg;
+	}
+	if(wg) {
+		wg->schedlink = *gpp;
+		*gpp = wg;
+	}
+}
+
+static G*
+netpollunblock(PollDesc *pd, int32 mode, bool ioready)
+{
+	G **gpp, *old, *new;
+
+	gpp = &pd->rg;
+	if(mode == 'w')
+		gpp = &pd->wg;
+
+	for(;;) {
+		old = *gpp;
+		if(old == READY)
+			return nil;
+		if(old == nil && !ioready) {
+			// Only set READY for ioready. runtime_pollWait
+			// will check for timeout/cancel before waiting.
+			return nil;
+		}
+		new = nil;
+		if(ioready)
+			new = READY;
+		if(runtime·casp(gpp, old, new))
+			break;
+	}
+	if(old > WAIT)
+		return old;  // must be G*
+	return nil;
+}
+
+// Injects the list of runnable G's into the scheduler.
+// Can run concurrently with GC.
+static void
+injectglist(G *glist)
+{
+	int32 n;
+	G *gp;
+
+	if(glist == nil)
+		return;
+	runtime·lock(&runtime·sched);
+	for(n = 0; glist; n++) {
+		gp = glist;
+		glist = gp->schedlink;
+		gp->status = Grunnable;
+		globrunqput(gp);
+	}
+	runtime·unlock(&runtime·sched);
+
+	for(; n && runtime·sched.npidle; n--)
+		startm(nil, false);
+}
+
+// Put gp on the global runnable queue.
+// Sched must be locked.
+static void
+globrunqput(G *gp)
+{
+	gp->schedlink = nil;
+	if(runtime·sched.runqtail)
+		runtime·sched.runqtail->schedlink = gp;
+	else
+		runtime·sched.runqhead = gp;
+	runtime·sched.runqtail = gp;
+	runtime·sched.runqsize++;
+}
+```
+
 `SetReadDeadline`分析：
 
 ```go
@@ -4356,6 +4638,7 @@ deadlineimpl(int64 now, Eface arg, bool read, bool write)
 	if(wg)
 		runtime·ready(wg);
 }
+
 
 static G*
 netpollunblock(PollDesc *pd, int32 mode, bool ioready)
