@@ -3782,7 +3782,7 @@ Docker tcp connection结构关系如下：
 
 ![](/public/img/golang_client_flow/conn_struct.png)
 
-`socket`创建tcp socket，设置docket属性，创建netFD，并执行connect动作，最终返回一个可正常使用的tcp socket（正常完成tcp三次握手），如下：
+`socket`创建tcp socket，设置socket属性，创建netFD，并执行connect动作，最终返回一个可正常使用的tcp socket（正常完成tcp三次握手），如下：
 
 ```go
 // socket returns a network file descriptor that is ready for
