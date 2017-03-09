@@ -4458,7 +4458,11 @@ globrunqput(G *gp)
 }
 ```
 
-`SetReadDeadline`分析：
+`SetReadDeadline`用于实现Go的网络IO超时原语，它会给netFD创建对应的IO定时器，当定时器超时，如果对应的goroutine处于等待的状态(默认情况下deadline为0，不会创建定时器)，runtime会调用runtime·ready唤醒对应进行Read/Write的goroutine，并产生`i/o timeout` error
+
+Go并没有使用`epoll_wait`实现IO的超时，而是通过`Set[Read|Write]Deadline(time.Time)`对每个netFD设置超时
+
+当`SetDeadline`设置的定时器超时后，在超时处理函数中，会删除该定时器；而且，每次收到或者发送数据时，也不会reset该定时器。所以，每次Read/Write操作之前，都需要调用该函数：
 
 ```go
 // A net.Conn that sets a deadline for every Read or Write operation
@@ -4733,6 +4737,15 @@ func (fd *netFD) Read(p []byte) (n int, err error) {
 	return
 }
 
+// Add a reference to this fd and lock for reading.
+// Returns an error if the fd cannot be used.
+func (fd *netFD) readLock() error {
+	if !fd.fdmu.RWLock(true) {
+		return errClosing
+	}
+	return nil
+}
+
 func (pd *pollDesc) PrepareRead() error {
 	return pd.Prepare('r')
 }
@@ -4798,6 +4811,68 @@ func Read(fd int, p []byte) (n int, err error) {
 		}
 	}
 	return
+}
+
+func (pd *pollDesc) WaitRead() error {
+	return pd.Wait('r')
+}
+
+func (pd *pollDesc) Wait(mode int) error {
+	res := runtime_pollWait(pd.runtimeCtx, mode)
+	return convertErr(res)
+}
+
+func runtime_pollWait(pd *PollDesc, mode int) (err int) {
+	err = checkerr(pd, mode);
+	if(err == 0) {
+		// As for now only Solaris uses level-triggered IO.
+		if(Solaris)
+			runtime·netpollarm(pd, mode);
+		while(!netpollblock(pd, mode, false)) {
+			err = checkerr(pd, mode);
+			if(err != 0)
+				break;
+			// Can happen if timeout has fired and unblocked us,
+			// but before we had a chance to run, timeout has been reset.
+			// Pretend it has not happened and retry.
+		}
+	}
+}
+
+// returns true if IO is ready, or false if timedout or closed
+// waitio - wait only for completed IO, ignore errors
+static bool
+netpollblock(PollDesc *pd, int32 mode, bool waitio)
+{
+	G **gpp, *old;
+
+	gpp = &pd->rg;
+	if(mode == 'w')
+		gpp = &pd->wg;
+
+	// set the gpp semaphore to WAIT
+	for(;;) {
+		old = *gpp;
+		if(old == READY) {
+			*gpp = nil;
+			return true;
+		}
+		if(old != nil)
+			runtime·throw("netpollblock: double wait");
+		if(runtime·casp(gpp, nil, WAIT))
+			break;
+	}
+
+	// need to recheck error states after setting gpp to WAIT
+	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
+	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
+	if(waitio || checkerr(pd, mode) == 0)
+		runtime·park((bool(*)(G*, void*))blockcommit, gpp, "IO wait");
+	// be careful to not lose concurrent READY notification
+	old = runtime·xchgp(gpp, nil);
+	if(old > WAIT)
+		runtime·throw("netpollblock: corrupted state");
+	return old == READY;
 }
 
 func chkReadErr(n int, err error, fd *netFD) error {
