@@ -4639,7 +4639,6 @@ deadlineimpl(int64 now, Eface arg, bool read, bool write)
 		runtime·ready(wg);
 }
 
-
 static G*
 netpollunblock(PollDesc *pd, int32 mode, bool ioready)
 {
@@ -4668,4 +4667,277 @@ netpollunblock(PollDesc *pd, int32 mode, bool ioready)
 		return old;  // must be G*
 	return nil;
 }
+
+// Mark gp ready to run.
+void
+runtime·ready(G *gp)
+{
+	// Mark runnable.
+	m->locks++;  // disable preemption because it can be holding p in a local var
+	if(gp->status != Gwaiting) {
+		runtime·printf("goroutine %D has status %d\n", gp->goid, gp->status);
+		runtime·throw("bad g->status in ready");
+	}
+	gp->status = Grunnable;
+	runqput(m->p, gp);
+	if(runtime·atomicload(&runtime·sched.npidle) != 0 && runtime·atomicload(&runtime·sched.nmspinning) == 0)  // TODO: fast atomic
+		wakep();
+	m->locks--;
+	if(m->locks == 0 && g->preempt)  // restore the preemption request in case we've cleared it in newstack
+		g->stackguard0 = StackPreempt;
+}
+
+// Tries to add one more P to execute G's.
+// Called when a G is made runnable (newproc, ready).
+static void
+wakep(void)
+{
+	// be conservative about spinning threads
+	if(!runtime·cas(&runtime·sched.nmspinning, 0, 1))
+		return;
+	startm(nil, true);
+}
+
+// Read implements the Conn Read method.
+func (c *conn) Read(b []byte) (int, error) {
+	if !c.ok() {
+		return 0, syscall.EINVAL
+	}
+	return c.fd.Read(b)
+}
+
+func (fd *netFD) Read(p []byte) (n int, err error) {
+	if err := fd.readLock(); err != nil {
+		return 0, err
+	}
+	defer fd.readUnlock()
+	if err := fd.pd.PrepareRead(); err != nil {
+		return 0, &OpError{"read", fd.net, fd.raddr, err}
+	}
+	for {
+		n, err = syscall.Read(int(fd.sysfd), p)
+		if err != nil {
+			n = 0
+			if err == syscall.EAGAIN {
+				if err = fd.pd.WaitRead(); err == nil {
+					continue
+				}
+			}
+		}
+		err = chkReadErr(n, err, fd)
+		break
+	}
+	if err != nil && err != io.EOF {
+		err = &OpError{"read", fd.net, fd.raddr, err}
+	}
+	return
+}
+
+func (pd *pollDesc) PrepareRead() error {
+	return pd.Prepare('r')
+}
+
+func (pd *pollDesc) Prepare(mode int) error {
+	res := runtime_pollReset(pd.runtimeCtx, mode)
+	return convertErr(res)
+}
+
+func runtime_pollReset(pd *PollDesc, mode int) (err int) {
+	err = checkerr(pd, mode);
+	if(err)
+		goto ret;
+	if(mode == 'r')
+		pd->rg = nil;
+	else if(mode == 'w')
+		pd->wg = nil;
+ret:
+}
+
+static intgo
+checkerr(PollDesc *pd, int32 mode)
+{
+	if(pd->closing)
+		return 1;  // errClosing
+	if((mode == 'r' && pd->rd < 0) || (mode == 'w' && pd->wd < 0))
+		return 2;  // errTimeout
+	return 0;
+}
+
+// Various errors contained in OpError.
+var (
+	// For connection setup and write operations.
+	errMissingAddress = errors.New("missing address")
+
+	// For both read and write operations.
+	errTimeout          error = &timeoutError{}
+	errClosing                = errors.New("use of closed network connection")
+	ErrWriteToConnected       = errors.New("use of WriteTo with pre-connected connection")
+)
+
+func convertErr(res int) error {
+	switch res {
+	case 0:
+		return nil
+	case 1:
+		return errClosing
+	case 2:
+		return errTimeout
+	}
+	println("unreachable: ", res)
+	panic("unreachable")
+}
+
+func Read(fd int, p []byte) (n int, err error) {
+	n, err = read(fd, p)
+	if raceenabled {
+		if n > 0 {
+			raceWriteRange(unsafe.Pointer(&p[0]), n)
+		}
+		if err == nil {
+			raceAcquire(unsafe.Pointer(&ioSync))
+		}
+	}
+	return
+}
+
+func chkReadErr(n int, err error, fd *netFD) error {
+	if n == 0 && err == nil && fd.sotype != syscall.SOCK_DGRAM && fd.sotype != syscall.SOCK_RAW {
+		return io.EOF
+	}
+	return err
+}
+
+// OpError is the error type usually returned by functions in the net
+// package. It describes the operation, network type, and address of
+// an error.
+type OpError struct {
+	// Op is the operation which caused the error, such as
+	// "read" or "write".
+	Op string
+
+	// Net is the network type on which this error occurred,
+	// such as "tcp" or "udp6".
+	Net string
+
+	// Addr is the network address on which this error occurred.
+	Addr Addr
+
+	// Err is the error that occurred during the operation.
+	Err error
+}
+
+func (e *OpError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	s := e.Op
+	if e.Net != "" {
+		s += " " + e.Net
+	}
+	if e.Addr != nil {
+		s += " " + e.Addr.String()
+	}
+	s += ": " + e.Err.Error()
+	return s
+}
+
+func (e *timeoutError) Error() string   { return "i/o timeout" }
 ```
+
+测试代码：
+
+server端代码：
+
+```go
+package main
+
+import(
+    "time"
+    "fmt"
+    "net/http"
+)
+
+type Server struct {
+}
+
+var server Server
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    fmt.Println(r.RequestURI)
+    time.Sleep(time.Minute*3)
+    fmt.Println("here")
+    http.Error(w, fmt.Sprintf("Done for request!"), http.StatusOK)
+}
+
+func main() {
+    // http server
+    err := http.ListenAndServe("xxx", &server)
+    fmt.Printf("err:%s", err)
+}
+```
+
+client端代码：
+
+```go
+package main
+
+import (
+        "net"
+        "time"
+        "net/http"
+        "fmt"
+)
+
+func NewTimeoutConn(conn net.Conn, timeout time.Duration) net.Conn {
+        return &TimeoutConn{conn, timeout}
+}
+
+// A net.Conn that sets a deadline for every Read or Write operation
+type TimeoutConn struct {
+        net.Conn
+        timeout time.Duration
+}
+
+func (c *TimeoutConn) Read(b []byte) (int, error) {
+        if c.timeout > 0 {
+                err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+                if err != nil {
+                        return 0, err
+                }
+        }
+        return c.Conn.Read(b)
+}
+
+func main(){
+        req, err := http.NewRequest("GET", "http://xxx/example.com", nil)
+        httpTransport := &http.Transport{
+                DisableKeepAlives: true,
+                Proxy:             http.ProxyFromEnvironment,
+        }
+        httpTransport.Dial = func(proto string, addr string) (net.Conn, error) {
+                conn, err := net.Dial(proto, addr)
+                if err != nil {
+                        return nil, err
+                }
+                conn = NewTimeoutConn(conn, 1*time.Minute)
+                return conn, nil
+        }
+        client := &http.Client{
+                Transport: httpTransport,
+        }
+        res, err := client.Do(req)
+        if err != nil {
+                fmt.Printf("error:%s", err)
+                return
+        }
+        defer res.Body.Close()
+        fmt.Printf("res:%s", res)
+}
+```
+
+运行结果：
+
+```bash
+error:Get http://xxx/example.com: read tcp xxx:5002->xxx:5403: i/o timeout
+```
+
