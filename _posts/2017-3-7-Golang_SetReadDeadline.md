@@ -3782,7 +3782,228 @@ Docker tcp connection结构关系如下：
 
 ![](/public/img/golang_client_flow/conn_struct.png)
 
-`SetReadDeadline`分析：
+`socket`创建tcp socket，设置docket属性，创建netFD，并执行connect动作，最终返回一个可正常使用的tcp socket（正常完成tcp三次握手），如下：
+
+```go
+// socket returns a network file descriptor that is ready for
+// asynchronous I/O using the network poller.
+func socket(net string, family, sotype, proto int, ipv6only bool, laddr, raddr sockaddr, deadline time.Time, toAddr func(syscall.Sockaddr) Addr) (fd *netFD, err error) {
+	s, err := sysSocket(family, sotype, proto)
+	if err != nil {
+		return nil, err
+	}
+	if err = setDefaultSockopts(s, family, sotype, ipv6only); err != nil {
+		closesocket(s)
+		return nil, err
+	}
+	if fd, err = newFD(s, family, sotype, net); err != nil {
+		closesocket(s)
+		return nil, err
+	}
+
+	// This function makes a network file descriptor for the
+	// following applications:
+	//
+	// - An endpoint holder that opens a passive stream
+	//   connenction, known as a stream listener
+	//
+	// - An endpoint holder that opens a destination-unspecific
+	//   datagram connection, known as a datagram listener
+	//
+	// - An endpoint holder that opens an active stream or a
+	//   destination-specific datagram connection, known as a
+	//   dialer
+	//
+	// - An endpoint holder that opens the other connection, such
+	//   as talking to the protocol stack inside the kernel
+	//
+	// For stream and datagram listeners, they will only require
+	// named sockets, so we can assume that it's just a request
+	// from stream or datagram listeners when laddr is not nil but
+	// raddr is nil. Otherwise we assume it's just for dialers or
+	// the other connection holders.
+
+	if laddr != nil && raddr == nil {
+		switch sotype {
+		case syscall.SOCK_STREAM, syscall.SOCK_SEQPACKET:
+			if err := fd.listenStream(laddr, listenerBacklog, toAddr); err != nil {
+				fd.Close()
+				return nil, err
+			}
+			return fd, nil
+		case syscall.SOCK_DGRAM:
+			if err := fd.listenDatagram(laddr, toAddr); err != nil {
+				fd.Close()
+				return nil, err
+			}
+			return fd, nil
+		}
+	}
+	if err := fd.dial(laddr, raddr, deadline, toAddr); err != nil {
+		fd.Close()
+		return nil, err
+	}
+	return fd, nil
+}
+```
+
+`sysSocket`创建tcp socket，如下：
+
+```go
+// Wrapper around the socket system call that marks the returned file
+// descriptor as nonblocking and close-on-exec.
+func sysSocket(family, sotype, proto int) (int, error) {
+	s, err := syscall.Socket(family, sotype|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, proto)
+	// On Linux the SOCK_NONBLOCK and SOCK_CLOEXEC flags were
+	// introduced in 2.6.27 kernel and on FreeBSD both flags were
+	// introduced in 10 kernel. If we get an EINVAL error on Linux
+	// or EPROTONOSUPPORT error on FreeBSD, fall back to using
+	// socket without them.
+	if err == nil || (err != syscall.EPROTONOSUPPORT && err != syscall.EINVAL) {
+		return s, err
+	}
+
+	// See ../syscall/exec_unix.go for description of ForkLock.
+	syscall.ForkLock.RLock()
+	s, err = syscall.Socket(family, sotype, proto)
+	if err == nil {
+		syscall.CloseOnExec(s)
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return -1, err
+	}
+	if err = syscall.SetNonblock(s, true); err != nil {
+		syscall.Close(s)
+		return -1, err
+	}
+	return s, nil
+}
+```
+
+`setDefaultSockopts`设置socket属性，如下：
+
+```go
+func setDefaultSockopts(s, family, sotype int, ipv6only bool) error {
+	if family == syscall.AF_INET6 && sotype != syscall.SOCK_RAW {
+		// Allow both IP versions even if the OS default
+		// is otherwise.  Note that some operating systems
+		// never admit this option.
+		syscall.SetsockoptInt(s, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, boolint(ipv6only))
+	}
+	// Allow broadcast.
+	return os.NewSyscallError("setsockopt", syscall.SetsockoptInt(s, syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1))
+}
+```
+
+`newFD`根据`network file descriptor`创建netFD，如下:
+
+```go
+func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
+	return &netFD{sysfd: sysfd, family: family, sotype: sotype, net: net}, nil
+}
+```
+
+`dial`执行connect动作，如下：
+
+```go
+func (fd *netFD) dial(laddr, raddr sockaddr, deadline time.Time, toAddr func(syscall.Sockaddr) Addr) error {
+	var err error
+	var lsa syscall.Sockaddr
+	if laddr != nil {
+		if lsa, err = laddr.sockaddr(fd.family); err != nil {
+			return err
+		} else if lsa != nil {
+			if err := syscall.Bind(fd.sysfd, lsa); err != nil {
+				return os.NewSyscallError("bind", err)
+			}
+		}
+	}
+	var rsa syscall.Sockaddr
+	if raddr != nil {
+		if rsa, err = raddr.sockaddr(fd.family); err != nil {
+			return err
+		}
+		if err := fd.connect(lsa, rsa, deadline); err != nil {
+			return err
+		}
+		fd.isConnected = true
+	} else {
+		if err := fd.init(); err != nil {
+			return err
+		}
+	}
+	lsa, _ = syscall.Getsockname(fd.sysfd)
+	if rsa, _ = syscall.Getpeername(fd.sysfd); rsa != nil {
+		fd.setAddr(toAddr(lsa), toAddr(rsa))
+	} else {
+		fd.setAddr(toAddr(lsa), raddr)
+	}
+	return nil
+}
+
+func (fd *netFD) connect(la, ra syscall.Sockaddr, deadline time.Time) error {
+	// Do not need to call fd.writeLock here,
+	// because fd is not yet accessible to user,
+	// so no concurrent operations are possible.
+	switch err := syscall.Connect(fd.sysfd, ra); err {
+	case syscall.EINPROGRESS, syscall.EALREADY, syscall.EINTR:
+	case nil, syscall.EISCONN:
+		if !deadline.IsZero() && deadline.Before(time.Now()) {
+			return errTimeout
+		}
+		if err := fd.init(); err != nil {
+			return err
+		}
+		return nil
+	case syscall.EINVAL:
+		// On Solaris we can see EINVAL if the socket has
+		// already been accepted and closed by the server.
+		// Treat this as a successful connection--writes to
+		// the socket will see EOF.  For details and a test
+		// case in C see http://golang.org/issue/6828.
+		if runtime.GOOS == "solaris" {
+			return nil
+		}
+		fallthrough
+	default:
+		return err
+	}
+	if err := fd.init(); err != nil {
+		return err
+	}
+	if !deadline.IsZero() {
+		fd.setWriteDeadline(deadline)
+		defer fd.setWriteDeadline(noDeadline)
+	}
+	for {
+		// Performing multiple connect system calls on a
+		// non-blocking socket under Unix variants does not
+		// necessarily result in earlier errors being
+		// returned. Instead, once runtime-integrated network
+		// poller tells us that the socket is ready, get the
+		// SO_ERROR socket option to see if the connection
+		// succeeded or failed. See issue 7474 for further
+		// details.
+		if err := fd.pd.WaitWrite(); err != nil {
+			return err
+		}
+		nerr, err := syscall.GetsockoptInt(fd.sysfd, syscall.SOL_SOCKET, syscall.SO_ERROR)
+		if err != nil {
+			return err
+		}
+		switch err := syscall.Errno(nerr); err {
+		case syscall.EINPROGRESS, syscall.EALREADY, syscall.EINTR:
+		case syscall.Errno(0), syscall.EISCONN:
+			return nil
+		default:
+			return err
+		}
+	}
+}
+```
+
+在`connect`执行成功后，执行`fd.init()`初始化操作，将`pd pollDesc`结构初始化，如下：
 
 ```go
 // Network file descriptor.
@@ -3801,6 +4022,120 @@ type netFD struct {
 
 	// wait server
 	pd pollDesc
+}
+
+func (fd *netFD) init() error {
+	if err := fd.pd.Init(fd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (pd *pollDesc) Init(fd *netFD) error {
+	serverInit.Do(runtime_pollServerInit)
+	ctx, errno := runtime_pollOpen(uintptr(fd.sysfd))
+	if errno != 0 {
+		return syscall.Errno(errno)
+	}
+	pd.runtimeCtx = ctx
+	return nil
+}
+
+// Once is an object that will perform exactly one action.
+type Once struct {
+	m    Mutex
+	done uint32
+}
+
+// Do calls the function f if and only if Do is being called for the
+// first time for this instance of Once.  In other words, given
+// 	var once Once
+// if once.Do(f) is called multiple times, only the first call will invoke f,
+// even if f has a different value in each invocation.  A new instance of
+// Once is required for each function to execute.
+//
+// Do is intended for initialization that must be run exactly once.  Since f
+// is niladic, it may be necessary to use a function literal to capture the
+// arguments to a function to be invoked by Do:
+// 	config.once.Do(func() { config.init(filename) })
+//
+// Because no call to Do returns until the one call to f returns, if f causes
+// Do to be called, it will deadlock.
+//
+func (o *Once) Do(f func()) {
+	if atomic.LoadUint32(&o.done) == 1 {
+		return
+	}
+	// Slow-path.
+	o.m.Lock()
+	defer o.m.Unlock()
+	if o.done == 0 {
+		f()
+		atomic.StoreUint32(&o.done, 1)
+	}
+}
+
+func runtime_pollServerInit() {//只执行一次
+	runtime·netpollinit();
+}
+
+void
+runtime·netpollinit(void) //创建epoll
+{
+	epfd = runtime·epollcreate1(EPOLL_CLOEXEC);
+	if(epfd >= 0)
+		return;
+	epfd = runtime·epollcreate(1024);
+	if(epfd >= 0) {
+		runtime·closeonexec(epfd);
+		return;
+	}
+	runtime·printf("netpollinit: failed to create descriptor (%d)\n", -epfd);
+	runtime·throw("netpollinit: failed to create descriptor");
+}
+
+func runtime_pollOpen(fd uintptr) (pd *PollDesc, errno int) {
+	pd = allocPollDesc();
+	runtime·lock(pd);
+	if(pd->wg != nil && pd->wg != READY)
+		runtime·throw("runtime_pollOpen: blocked write on free descriptor");
+	if(pd->rg != nil && pd->rg != READY)
+		runtime·throw("runtime_pollOpen: blocked read on free descriptor");
+	pd->fd = fd;
+	pd->closing = false;
+	pd->seq++;
+	pd->rg = nil;
+	pd->rd = 0;
+	pd->wg = nil;
+	pd->wd = 0;
+	runtime·unlock(pd);
+
+	errno = runtime·netpollopen(fd, pd);
+}
+
+static PollDesc*
+allocPollDesc(void)
+{
+	PollDesc *pd;
+	uint32 i, n;
+
+	runtime·lock(&pollcache);
+	if(pollcache.first == nil) {
+		n = PollBlockSize/sizeof(*pd);
+		if(n == 0)
+			n = 1;
+		// Must be in non-GC memory because can be referenced
+		// only from epoll/kqueue internals.
+		pd = runtime·persistentalloc(n*sizeof(*pd), 0, &mstats.other_sys);
+		for(i = 0; i < n; i++) {
+			pd[i].link = pollcache.first;
+			pollcache.first = &pd[i];
+		}
+	}
+	pd = pollcache.first;
+	pollcache.first = pd->link;
+	runtime·unlock(&pollcache);
+	return pd;
 }
 
 struct PollDesc
@@ -3825,6 +4160,25 @@ struct PollDesc
 	void*	user;	// user settable cookie
 };
 
+//src/pkg/runtime/netpoll_epoll.c
+int32
+runtime·netpollopen(uintptr fd, PollDesc *pd)
+{
+	EpollEvent ev;
+	int32 res;
+
+	ev.events = EPOLLIN|EPOLLOUT|EPOLLRDHUP|EPOLLET;
+	ev.data = (uint64)pd;
+	res = runtime·epollctl(epfd, EPOLL_CTL_ADD, (int32)fd, &ev); //添加到epoll中
+	return -res;
+}
+```
+
+也即创建epoll，初始化`pd pollDesc`结构，并将`network file descriptor`添加到epoll中
+
+`SetReadDeadline`分析：
+
+```go
 // A net.Conn that sets a deadline for every Read or Write operation
 type TimeoutConn struct {
 	net.Conn
@@ -3940,6 +4294,23 @@ func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {
 		runtime·ready(wg);
 }
 
+// Package time knows the layout of this structure.
+// If this struct changes, adjust ../time/sleep.go:/runtimeTimer.
+// For GOOS=nacl, package syscall knows the layout of this structure.
+// If this struct changes, adjust ../syscall/net_nacl.go:/runtimeTimer.
+struct	Timer
+{
+	int32	i;	// heap index
+
+	// Timer wakes up at when, and then at when+period, ... (period > 0 only)
+	// each time calling f(now, arg) in the timer goroutine, so f must be
+	// a well-behaved function and not block.
+	int64	when;
+	int64	period;
+	FuncVal	*fv;
+	Eface	arg;
+};
+
 static void
 readDeadline(int64 now, Eface arg)
 {
@@ -4014,5 +4385,4 @@ netpollunblock(PollDesc *pd, int32 mode, bool ioready)
 		return old;  // must be G*
 	return nil;
 }
-
 ```
