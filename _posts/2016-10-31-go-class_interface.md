@@ -18,7 +18,6 @@ excerpt: Go语言类概述
 Go将封装简化为2层（不光是类，对Go语言中任何标识符都生效）：
 
 * 包范围内：通过标识符首字母小写，变量和方法都只能在包内可见
-
 * 可导出的：通过标识符首字母大写，变量和方法在包以外也可见
 
 例子：
@@ -298,13 +297,9 @@ Should I define methods on values or pointers?
 那么什么时候用值方法，什么时候用指针方法呢？主要考虑以下一些因素：
 
 * **如果方法要修改`receiver`，那么必须是指针方法**
-
 * **指针方法是常用的，而值方法是不常用的**
-
 * **考虑到效率，指针方法更好（传递 值类型vs指针类型）**
-
 * **一致性，要么全部都是指针方法，要么全部都是值方法**
-
 * **对于一些基本类型、切片、或者小的结构体，使用value receiver效率会更高一些**
 
 总结：除非必须使用指针方法，一般情况下使用值方法效率更高，也更清晰
@@ -312,11 +307,7 @@ Should I define methods on values or pointers?
 ## 参考
 
 * [interface](http://hustcat.github.io/interface/)
-
 * [Effective Go](https://golang.org/doc/effective_go.html)
-
 * [Interface types](https://golang.org/ref/spec#Interface_types)
-
 * [Go by Example: Interfaces](https://gobyexample.com/interfaces)
-
 * [Cannot define new methods on non-local type](http://stackoverflow.com/questions/28800672/how-to-add-new-methods-to-an-existing-type-in-go)
