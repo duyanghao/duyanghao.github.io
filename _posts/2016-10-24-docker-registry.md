@@ -420,7 +420,6 @@ master进程会进入无限循环，利用信号与worker进程通信，从而�
 >>This resource bound assumption is why we require a buffering proxy in front of a default configuration Gunicorn. If you exposed synchronous workers to the internet, a DOS attack would be trivial by creating a load that trickles data to the servers. For the curious, Hey is an example of this type of load.
 
 >>Some examples of behavior requiring asynchronous workers:
-
 * Applications making long blocking calls (Ie, external web services)
 * Serving requests directly to the internet
 * Streaming requests and responses
@@ -727,7 +726,7 @@ def handle(self, listener, client, addr):
         util.close(client)
 ```
 
-该函数负责请求的处理，三个参数分别表示：监听套接字、客户端Socket，客户端地址
+该函数负责请求的处理，三个参数分别表示：监听套接字、连接套接字，客户端地址
 
 处理逻辑为：首先分析请求内容，然后交给handle_request函数处理
 
