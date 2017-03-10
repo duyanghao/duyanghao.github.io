@@ -859,6 +859,13 @@ func (graph *Graph) Register(img *image.Image, jsonData []byte, layerData archiv
 	graph.idIndex.Add(img.ID)
 	return nil
 }
+func WriteStatus(requestedTag string, out io.Writer, sf *utils.StreamFormatter, layers_downloaded bool) {
+	if layers_downloaded {
+		out.Write(sf.FormatStatus("", "Status: Downloaded newer image for %s", requestedTag))
+	} else {
+		out.Write(sf.FormatStatus("", "Status: Image is up to date for %s", requestedTag))
+	}
+}
 ```
 
 如下是docker pull流程图：
@@ -4458,7 +4465,7 @@ globrunqput(G *gp)
 }
 ```
 
-`SetReadDeadline`用于实现Go的网络IO超时原语，它会给netFD创建对应的IO定时器，当定时器超时，如果对应的goroutine处于等待的状态(默认情况下deadline为0，不会创建定时器)，runtime会调用runtime·ready唤醒对应进行Read/Write的goroutine，并产生`i/o timeout` error
+`SetReadDeadline`用于实现Go的网络IO超时原语，它会给netFD创建对应的IO定时器，当定时器超时(从`netFD.setReadDeadline`开始计时，也即从`TimeoutConn.Read`开始计时)，如果对应的goroutine处于等待的状态(默认情况下deadline为0，不会创建定时器)，runtime会调用runtime·ready唤醒对应进行Read/Write的goroutine，并产生`i/o timeout` error
 
 Go并没有使用`epoll_wait`实现IO的超时，而是通过`Set[Read|Write]Deadline(time.Time)`对每个netFD设置超时
 
@@ -4867,12 +4874,101 @@ netpollblock(PollDesc *pd, int32 mode, bool waitio)
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
 	if(waitio || checkerr(pd, mode) == 0)
-		runtime·park((bool(*)(G*, void*))blockcommit, gpp, "IO wait");
+		runtime·park((bool(*)(G*, void*))blockcommit, gpp, "IO wait"); //Puts the current goroutine into a waiting state
 	// be careful to not lose concurrent READY notification
 	old = runtime·xchgp(gpp, nil);
 	if(old > WAIT)
 		runtime·throw("netpollblock: corrupted state");
 	return old == READY;
+}
+
+// Puts the current goroutine into a waiting state and calls unlockf.
+// If unlockf returns false, the goroutine is resumed.
+void
+runtime·park(bool(*unlockf)(G*, void*), void *lock, int8 *reason)
+{
+	if(g->status != Grunning)
+		runtime·throw("bad g status");
+	m->waitlock = lock;
+	m->waitunlockf = unlockf;
+	g->waitreason = reason;
+	runtime·mcall(park0);
+}
+
+// runtime·park continuation on g0.
+static void
+park0(G *gp)
+{
+	bool ok;
+
+	gp->status = Gwaiting;
+	gp->m = nil;
+	m->curg = nil;
+	if(m->waitunlockf) {
+		ok = m->waitunlockf(gp, m->waitlock);
+		m->waitunlockf = nil;
+		m->waitlock = nil;
+		if(!ok) {
+			gp->status = Grunnable;
+			execute(gp);  // Schedule it back, never returns.
+		}
+	}
+	if(m->lockedg) {
+		stoplockedm();
+		execute(gp);  // Never returns.
+	}
+	schedule();
+}
+
+// One round of scheduler: find a runnable goroutine and execute it.
+// Never returns.
+static void
+schedule(void)
+{
+	G *gp;
+	uint32 tick;
+
+	if(m->locks)
+		runtime·throw("schedule: holding locks");
+
+top:
+	if(runtime·sched.gcwaiting) {
+		gcstopm();
+		goto top;
+	}
+
+	gp = nil;
+	// Check the global runnable queue once in a while to ensure fairness.
+	// Otherwise two goroutines can completely occupy the local runqueue
+	// by constantly respawning each other.
+	tick = m->p->schedtick;
+	// This is a fancy way to say tick%61==0,
+	// it uses 2 MUL instructions instead of a single DIV and so is faster on modern processors.
+	if(tick - (((uint64)tick*0x4325c53fu)>>36)*61 == 0 && runtime·sched.runqsize > 0) {
+		runtime·lock(&runtime·sched);
+		gp = globrunqget(m->p, 1);
+		runtime·unlock(&runtime·sched);
+		if(gp)
+			resetspinning();
+	}
+	if(gp == nil) {
+		gp = runqget(m->p);
+		if(gp && m->spinning)
+			runtime·throw("schedule: spinning with local work");
+	}
+	if(gp == nil) {
+		gp = findrunnable();  // blocks until work is available
+		resetspinning();
+	}
+
+	if(gp->lockedm) {
+		// Hands off own p to the locked m,
+		// then blocks waiting for a new p.
+		startlockedm(gp);
+		goto top;
+	}
+
+	execute(gp);
 }
 
 func chkReadErr(n int, err error, fd *netFD) error {
@@ -5016,3 +5112,8 @@ func main(){
 error:Get http://xxx/example.com: read tcp xxx:5002->xxx:5403: i/o timeout
 ```
 
+## Refs
+
+* [hustcat.github.io](http://hustcat.github.io/go-netpoller-and-timeout/)
+* [The Go netpoller](https://morsmachine.dk/netpoller)
+* [The complete guide to Go net/http timeouts](https://blog.cloudflare.com/the-complete-guide-to-golang-net-http-timeouts/)
