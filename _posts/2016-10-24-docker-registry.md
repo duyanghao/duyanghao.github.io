@@ -872,6 +872,12 @@ self.log.access(resp, req, environ, request_time)
 
 这样整个Docker-registry的框架就大致讲完了，以后会陆续补充，欢迎大家讨论！
 
+## 补充
+
+如下是docker-registry原理流程图：
+
+![](/public/img/docker-registry/2016-10-24-docker-registry/gunicorn_analy.png)
+
 ## Refs
 
 * [Gunicorn](http://docs.gunicorn.org/en/latest/design.html)
