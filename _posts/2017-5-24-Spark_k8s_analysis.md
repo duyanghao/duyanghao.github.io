@@ -1156,4 +1156,21 @@ private[spark] object Client extends Logging {
   }
 ```
 
+* step3:Waiting for application to finish...
 
+```scala
+// wait if configured to do so
+if (waitForAppCompletion) {
+  logInfo(s"Waiting for application $kubernetesAppId to finish...")
+  driverPodCompletedLatch.await()
+  logInfo(s"Application $kubernetesAppId finished.")
+} else {
+  logInfo(s"Application $kubernetesAppId successfully launched.")
+}
+```
+
+## Refs
+
+* [Cluster Manager Types](http://spark.apache.org/docs/latest/cluster-overview.html#cluster-manager-types)
+* [Support native submission of spark jobs to a kubernetes cluster](https://issues.apache.org/jira/browse/SPARK-18278)
+* [Running Spark on Kubernetes](https://github.com/apache-spark-on-k8s/spark/blob/branch-2.1-kubernetes/docs/running-on-kubernetes.md)
