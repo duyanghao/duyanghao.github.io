@@ -13,9 +13,9 @@ spark原生支持三种集群调度器：Standalone、Apache Mesos、Hadoop YARN
 
 >>The system currently supports three cluster managers:
 
-* (Standalone)[http://spark.apache.org/docs/latest/spark-standalone.html] – a simple cluster manager included with Spark that makes it easy to set up a cluster.
-* (Apache Mesos)[http://spark.apache.org/docs/latest/running-on-mesos.html] – a general cluster manager that can also run Hadoop MapReduce and service applications.
-* (Hadoop YARN)[http://spark.apache.org/docs/latest/running-on-yarn.html] – the resource manager in Hadoop 2.
+* [Standalone](http://spark.apache.org/docs/latest/spark-standalone.html) – a simple cluster manager included with Spark that makes it easy to set up a cluster.
+* [Apache Mesos](http://spark.apache.org/docs/latest/running-on-mesos.html) – a general cluster manager that can also run Hadoop MapReduce and service applications.
+* [Hadoop YARN](http://spark.apache.org/docs/latest/running-on-yarn.html) – the resource manager in Hadoop 2.
 
 参考[这里](http://spark.apache.org/docs/latest/cluster-overview.html#cluster-manager-types)
 
@@ -25,7 +25,7 @@ spark原生支持三种集群调度器：Standalone、Apache Mesos、Hadoop YARN
 
 本文主要目地是分析spark_k8s源码，如下：
 
-```scalastyle
+```scala
   /**
    * Submit the application using the provided parameters.
    *
@@ -96,7 +96,7 @@ spark原生支持三种集群调度器：Standalone、Apache Mesos、Hadoop YARN
 
 执行`prepareSubmitEnvironment`准备运行环境：
 
-```scalastyle
+```scala
 /**
    * Prepare the environment for submitting an application.
    * This returns a 4-tuple:
@@ -554,7 +554,7 @@ spark原生支持三种集群调度器：Standalone、Apache Mesos、Hadoop YARN
 
 执行`doRunMain` running the child main class based on the cluster manager and the deploy mode:
 
-```scalastyle
+```scala
 def doRunMain(): Unit = {
     if (args.proxyUser != null) {
     val proxyUser = UserGroupInformation.createProxyUser(args.proxyUser,
@@ -587,7 +587,7 @@ def doRunMain(): Unit = {
 
 执行`runMain`,Run the main method of the child class using the provided launch environment.
 
-```scalastyle
+```scala
   /**
    * Run the main method of the child class using the provided launch environment.
    *
@@ -690,7 +690,7 @@ def doRunMain(): Unit = {
 
 执行Client的main函数如下：
 
-```scalastyle
+```scala
 private[spark] object Client extends Logging {
 
   private[spark] val SECURE_RANDOM = new SecureRandom()
@@ -729,7 +729,7 @@ private[spark] object Client extends Logging {
 
 执行Client的run()函数，如下：
 
-```scalastyle
+```scala
   def run(): Unit = {
     logInfo(s"Starting application $kubernetesAppId in Kubernetes...")
     val submitterLocalFiles = KubernetesFileUtils.getOnlySubmitterLocalFiles(sparkFiles)
@@ -876,7 +876,7 @@ private[spark] object Client extends Logging {
 
 * step1:产生`driverPod`和`driverService`，如下：
 
-```scalastyle
+```scala
           val (driverPod, driverService) = launchDriverKubernetesComponents(
             kubernetesClient,
             driverServiceManager,
@@ -1046,7 +1046,7 @@ private[spark] object Client extends Logging {
 
 * step2:Submitting local resources to driver pod for application
 
-```scalastyle
+```scala
   private def submitApplicationToDriverServer(
       kubernetesClient: KubernetesClient,
       driverServiceManager: DriverServiceManager,
