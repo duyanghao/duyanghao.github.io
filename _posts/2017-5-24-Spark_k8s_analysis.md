@@ -1353,7 +1353,7 @@ private[spark] object KubernetesSparkRestServer {
 
 创建`KubernetesSparkRestServer`对象，并执行start函数：
 
-```
+```scala
   override protected lazy val contextToServlet = Map[String, RestServlet](
     s"$baseContext/create/*" -> submitRequestServlet,
     s"$baseContext/ping/*" -> pingServlet)
@@ -1365,7 +1365,7 @@ private[spark] object KubernetesSparkRestServer {
 
 绑定处理对象：`create`对应`KubernetesSubmitRequestServlet`对象：
 
-```
+```scala
   private class KubernetesSubmitRequestServlet extends SubmitRequestServlet {
 
     private val waitForProcessCompleteExecutor = ThreadUtils
