@@ -214,3 +214,18 @@ follow these steps to install vscode-go after install VSCode.
 * find(file scope) -> ctrl+f
 * find(project scope) -> ctrl+shift+f
 * 选中按TAB右移，按SHIFT+TAB左移
+
+# scala - [Intellij IDEA](https://www.jetbrains.com/idea/download/)
+
+### open scala project(eg:[spark](https://github.com/apache/spark))
+
+File->Open…(directly open project directory)
+
+![](/public/img/Tool_summary/11.png)
+
+### keyboard shortcuts
+
+* find(file scope) -> ctrl+f
+* find(project scope) -> ctrl+shift+f
+* jump to definition -> ctrl+b
+
