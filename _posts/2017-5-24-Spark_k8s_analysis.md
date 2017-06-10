@@ -25,7 +25,38 @@ spark原生支持三种集群调度器：Standalone、Apache Mesos、Hadoop YARN
 
 本文主要目地是分析spark_k8s源码，如下：
 
+运行命令如下：
+
+```
+bin/spark-submit \
+  --deploy-mode cluster \
+  --class org.apache.spark.examples.SparkPi \
+  --master k8s://https://<k8s-apiserver-host>:<k8s-apiserver-port> \
+  --kubernetes-namespace default \
+  --conf spark.executor.instances=5 \
+  --conf spark.app.name=spark-pi \
+  --conf spark.kubernetes.driver.docker.image=kubespark/spark-driver:v2.1.0-kubernetes-0.1.0-alpha.2 \
+  --conf spark.kubernetes.executor.docker.image=kubespark/spark-executor:v2.1.0-kubernetes-0.1.0-alpha.2 \
+  local:///opt/spark/examples/jars/spark_examples_2.11-2.2.0.jar
+```
+
+### spark k8s submit源码分析
+
 ```scala
+  def main(args: Array[String]): Unit = {
+    val appArgs = new SparkSubmitArguments(args)
+    if (appArgs.verbose) {
+      // scalastyle:off println
+      printStream.println(appArgs)
+      // scalastyle:on println
+    }
+    appArgs.action match {
+      case SparkSubmitAction.SUBMIT => submit(appArgs)
+      case SparkSubmitAction.KILL => kill(appArgs)
+      case SparkSubmitAction.REQUEST_STATUS => requestStatus(appArgs)
+    }
+  }
+
   /**
    * Submit the application using the provided parameters.
    *
@@ -1168,6 +1199,369 @@ if (waitForAppCompletion) {
   logInfo(s"Application $kubernetesAppId successfully launched.")
 }
 ```
+
+### spark k8s driver源码分析
+
+driver dockerfile如下：
+
+```
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+FROM openjdk:8-alpine
+
+# If this docker file is being used in the context of building your images from a Spark distribution, the docker build
+# command should be invoked from the top level directory of the Spark distribution. E.g.:
+# docker build -t spark-driver:latest -f dockerfiles/driver/Dockerfile .
+
+RUN apk upgrade --update
+RUN apk add --update bash
+RUN mkdir -p /opt/spark
+RUN touch /opt/spark/RELEASE
+
+ADD jars /opt/spark/jars
+ADD examples /opt/spark/examples
+ADD bin /opt/spark/bin
+ADD sbin /opt/spark/sbin
+ADD conf /opt/spark/conf
+
+ENV SPARK_HOME /opt/spark
+
+WORKDIR /opt/spark
+
+CMD SSL_ARGS="" && \
+    if ! [ -z ${SPARK_SUBMISSION_USE_SSL+x} ]; then SSL_ARGS="$SSL_ARGS --use-ssl $SPARK_SUBMISSION_USE_SSL"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_KEYSTORE_FILE+x} ]; then SSL_ARGS="$SSL_ARGS --keystore-file $SPARK_SUBMISSION_KEYSTORE_FILE"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_KEYSTORE_TYPE+x} ]; then SSL_ARGS="$SSL_ARGS --keystore-type $SPARK_SUBMISSION_KEYSTORE_TYPE"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_KEYSTORE_PASSWORD_FILE+x} ]; then SSL_ARGS="$SSL_ARGS --keystore-password-file $SPARK_SUBMISSION_KEYSTORE_PASSWORD_FILE"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_KEYSTORE_KEY_PASSWORD_FILE+x} ]; then SSL_ARGS="$SSL_ARGS --keystore-key-password-file $SPARK_SUBMISSION_KEYSTORE_KEY_PASSWORD_FILE"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_KEY_PEM_FILE+x} ]; then SSL_ARGS="$SSL_ARGS --key-pem-file $SPARK_SUBMISSION_KEY_PEM_FILE"; fi && \
+    if ! [ -z ${SPARK_SUBMISSION_CERT_PEM_FILE+x} ]; then SSL_ARGS="$SSL_ARGS --cert-pem-file $SPARK_SUBMISSION_CERT_PEM_FILE"; fi && \
+    exec bin/spark-class org.apache.spark.deploy.rest.kubernetes.KubernetesSparkRestServer \
+      --hostname $HOSTNAME \
+      --port $SPARK_SUBMISSION_SERVER_PORT \
+      --secret-file $SPARK_SUBMISSION_SECRET_LOCATION \
+      ${SSL_ARGS}
+```
+
+由driver的dockerfile可知，driver的启动函数为：`KubernetesSparkRestServer`的main函数，如下：
+
+```scala
+private[spark] object KubernetesSparkRestServer {
+  private val barrier = new CountDownLatch(1)
+  private val SECURE_RANDOM = new SecureRandom()
+
+  def main(args: Array[String]): Unit = {
+    val parsedArguments = KubernetesSparkRestServerArguments.fromArgsArray(args)
+    val secretFile = new File(parsedArguments.secretFile.get)
+    require(secretFile.isFile, "Secret file specified by --secret-file is not a file, or" +
+      " does not exist.")
+    val sslOptions = if (parsedArguments.useSsl) {
+      validateSslOptions(parsedArguments)
+      val keyPassword = parsedArguments
+        .keyPasswordFile
+        .map(new File(_))
+        .map(Files.toString(_, Charsets.UTF_8))
+        // If key password isn't set but we're using PEM files, generate a password
+        .orElse(parsedArguments.keyPemFile.map(_ => randomPassword()))
+      val keyStorePassword = parsedArguments
+        .keyStorePasswordFile
+        .map(new File(_))
+        .map(Files.toString(_, Charsets.UTF_8))
+        // If keystore password isn't set but we're using PEM files, generate a password
+        .orElse(parsedArguments.keyPemFile.map(_ => randomPassword()))
+      val resolvedKeyStore = parsedArguments.keyStoreFile.map(new File(_)).orElse(
+        parsedArguments.keyPemFile.map(keyPemFile => {
+          parsedArguments.certPemFile.map(certPemFile => {
+            PemsToKeyStoreConverter.convertPemsToTempKeyStoreFile(
+              new File(keyPemFile),
+              new File(certPemFile),
+              "provided-key",
+              keyStorePassword,
+              keyPassword,
+              parsedArguments.keyStoreType)
+          })
+        }).getOrElse(throw new SparkException("When providing PEM files to set up TLS for the" +
+          " submission server, both the key and the certificate must be specified.")))
+      new SSLOptions(
+        enabled = true,
+        keyStore = resolvedKeyStore,
+        keyStoreType = parsedArguments.keyStoreType,
+        keyStorePassword = keyStorePassword,
+        keyPassword = keyPassword)
+    } else {
+      new SSLOptions
+    }
+    val secretBytes = Files.toByteArray(secretFile)
+    val sparkConf = new SparkConf(true)
+    val exitCode = new AtomicInteger(0)
+    val server = new KubernetesSparkRestServer(
+      parsedArguments.host.get,
+      parsedArguments.port.get,
+      sparkConf,
+      secretBytes,
+      barrier,
+      exitCode,
+      sslOptions)
+    server.start()
+    ShutdownHookManager.addShutdownHook(() => {
+      try {
+        server.stop()
+      } finally {
+        barrier.countDown()
+      }
+    })
+    barrier.await()
+    System.exit(exitCode.get())
+  }
+
+  private def validateSslOptions(parsedArguments: KubernetesSparkRestServerArguments): Unit = {
+    parsedArguments.keyStoreFile.foreach { _ =>
+      require(parsedArguments.keyPemFile.orElse(parsedArguments.certPemFile).isEmpty,
+        "Cannot provide both key/cert PEM files and a keyStore file; select one or the other" +
+          " for configuring SSL.")
+    }
+    parsedArguments.keyPemFile.foreach { _ =>
+      require(parsedArguments.certPemFile.isDefined,
+        "When providing the key PEM file, the certificate PEM file must also be provided.")
+    }
+    parsedArguments.certPemFile.foreach { _ =>
+      require(parsedArguments.keyPemFile.isDefined,
+        "When providing the certificate PEM file, the key PEM file must also be provided.")
+    }
+  }
+
+  private def randomPassword(): String = {
+    RandomStringUtils.random(1024, 0, Integer.MAX_VALUE, false, false, null, SECURE_RANDOM)
+  }
+}
+```
+
+创建`KubernetesSparkRestServer`对象，并执行start函数：
+
+```
+  override protected lazy val contextToServlet = Map[String, RestServlet](
+    s"$baseContext/create/*" -> submitRequestServlet,
+    s"$baseContext/ping/*" -> pingServlet)
+
+  private val pingServlet = new PingServlet
+  override protected val submitRequestServlet: SubmitRequestServlet
+    = new KubernetesSubmitRequestServlet
+```
+
+绑定处理对象：`create`对应`KubernetesSubmitRequestServlet`对象：
+
+```
+  private class KubernetesSubmitRequestServlet extends SubmitRequestServlet {
+
+    private val waitForProcessCompleteExecutor = ThreadUtils
+        .newDaemonSingleThreadExecutor("wait-for-spark-app-complete")
+    private var startedApplication = false
+
+    // TODO validating the secret should be done as part of a header of the request.
+    // Instead here we have to specify the secret in the body.
+    override protected def handleSubmit(
+        requestMessageJson: String,
+        requestMessage: SubmitRestProtocolMessage,
+        responseServlet: HttpServletResponse): SubmitRestProtocolResponse = {
+      SERVLET_LOCK.synchronized {
+        if (startedApplication) {
+          throw new IllegalStateException("Application has already been submitted.")
+        } else {
+          requestMessage match {
+            case KubernetesCreateSubmissionRequest(
+                appResource,
+                mainClass,
+                appArgs,
+                sparkProperties,
+                secret,
+                driverPodKubernetesCredentials,
+                uploadedJars,
+                uploadedFiles) =>
+              val decodedSecret = Base64.decodeBase64(secret)
+              if (!expectedApplicationSecret.sameElements(decodedSecret)) {
+                responseServlet.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
+                handleError("Unauthorized to submit application.")
+              } else {
+                val tempDir = Utils.createTempDir()
+                val resolvedAppResource = resolveAppResource(appResource, tempDir)
+                val writtenJars = writeUploadedJars(uploadedJars, tempDir)
+                val writtenFiles = writeUploadedFiles(uploadedFiles)
+                val resolvedSparkProperties = new mutable.HashMap[String, String]
+                resolvedSparkProperties ++= sparkProperties
+                val originalJars = sparkProperties.get("spark.jars")
+                  .map(_.split(","))
+                  .getOrElse(Array.empty)
+
+                // The driver at this point has handed us the value of spark.jars verbatim as
+                // specified in spark-submit. At this point, remove all jars that were local
+                // to the submitting user's disk, and replace them with the paths that were
+                // written to disk above.
+                val onlyContainerLocalOrRemoteJars = KubernetesFileUtils
+                  .getNonSubmitterLocalFiles(originalJars)
+                val resolvedJars = (writtenJars ++
+                  onlyContainerLocalOrRemoteJars ++
+                  Array(resolvedAppResource.sparkJarPath)).toSet
+                if (resolvedJars.nonEmpty) {
+                  resolvedSparkProperties("spark.jars") = resolvedJars.mkString(",")
+                } else {
+                  resolvedSparkProperties.remove("spark.jars")
+                }
+
+                // Determining the driver classpath is similar. It's the combination of:
+                // - Jars written from uploads
+                // - Jars in (spark.jars + mainAppResource) that has a "local" prefix
+                // - spark.driver.extraClasspath
+                // - Spark core jars from the installation
+                val sparkCoreJars = new File(sparkHome, "jars").listFiles().map(_.getAbsolutePath)
+                val driverExtraClasspath = sparkProperties
+                  .get("spark.driver.extraClassPath")
+                  .map(_.split(","))
+                  .getOrElse(Array.empty[String])
+                val onlyContainerLocalJars = KubernetesFileUtils
+                  .getOnlyContainerLocalFiles(originalJars)
+                val driverClasspath = driverExtraClasspath ++
+                  Seq(resolvedAppResource.localPath) ++
+                  writtenJars ++
+                  onlyContainerLocalJars ++
+                  sparkCoreJars
+
+                // Resolve spark.files similarly to spark.jars.
+                val originalFiles = sparkProperties.get("spark.files")
+                  .map(_.split(","))
+                  .getOrElse(Array.empty[String])
+                val onlyContainerLocalOrRemoteFiles = KubernetesFileUtils
+                  .getNonSubmitterLocalFiles(originalFiles)
+                val resolvedFiles = writtenFiles ++ onlyContainerLocalOrRemoteFiles
+                if (resolvedFiles.nonEmpty) {
+                  resolvedSparkProperties("spark.files") = resolvedFiles.mkString(",")
+                } else {
+                  resolvedSparkProperties.remove("spark.files")
+                }
+                resolvedSparkProperties ++= writeKubernetesCredentials(
+                  driverPodKubernetesCredentials, tempDir)
+
+                val command = new ArrayBuffer[String]
+                command += javaExecutable
+                command += "-cp"
+                command += s"${driverClasspath.mkString(":")}"
+                for (prop <- resolvedSparkProperties) {
+                  command += s"-D${prop._1}=${prop._2}"
+                }
+                val driverMemory = resolvedSparkProperties.getOrElse("spark.driver.memory", "1g")
+                command += s"-Xms$driverMemory"
+                command += s"-Xmx$driverMemory"
+                val extraJavaOpts = resolvedSparkProperties.get("spark.driver.extraJavaOptions")
+                  .map(Utils.splitCommandString)
+                  .getOrElse(Seq.empty)
+                command ++= extraJavaOpts
+                command += mainClass
+                command ++= appArgs
+                val pb = new ProcessBuilder(command: _*).inheritIO()
+                val process = pb.start()
+                ShutdownHookManager.addShutdownHook(() => {
+                  logInfo("Received stop command, shutting down the running Spark application...")
+                  process.destroy()
+                  shutdownLock.countDown()
+                })
+                waitForProcessCompleteExecutor.submit(new Runnable {
+                  override def run(): Unit = {
+                    // set the REST service's exit code to the exit code of the driver subprocess
+                    exitCode.set(process.waitFor)
+                    SERVLET_LOCK.synchronized {
+                      logInfo("Spark application complete. Shutting down submission server...")
+                      KubernetesSparkRestServer.this.stop
+                      shutdownLock.countDown()
+                    }
+                  }
+                })
+                startedApplication = true
+                val response = new CreateSubmissionResponse
+                response.success = true
+                response.submissionId = null
+                response.message = "success"
+                response.serverSparkVersion = sparkVersion
+                response
+              }
+            case unexpected =>
+              responseServlet.setStatus(HttpServletResponse.SC_BAD_REQUEST)
+              handleError(s"Received message of unexpected type ${unexpected.messageType}.")
+          }
+        }
+      }
+    }
+```
+
+启动spark应用：
+
+```scala
+val pb = new ProcessBuilder(command: _*).inheritIO()
+val process = pb.start()
+```
+
+### 应用
+
+```scala
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// scalastyle:off println
+package org.apache.spark.examples
+
+import scala.math.random
+
+import org.apache.spark.sql.SparkSession
+
+/** Computes an approximation to pi */
+object SparkPi {
+  def main(args: Array[String]) {
+    val spark = SparkSession
+      .builder
+      .appName("Spark Pi")
+      .getOrCreate()
+    val slices = if (args.length > 0) args(0).toInt else 2
+    val n = math.min(100000L * slices, Int.MaxValue).toInt // avoid overflow
+    val count = spark.sparkContext.parallelize(1 until n, slices).map { i =>
+      val x = random * 2 - 1
+      val y = random * 2 - 1
+      if (x*x + y*y < 1) 1 else 0
+    }.reduce(_ + _)
+    println("Pi is roughly " + 4.0 * count / (n - 1))
+    spark.stop()
+  }
+}
+// scalastyle:on println
+```
+
+### spark k8s executor源码分析
 
 ## Refs
 
