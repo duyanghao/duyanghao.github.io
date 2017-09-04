@@ -9,6 +9,14 @@ excerpt: kubernetes网络架构……
 
 ## Kubernetes网络
 
+在 kubernetes 集群中，网络是非常基础也非常重要的一部分。对于大规模的节点和容器来说，要保证网络的连通性、网络转发的高效，同时能做的 ip 和 port 自动化分配和管理，并让用户用直观简单的方式来访问需要的应用，这是需要复杂且细致设计的
+
+kubernetes 在这方面下了很大的功夫，它通过 service、dns、ingress 等概念，解决了服务发现、负载均衡的问题，也大大简化了用户的使用和配置
+
+这篇文章就讲解如何配置 kubernetes 的网络。一直以来，kubernetes 并没有专门的网络模块负责网络配置，它需要用户在主机上已经配置好网络。kubernetes 对网络的要求是：容器之间（包括同一台主机上的容器，和不同主机的容器）可以互相通信，容器和集群中所有的节点也能直接通信
+
+至于具体的网络方案，用户可以自己选择，目前使用比较多的是 flannel，因为它比较简单，而且刚好满足 kubernetes 对网络的要求。以后 kubernetes 网络的发展方向是希望通过插件的方式来集成不同的网络方案， CNI 就是这一努力的结果，flannel 也能够通过 CNI 插件的形式使用
+
 Kubernetes采用扁平化的网络模型，每个Pod都有一个全局唯一的IP(IP-per-pod),Pod之间可以跨主机通信，相比于Docker原生的NAT方式来说，这样使得容器在网络层面更像虚拟机或者物理机，复杂度整体降低，更加容易实现服务发现，迁移，负载均衡等功能。为了实现这个目标，Kubernetes中需要解决4个问题：
 
 ### 容器间通信(Netowrk Container)
@@ -345,3 +353,4 @@ nodePort 类型的服务并不影响原来虚拟 IP 的访问方式，内部节�
 * [kubernetes 简介：service 和 kube-proxy 原理](http://cizixs.com/2017/03/30/kubernetes-introduction-service-and-kube-proxy)
 * [Kubernetes技术分析之网络](http://dockone.io/article/545)
 * [一篇文章带你了解Flannel](http://dockone.io/article/618)
+* [Network Plugins](https://kubernetes.io/docs/concepts/cluster-administration/network-plugins/)
