@@ -25,8 +25,7 @@ Pod是容器的集合，Pod包含的容器都运行在同一个Host上，并且�
 
 举例如下：
 
-```
-#web-pod.yaml
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
@@ -173,7 +172,7 @@ Pod本身是变化的，比如当Pod发生迁移，那么Pod的IP是变化的, �
 
 `iptables`的方式是利用了linux的`iptables`的`nat转发`进行实现。在本例中，创建了名为`mysql-service`的service:
 
-```
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -264,7 +263,7 @@ mysql-service后端代理了两个pod，ip分别是192.168.125.129和192.168.125
 
 `whoami-svc.yml`如下：
 
-```
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -285,7 +284,7 @@ spec:
 
 `whoami-rc.yml`如下：
 
-```
+```yaml
 apiVersion: v1
 kind: ReplicationController
 metadata:
