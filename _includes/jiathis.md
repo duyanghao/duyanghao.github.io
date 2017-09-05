@@ -1,9 +1,23 @@
 <!-- JiaThis Button BEGIN -->
+<div class="jiathis_share_slide jiathis_share_32x32" id="jiathis_share_slide">
+<div class="jiathis_share_slide_top" id="jiathis_share_title"></div>
+<div class="jiathis_share_slide_inner">
+<div class="jiathis_style_32x32">
+<a class="jiathis_button_qzone"></a>
+<a class="jiathis_button_tsina"></a>
+<a class="jiathis_button_tqq"></a>
+<a class="jiathis_button_weixin"></a>
+<a class="jiathis_button_renren"></a>
+<a href="http://www.jiathis.com/share" class="jiathis jiathis_txt jtico jtico_jiathis" target="_blank"></a>
 <script type="text/javascript">
-var jiathis_config = {data_track_clickback:'true'};
+var jiathis_config = {data_track_clickback:'true'
+	,slide:{
+		divid:'jiathis_main',
+		pos:'left'
+	}
+};
 </script>
-<script type="text/javascript" src="http://v3.jiathis.com/code/jiathis_r.js?move=0&amp;btn=r4.gif&amp;uid=2143227" charset="utf-8"></script>
+<script type="text/javascript" src="http://v3.jiathis.com/code/jia.js?uid=2143227" charset="utf-8"></script>	
+<script type="text/javascript" src="http://v3.jiathis.com/code/jiathis_slide.js" charset="utf-8"></script>
+</div></div></div>
 <!-- JiaThis Button END -->
-<!-- UJian Button BEGIN -->
-	<script type="text/javascript" src="http://v1.ujian.cc/code/ujian.js?type=slide"></script>
-<!-- UJian Button END -->
