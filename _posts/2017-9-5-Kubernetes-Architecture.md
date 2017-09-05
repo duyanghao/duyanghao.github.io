@@ -204,10 +204,117 @@ Looking at the names of the docker instances, it’s not hard to guess what each
 * The next 3 pod containers are so-call “pause” containers, which are used to setup the networking initially, before launching the real container
 * And finally the installer container we started to put this all together
 
+### Deploying new pod
+
+Now that we have a small Kubernetes setup on our host, we should get the command line tool to deploy our first pod and service.
+
+We will use the installer docker container to demonstrate the `kubectl` in action.
+
+Enter the installer container using
+
+```bash
+docker exec -it hyperkube-installer /bin/bash  
+```
+
+Export the K8S_VERSION variable again, while being inside the installer container
+
+```bash
+export K8S_VERSION=$(curl -sS https://storage.googleapis.com/kubernetes-release/release/stable.txt)  
+```
+
+The following command will download the correct version of `kubectl` and place it inside the `/usr/bin/kubectl`
+
+```bash
+curl -sSL "http://storage.googleapis.com/kubernetes-release/release/$K8S_VERSION/bin/linux/amd64/kubectl" > /usr/bin/kubectl  
+```
+
+Make it executable
+
+```bash
+chmod +x /usr/bin/kubectl  
+```
+
+Now you should be able to run a simple `kubectl version` command and get a similar output
+
+```bash
+kubectl version  
+Client Version: version.Info{Major:"1", Minor:"2", GitVersion:"v1.2.4", GitCommit:"3eed1e3be6848b877ff80a93da3785d9034d0a4f", GitTreeState:"clean"}  
+Server Version: version.Info{Major:"1", Minor:"2", GitVersion:"v1.2.4", GitCommit:"3eed1e3be6848b877ff80a93da3785d9034d0a4f", GitTreeState:"clean"}  
+```
+
+To list the nodes
+
+```bash
+kubectl get nodes  
+NAME STATUS AGE  
+127.0.0.1 Ready 1d  
+```
+
+And finally, to deploy a sample `nginx` as a pod
+
+```
+kubectl run nginx --image=nginx --port=80  
+```
+
+You can now exit the `hyperkube-installer` container we are in, using `CTRL+D`, and wait a bit for the `nginx` image to get downloaded. If you run the `docker ps` command on the host again, you will see 2 more containers appearing
+
+```bash
+docker ps  
+CONTAINER ID        IMAGE                                             COMMAND                  CREATED              STATUS              PORTS               NAMES  
+b99ae41911d9        nginx                                             "nginx -g 'daemon off"   31 minutes ago      Up 31 minutes                           k8s_nginx.c8c72836_nginx-198147104-sdqet_default_791e301f-358b-11e6-94ba-080027faa9e4_cde648eb  
+efff5259a994        gcr.io/google_containers/pause:2.0                "/pause"                 31 minutes ago      Up 31 minutes                           k8s_POD.cf58006d_nginx-198147104-sdqet_default_791e301f-358b-11e6-94ba-080027faa9e4_3e7040c5  
+```
+
+As you can see, 2 containers have been created with our `kubectl run` command – the first one is the actual nginx container created and deployed by Kubernetes. The second one, as explained above, is an infrastructure container – this is the first container that is started for a pod, it sets up the network for the pod, then pauses. All other containers for a specific pod, join the network set up by this container.
+
+In order to access the deployed nginx container, we would need to declare it as a service and obtain a concrete IP address that got assigned to it.
+
+Login back to our playground container
+
+```bash
+docker exec -it hyperkube-installer /bin/bash 
+```
+
+The following command exposes the nginx deployment as a service and maps port 80 of the nginx service to the port 8080 of the host
+
+```bash
+kubectl expose deployment nginx --port=8080 --target-port=80
+```
+
+Now, to see the list of services, we have we run `kubectl get service nginx`. The output should be similar to
+
+```bash
+NAME      CLUSTER-IP   EXTERNAL-IP   PORT(S)    AGE  
+nginx     10.0.0.185                 8080/TCP   12s  
+```
+
+You can see the list of services, with assigned IP address and exposed ports. 
+
+Let’s take the IP address only and set it to a variable to try accessing nginx.
+
+```bash
+ip=$(kubectl get svc nginx --template={{.spec.clusterIP}})  
+```
+
+Now that the `ip` variable is pointing to the correct service (in this case that would be `10.0.0.185`), we can run the `curl` for the default nginx page
+
+```bash
+curl "http://$ip:8080/"  
+```
+
+The output should contain the usual nginx welcome page.
+
+## Summary
+
+This guide gives you a high-level overview of the architecture and moving parts of a Kubernetes setup. 
+
+We deployed a mini-kubernetes setup inside a docker container, and deployed our fist pod.
+
+In order to get a deeper understanding, you are highly encouraged to deploy each of the components separately and setup their communication from scratch.
+
 ## Refs
 
 * [Introduction to Kubernetes Architecture](https://x-team.com/blog/introduction-kubernetes-architecture/)
-
 
 
 
