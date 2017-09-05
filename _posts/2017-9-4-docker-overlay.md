@@ -311,6 +311,8 @@ Overlay是一种封装在IP报文之上的新的数据格式，因此，这种�
 * [Docker storage driver history and overlayfs](http://hustcat.github.io/overlayfs-intro/)
 * [基于多租户的云计算Overlay网络](http://www.h3c.com/cn/About_H3C/Company_Publication/IP_Lh/2013/04/Home/Catalog/201309/796466_30008_0.htm)
 * [Overlay 网络技术，最想解决什么问题？](https://www.zhihu.com/question/24393680)
+* [叠加网络（overlay）之VxLAN](http://zhxfei.com/2017/02/20/SDN2/)
+* [overlay网络技术之VXLAN详解](http://network.51cto.com/art/201312/425388.htm)
 
 
 
