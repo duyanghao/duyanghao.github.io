@@ -292,7 +292,7 @@ CONTAINER ID        IMAGE                                              COMMAND  
 * 不需要额外的存储，省去了额外的维护和数据保存的工作
 * 更好的性能。通过 dnsmasq 缓存和直接把 DNS 记录保存在内存中，来提高 DNS 解析的速度
 
-## 几种服务发现解决方案对比
+## 其它服务发现解决方案对比
 
 ### <font color="#8B0000">1、Manual configuration</font>
 
@@ -407,3 +407,4 @@ I can’t say that Consul is a clear winner. Instead, it has a slight edge when 
 * [kubernetes 简介：kube-dns 和服务发现](http://cizixs.com/2017/04/11/kubernetes-intro-kube-dns)
 * [Service Discovery: Zookeeper vs etcd vs Consul](https://technologyconversations.com/2015/09/08/service-discovery-zookeeper-vs-etcd-vs-consul/)
 * [service-discovery-using-etcd-consul-and-kubernetes](https://www.slideshare.net/SreenivasMakam/service-discovery-using-etcd-consul-and-kubernetes)
+* [The DevOps 2.0 Toolkit](https://leanpub.com/the-devops-2-toolkit)
