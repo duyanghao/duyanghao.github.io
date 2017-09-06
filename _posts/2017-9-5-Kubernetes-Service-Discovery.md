@@ -285,13 +285,125 @@ CONTAINER ID        IMAGE                                              COMMAND  
 
 每种模式都可以运行额外的 [`exec-healthz` 容器](https://github.com/kubernetes/contrib/tree/master/exec-healthz)对外提供 `health check` 功能，证明当前 DNS 服务是正常的
 
-### 总结
+### Kubernetes DNS 服务发现总结
 
 推荐使用 kubeDNS 的模式来部署，因为它有着以下的好处：
 
 * 不需要额外的存储，省去了额外的维护和数据保存的工作
 * 更好的性能。通过 dnsmasq 缓存和直接把 DNS 记录保存在内存中，来提高 DNS 解析的速度
 
+## 几种服务发现解决方案对比
+
+### <font color="#8B0000">Manual configuration</font>
+
+Most of the services are still managed manually. We decide in advance where to deploy the service, what is its configuration and hope beyond reason that it will continue working properly until the end of days. Such approach is not easily scalable. Deploying a second instance of the service means that we need to start the manual process all over. We need to bring up a new server or find out which one has low utilization of resources, create a new set of configurations and deploy it. The situation is even more complicated in case of, let’s say, a hardware failure since the reaction time is usually slow when things are managed manually. Visibility is another painful point. We know what the static configuration is. After all, we prepared it in advance. However, most of the services have a lot of information generated dynamically. That information is not easily visible. There is no single location we can consult when we are in need of that data.
+
+Reaction time is inevitably slow, failure resilience questionable at best and monitoring difficult to manage due to a lot of manually handled moving parts.
+
+While there was excuse to do this job manually in the past or when the number of services and/or servers is low, with emergence of service discovery tools, this excuse quickly evaporates.
+
+### <font color="#8B0000">Zookeeper</font>
+
+[ZooKeeper](http://zookeeper.apache.org/) is one of the oldest projects of this type. It originated out of the Hadoop world, where it was built to help in the maintenance of the various components in a Hadoop cluster. It is mature, reliable and used by many big companies (YouTube, eBay, Yahoo, and so on). The format of the data it stores is similar to the organization of the file system. If run on a server cluster, Zookeper will share the state of the configuration across all of nodes. Each cluster elects a leader and clients can connect to any of the servers to retrieve data.
+
+The main advantages Zookeeper brings to the table is its maturity, robustness and feature richness. However, it comes with its own set of disadvantages as well, with Java and complexity being main culprits. While Java is great for many use cases, it is very heavy for this type of work. Zookeeper’s usage of Java together with a considerable number of dependencies makes it much more resource hungry that its competition. On top of those problems, Zookeeper is complex. Maintaining it requires considerably more knowledge than we should expect from an application of this type. This is the part where feature richness converts itself from an advantage to a liability. The more features an application has, the bigger the chances that we won’t need all of them. Thus, we end up paying the price in form of complexity for something we do not fully need.
+
+Zookeeper paved the way that others followed with considerable improvements. “Big players” are using it because there were no better alternatives at the time. Today, Zookeeper it shows its age and we are better off with alternatives.
+
+### <font color="#8B0000">etcd</font>
+
+[etcd](https://github.com/coreos/etcd) is a key/value store accessible through HTTP. It is distributed and features hierarchical configuration system that can be used to build service discovery. It is very easy to deploy, setup and use, provides reliable data persistence, it’s secure and with a very good documentation.
+
+etcd is a better option than Zookeeper due to its simplicity. However, it needs to be combined with few third-party tools before it can serve service discovery objectives.
+
+![](/public/img/k8s/etcd1.png)
+
+Now that we have a place to store the information related to our services, we need a tool that will send that information to etcd automatically. After all, why would we put data to etcd manually if that can be done automatically. Even if we would want to manually put the information to etcd, we often don’t know what that information is. Remember, services might be deployed to a server with least containers running and it might have a random port assigned. Ideally, that tool should monitor Docker on all nodes and update etcd whenever a new container is run or an existing one is stopped. One of the tools that can help us with this goal is Registrator.
+
+##### Registrator
+
+[Registrator](https://github.com/gliderlabs/registrator) automatically registers and deregisters services by inspecting containers as they are brought online or stopped. It currently supports `etcd`, `Consul` and `SkyDNS 2`.
+
+**Registrator** combined with **etcd** is a powerful, yet simple combination that allows us to practice many advanced techniques. Whenever we bring up a container, all the data will be stored in etcd and propagated to all nodes in the cluster. What we’ll do with that information is up to us.
+
+![](/public/img/k8s/etcd-registrator2.png)
+
+There is one more piece of the puzzle missing. We need a way to create configuration files with data stored in **etcd** as well as run some commands when those files are created.
+
+##### confd
+
+[confd](https://github.com/kelseyhightower/confd) is a lightweight configuration management tool. Common usages are keeping configuration files up-to-date using data stored in **etcd**, **consul** and few other data registries. It can also be used to reload applications when configuration files change. In other words, we can use it as a way to reconfigure all the services with the information stored in etcd (or many other registries).
+
+![](/public/img/k8s/etcd-registrator-confd2.png)
+
+##### Final thoughts on etcd, Registrator and confd combination
+
+When etcd, Registrator and confd are combined we get a simple yet powerful way to automate all our service discovery and configuration needs. This combination also demonstrates effectiveness of having the right combination of “small” tools. Those three do exactly what we need them to do. Less than this and we would not be able to accomplish the goals set in front of us. If, on the other hand, they were designed with bigger scope in mind, we would introduce unnecessary complexity and overhead on server resources.
+
+Before we make the final verdict, let’s take a look at another combination of tools with similar goals. After all, we should never settle for some solution without investigating alternatives.
+
+### <font color="#8B0000">Consul</font>
+
+[Consul](https://www.consul.io/) is strongly consistent datastore that uses gossip to form dynamic clusters. It features hierarchical key/value store that can be used not only to store data but also to register watches that can be used for a variety of tasks from sending notifications about data changes to running health checks and custom commands depending on their output.
+
+Unlike Zookeeper and etcd, Consul implements service discovery system embedded so there is no need to build your own or use a third-party one. This discovery includes, among other things, health checks of nodes and services running on top of them.
+
+ZooKeeper and etcd provide only a primitive K/V store and require that application developers build their own system to provide service discovery. Consul, on the other hand, provides a built in framework for service discovery. Clients only need to register services and perform discovery using the DNS or HTTP interface. The other two tools require either a hand-made solution or the usage of third-party tools.
+
+Consul offers out of the box native support for multiple datacenters and the gossip system that works not only among nodes in the same cluster but across datacenters as well.
+
+![](/public/img/k8s/consul2.png)
+
+Consul has another nice feature that distinguishes it from the others. Not only that it can be used to discover information about deployed services and nodes they reside on, but it also provides easy to extend health checks through HTTP requests, TTLs (time-to-live) and custom commands.
+
+##### Registrator
+
+[Registrator](https://github.com/gliderlabs/registrator) has two Consul protocols. The **consulkv** protocol produces similar results as those obtained with the etcd protocol.
+
+Besides the IP and the port that is normally stored with **etcd** or **consulkv** protocols, Registrator’s **consul** protocol stored more information. We get the information about the node the service is running on as well as service ID and name. With few additional environment variables we can also store additional information in form of tags
+
+![](/public/img/k8s/consul-registrator2.png)
+
+##### consul-template
+
+confd can be used with Consul in the same way as with etcd. However, Consul has its own templating service with features more in line with what Consul offers.
+
+The [consul-template](https://github.com/hashicorp/consul-template) is a very convenient way to create files with values obtained from Consul. As an added bonus it can also run arbitrary commands after the files have been updated. Just as confd, consul-template also uses [Go Template](http://golang.org/pkg/text/template/) format.
+
+![](/public/img/k8s/consul-registrator-consul-template2.png)
+
+##### Consul health checks, Web UI and datacenters
+
+Monitoring health of cluster nodes and services is as important as testing and deployment itself. While we should aim towards having stable environments that never fail, we should also acknowledge that unexpected failures happen and be prepared to act accordingly. We can, for example, monitor memory usage and if it reaches certain threshold move some services to a different node in the cluster. That would be an example of preventive actions performed before the “disaster” would happen. On the other hand, not all potential failures can be detected on time for us to act on time. A single service can fail. A whole node can stop working due to a hardware failure. In such cases we should be prepared to act as fast as possible by, for example, replacing a node with a new one and moving failed services. Consul has a simple, elegant and, yet powerful way to perform health checks and help us to define what actions should be performed when health thresholds are reached.
+
+If you googled “etcd ui” or “etcd dashboard” you probably saw that there are a few solutions available and might be asking why we haven’t presented them. The reason is simple; etcd is a key/value store and not much more. Having an UI to present data is not of much use since we can easily obtain it through the etcdctl. That does not mean that etcd UI is of no use but that it does not make much difference due to its limited scope.
+
+Consul is much more than a simple key/value store. As we’ve already seen, besides storing simple key/value pairs, it has a notion of a service together with data that belongs to it. It can also perform health checks thus becoming a good candidate for a dashboard that can be used to see the status of our nodes and services running on top of them. Finally, it understands the concept of multiple datacenters. All those features combined let us see the need for a dashboard in a different light.
+
+With the Consul Web UI we can view all services and nodes, monitor health checks and their statuses, read and set key/value data as well as switch from one datacenter to another.
+
+![](/public/img/k8s/consul-nodes.png)
+
+##### Final thoughts on Consul, Registrator, Template, health checks and Web UI
+
+Consul together with the tools we explored is in many cases a better solution than what etcd offers. It was designed with services architecture and discovery in mind. It is simple, yet powerful. It provides a complete solution without sacrificing simplicity and, in many cases, it is the best tool for service discovery and health checking needs.
+
+### Conclusion
+
+All of the tools are based on similar principles and architecture. They run on nodes, require quorum to operate and are strongly consistent. They all provide some form of key/value storage.
+
+**Zookeeper** is the oldest of the three and the age shows in its complexity, utilization of resources and goals it’s trying to accomplish. It was designed in a different age than the rest of the tools we evaluated (even though it’s not much older).
+
+**etcd** with **Registrator** and **confd** is a very simple yet very powerful combination that can solve most, if not all, of our service discovery needs. It also showcases the power we can obtain when we combine simple and very specific tools. Each of them performs a very specific task, communicates through well established API and is capable of working with relative autonomy. They themselves are **microservices** both in their architectural as well as functional approach.
+
+What distinguishes Consul is the support for multiple datacenters and health checking without the usage of third-party tools. That does not mean that the usage of third-party tools is bad. Actually, throughout this blog we are trying to combine different tools by choosing those that are performing better than others without introducing unnecessary features overhead. The best results are obtained when we use right tools for the job. If the tool does more than the job we require, its efficiency drops. On the other hand, tool that doesn’t do what we need it to do is useless. Consul strikes the right balance. It does very few things and it does them well.
+
+The way Consul propagates knowledge about the cluster using gossip makes it easier to set up than etcd especially in case of a big datacenter. The ability to store data as a service makes it more complete and useful than key/value storage featured in etcd (even though Consul has that option as well). While we could accomplish the same by inserting multiple keys in etcd, Consul’s service accomplishes a more compact result that often requires a single query to retrieve all the data related to the service. On top of that, Registrator has quite good implementation of the consul protocol making the two an excellent combination, especially when consul-template is added to this picture. Consul’s Web UI is like a cherry on top of a cake and provides a good way to visualize your services and their health.
+
+I can’t say that Consul is a clear winner. Instead, it has a slight edge when compared with etcd. Service discovery as a concept as well as the tools we can use are so new that we can expect a lot of changes in this field. Have an open mind and try to take advises from this article with a grain of salt. Try different tools and make your own conclusions.
+
 ## Refs
 
 * [kubernetes 简介：kube-dns 和服务发现](http://cizixs.com/2017/04/11/kubernetes-intro-kube-dns)
+* [Service Discovery: Zookeeper vs etcd vs Consul](https://technologyconversations.com/2015/09/08/service-discovery-zookeeper-vs-etcd-vs-consul/)
+* [service-discovery-using-etcd-consul-and-kubernetes](https://www.slideshare.net/SreenivasMakam/service-discovery-using-etcd-consul-and-kubernetes)
