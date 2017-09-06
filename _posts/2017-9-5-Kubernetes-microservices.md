@@ -168,5 +168,5 @@ Kubernetes在容器image发布这一块的支持已比较稳定，对于无状�
 
 ## Refs
 
-[Kubernetes在微服务化游戏中的探索实践](https://www.kubernetes.org.cn/2165.html)
-[六个问题带你了解服务发现](http://dockone.io/article/509)
+* [Kubernetes在微服务化游戏中的探索实践](https://www.kubernetes.org.cn/2165.html)
+* [六个问题带你了解服务发现](http://dockone.io/article/509)
