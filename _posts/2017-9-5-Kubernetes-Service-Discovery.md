@@ -320,7 +320,7 @@ etcd is a better option than Zookeeper due to its simplicity. However, it needs 
 
 Now that we have a place to store the information related to our services, we need a tool that will send that information to etcd automatically. After all, why would we put data to etcd manually if that can be done automatically. Even if we would want to manually put the information to etcd, we often don’t know what that information is. Remember, services might be deployed to a server with least containers running and it might have a random port assigned. Ideally, that tool should monitor Docker on all nodes and update etcd whenever a new container is run or an existing one is stopped. One of the tools that can help us with this goal is Registrator.
 
-##### Registrator
+#### Registrator
 
 [Registrator](https://github.com/gliderlabs/registrator) automatically registers and deregisters services by inspecting containers as they are brought online or stopped. It currently supports `etcd`, `Consul` and `SkyDNS 2`.
 
@@ -330,13 +330,13 @@ Now that we have a place to store the information related to our services, we ne
 
 There is one more piece of the puzzle missing. We need a way to create configuration files with data stored in **etcd** as well as run some commands when those files are created.
 
-##### confd
+#### confd
 
 [confd](https://github.com/kelseyhightower/confd) is a lightweight configuration management tool. Common usages are keeping configuration files up-to-date using data stored in **etcd**, **consul** and few other data registries. It can also be used to reload applications when configuration files change. In other words, we can use it as a way to reconfigure all the services with the information stored in etcd (or many other registries).
 
 ![](/public/img/k8s/etcd-registrator-confd2.png)
 
-##### Final thoughts on etcd, Registrator and confd combination
+#### Final thoughts on etcd, Registrator and confd combination
 
 When etcd, Registrator and confd are combined we get a simple yet powerful way to automate all our service discovery and configuration needs. This combination also demonstrates effectiveness of having the right combination of “small” tools. Those three do exactly what we need them to do. Less than this and we would not be able to accomplish the goals set in front of us. If, on the other hand, they were designed with bigger scope in mind, we would introduce unnecessary complexity and overhead on server resources.
 
@@ -356,7 +356,7 @@ Consul offers out of the box native support for multiple datacenters and the gos
 
 Consul has another nice feature that distinguishes it from the others. Not only that it can be used to discover information about deployed services and nodes they reside on, but it also provides easy to extend health checks through HTTP requests, TTLs (time-to-live) and custom commands.
 
-##### Registrator
+#### Registrator
 
 [Registrator](https://github.com/gliderlabs/registrator) has two Consul protocols. The **consulkv** protocol produces similar results as those obtained with the etcd protocol.
 
@@ -364,7 +364,7 @@ Besides the IP and the port that is normally stored with **etcd** or **consulkv*
 
 ![](/public/img/k8s/consul-registrator2.png)
 
-##### consul-template
+#### consul-template
 
 confd can be used with Consul in the same way as with etcd. However, Consul has its own templating service with features more in line with what Consul offers.
 
@@ -372,7 +372,7 @@ The [consul-template](https://github.com/hashicorp/consul-template) is a very co
 
 ![](/public/img/k8s/consul-registrator-consul-template2.png)
 
-##### Consul health checks, Web UI and datacenters
+#### Consul health checks, Web UI and datacenters
 
 Monitoring health of cluster nodes and services is as important as testing and deployment itself. While we should aim towards having stable environments that never fail, we should also acknowledge that unexpected failures happen and be prepared to act accordingly. We can, for example, monitor memory usage and if it reaches certain threshold move some services to a different node in the cluster. That would be an example of preventive actions performed before the “disaster” would happen. On the other hand, not all potential failures can be detected on time for us to act on time. A single service can fail. A whole node can stop working due to a hardware failure. In such cases we should be prepared to act as fast as possible by, for example, replacing a node with a new one and moving failed services. Consul has a simple, elegant and, yet powerful way to perform health checks and help us to define what actions should be performed when health thresholds are reached.
 
@@ -384,7 +384,7 @@ With the Consul Web UI we can view all services and nodes, monitor health checks
 
 ![](/public/img/k8s/consul-nodes.png)
 
-##### Final thoughts on Consul, Registrator, Template, health checks and Web UI
+#### Final thoughts on Consul, Registrator, Template, health checks and Web UI
 
 Consul together with the tools we explored is in many cases a better solution than what etcd offers. It was designed with services architecture and discovery in mind. It is simple, yet powerful. It provides a complete solution without sacrificing simplicity and, in many cases, it is the best tool for service discovery and health checking needs.
 
