@@ -294,7 +294,7 @@ CONTAINER ID        IMAGE                                              COMMAND  
 
 ## 几种服务发现解决方案对比
 
-### <font color="#8B0000">Manual configuration</font>
+### <font color="#8B0000">1、Manual configuration</font>
 
 Most of the services are still managed manually. We decide in advance where to deploy the service, what is its configuration and hope beyond reason that it will continue working properly until the end of days. Such approach is not easily scalable. Deploying a second instance of the service means that we need to start the manual process all over. We need to bring up a new server or find out which one has low utilization of resources, create a new set of configurations and deploy it. The situation is even more complicated in case of, let’s say, a hardware failure since the reaction time is usually slow when things are managed manually. Visibility is another painful point. We know what the static configuration is. After all, we prepared it in advance. However, most of the services have a lot of information generated dynamically. That information is not easily visible. There is no single location we can consult when we are in need of that data.
 
@@ -302,7 +302,7 @@ Reaction time is inevitably slow, failure resilience questionable at best and mo
 
 While there was excuse to do this job manually in the past or when the number of services and/or servers is low, with emergence of service discovery tools, this excuse quickly evaporates.
 
-### <font color="#8B0000">Zookeeper</font>
+### <font color="#8B0000">2、Zookeeper</font>
 
 [ZooKeeper](http://zookeeper.apache.org/) is one of the oldest projects of this type. It originated out of the Hadoop world, where it was built to help in the maintenance of the various components in a Hadoop cluster. It is mature, reliable and used by many big companies (YouTube, eBay, Yahoo, and so on). The format of the data it stores is similar to the organization of the file system. If run on a server cluster, Zookeper will share the state of the configuration across all of nodes. Each cluster elects a leader and clients can connect to any of the servers to retrieve data.
 
@@ -310,7 +310,7 @@ The main advantages Zookeeper brings to the table is its maturity, robustness an
 
 Zookeeper paved the way that others followed with considerable improvements. “Big players” are using it because there were no better alternatives at the time. Today, Zookeeper it shows its age and we are better off with alternatives.
 
-### <font color="#8B0000">etcd</font>
+### <font color="#8B0000">3、etcd</font>
 
 [etcd](https://github.com/coreos/etcd) is a key/value store accessible through HTTP. It is distributed and features hierarchical configuration system that can be used to build service discovery. It is very easy to deploy, setup and use, provides reliable data persistence, it’s secure and with a very good documentation.
 
@@ -342,7 +342,7 @@ When etcd, Registrator and confd are combined we get a simple yet powerful way t
 
 Before we make the final verdict, let’s take a look at another combination of tools with similar goals. After all, we should never settle for some solution without investigating alternatives.
 
-### <font color="#8B0000">Consul</font>
+### <font color="#8B0000">4、Consul</font>
 
 [Consul](https://www.consul.io/) is strongly consistent datastore that uses gossip to form dynamic clusters. It features hierarchical key/value store that can be used not only to store data but also to register watches that can be used for a variety of tasks from sending notifications about data changes to running health checks and custom commands depending on their output.
 
