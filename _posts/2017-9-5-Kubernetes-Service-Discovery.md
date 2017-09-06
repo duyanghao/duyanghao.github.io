@@ -34,7 +34,7 @@ excerpt: Kubernetes服务发现……
 
 kubernetes 提供了 service 的概念可以通过 VIP 访问 pod 提供的服务，但是在使用的时候还有一个问题：怎么知道某个应用的 VIP？比如我们有两个应用，一个 app，一个 是 db，每个应用使用 rc 进行管理，并通过 service 暴露出端口提供服务。app 需要连接到 db 应用，我们只知道 db 应用的名称，但是并不知道它的 VIP 地址
 
-最简单的办法是从 kubernetes 提供的 API 查询。但这是一个糟糕的做法，首先每个应用都要在启动的时候编写查询依赖服务的逻辑，这本身就是重复和增加应用的复杂度；其次这也导致应用需要依赖 kubernetes，不能够单独部署和运行（当然如果通过增加配置选项也是可以做到的，但这又是增加负责度）
+最简单的办法是从 kubernetes 提供的 API 查询。但这是一个糟糕的做法，首先每个应用都要在启动的时候编写查询依赖服务的逻辑，这本身就是重复和增加应用的复杂度；其次这也导致应用需要依赖 kubernetes，不能够单独部署和运行（当然如果通过增加配置选项也是可以做到的，但这又是增加复杂度）
 
 开始的时候，kubernetes 采用了 docker 使用过的方法——环境变量。每个 pod 启动时候，会把通过环境变量设置所有服务的 IP 和 port 信息，这样 pod 中的应用可以通过读取环境变量来获取依赖服务的地址信息。这种方式服务和环境变量的匹配关系有一定的规范，使用起来也相对简单，但是有个很大的问题：依赖的服务必须在 pod 启动之前就存在，不然是不会出现在环境变量中的
 
@@ -46,9 +46,9 @@ DNS 服务不是独立的系统服务，而是一种 [addon](https://github.com/
 
 DNS 有两种配置方式，在 1.3 之前使用 `etcd` + `kube2sky` + `skydns` 的方式，在 1.3 之后可以使用 `kubedns` + `dnsmasq` 的方式
 
-不管以什么方式启动，对外的效果是一样的。要想使用 DNS 功能，还需要修改 kubelet 的启动配置项，告诉 kubelet，给每个启动的 pod 设置对应的 DNS 信息，一共有两个参数：--cluster_dns=10.10.10.10 --cluster_domain=cluster.local，分别是 DNS 在集群中的 vip 和域名后缀，要和 DNS rc 中保持一致
+不管以什么方式启动，对外的效果是一样的。要想使用 DNS 功能，还需要修改 kubelet 的启动配置项，告诉 kubelet，给每个启动的 pod 设置对应的 DNS 信息，一共有两个参数：--cluster_dns=10.10.10.10 --cluster_domain=cluster.local，分别是 DNS Service在集群中的 vip 和域名后缀(要和 DNS rc 中保持一致)
 
-#### <font color="#8B0000">`etcd` + `kube2sky` + `skydns`部署方式</font>
+#### <font color="#8B0000">etcd + kube2sky + skydns部署方式</font>
 
 下面是这种方式的部署配置文件：
 
@@ -171,7 +171,7 @@ NAME                READY     STATUS    RESTARTS   AGE
 po/kube-dns-twl0q   3/3       Running   0          41m
 ```
 
-#### <font color="#8B0000">`kubeDNS`+`dnsmasq`部署方式</font>
+#### <font color="#8B0000">kubeDNS + dnsmasq部署方式</font>
 
 在 kubernetes 1.3 版本之后，kubernetes 改变了 DNS 的部署方式，变成了 `kubeDNS` + `dnsmasq`，没有了 `etcd` 。在这种模式下，`kubeDNS` 是原来 `kube2sky` + `skyDNS` + `etcd`，只不过它把数据都保存到自己的内存，而不是 kv store 中；`dnsmasq` 的引进是为了提高解析的速度，因为它可以配置 DNS 缓存
 
@@ -195,7 +195,7 @@ po/kube-dns-twl0q   3/3       Running   0          41m
 
 **NOTE**：正常的 service 域名会被解析成 service vip，而 headless service 域名会被直接解析成背后的 pods ip
 
-虽然不会经常用到，但是 pod 也会有对应的 DNS 记录，格式是 `pod-ip-address.<namespace>.pod.<domain>`，其中 `pod-ip-address` 为 pod ip 地址的用 `-` 符号隔开的格式，比如 pod ip 地址是 `1.2.3.4` ，那么对应的域名就是 `1-2-3-4.default.pod.cluster.local`
+虽然不会经常用到，但是 pod 也会有对应的 DNS 记录，格式是 `pod-ip-address.<namespace>.pod.<domain>`，其中 `pod-ip-address` 为 `pod ip`地址用`-`符号隔开的格式，比如 pod ip 地址是 `1.2.3.4` ，那么对应的域名就是 `1-2-3-4.default.pod.cluster.local`
 
 运行一个 busybox 来验证 DNS 服务能够正常工作：
 
@@ -252,7 +252,7 @@ options ndots:5
 
 我们前面介绍了两种不同 DNS 部署方式，这部分讲讲它们内部的原理：
 
-#### <font color="#8B0000">`etcd` + `kube2sky` + `skydns`部署方式</font>
+#### <font color="#8B0000">etcd + kube2sky + skydns部署方式</font>
 
 ![](/public/img/k8s/kube2sky-arch.jpg)
 
@@ -272,7 +272,7 @@ CONTAINER ID        IMAGE                                              COMMAND  
 * kube2sky： 通过 kubernetes API 监听 Service 的变化，然后同步到 etcd
 * [skyDNS](https://github.com/skynetservices/skydns)：根据 etcd 中的数据，对外提供 DNS 查询服务
 
-#### <font color="#8B0000">`kubeDNS`+`dnsmasq`部署方式</font>
+#### <font color="#8B0000">kubeDNS + dnsmasq部署方式</font>
 
 ![](/public/img/k8s/kubedns-arch.jpg)
 
@@ -281,9 +281,9 @@ CONTAINER ID        IMAGE                                              COMMAND  
 * [kubeDNS](https://github.com/kubernetes/dns)：提供了原来 kube2sky + etcd + skyDNS 的功能，可以单独对外提供 DNS 查询服务
 * [dnsmasq](http://www.thekelleys.org.uk/dnsmasq/doc.html)： 一个轻量级的 DNS 服务软件，可以提供 DNS 缓存功能。kubeDNS 模式下，dnsmasq 在内存中预留一块大小（默认是 1G）的地方，保存当前最常用的 DNS 查询记录，如果缓存中没有要查找的记录，它会到 kubeDNS 中查询，并把结果缓存起来
 
-#### <font color="#8B0000">[health check 功能](https://github.com/kubernetes/contrib/tree/master/exec-healthz)</font>
+#### <font color="#8B0000">health check 功能</font>
 
-每种模式都可以运行额外的 `exec-healthz` 容器对外提供 `health check` 功能，证明当前 DNS 服务是正常的：
+每种模式都可以运行额外的 [`exec-healthz` 容器](https://github.com/kubernetes/contrib/tree/master/exec-healthz)对外提供 `health check` 功能，证明当前 DNS 服务是正常的
 
 ### 总结
 
