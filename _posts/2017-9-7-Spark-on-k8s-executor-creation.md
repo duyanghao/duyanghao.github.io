@@ -967,10 +967,44 @@ private[spark] object Client {
   }
 ```
 
-创建`driver pod`如下：
+`val createdDriverPod = kubernetesClient.pods().create(resolvedDriverPod)`创建`driver pod`如下：
 
 ```scala
-`val createdDriverPod = kubernetesClient.pods().create(resolvedDriverPod)`
+    Utils.tryWithResource(
+        kubernetesClient
+            .pods()
+            .withName(resolvedDriverPod.getMetadata.getName)
+            .watch(loggingPodStatusWatcher)) { _ =>
+      val createdDriverPod = kubernetesClient.pods().create(resolvedDriverPod)
+      try {
+        val driverOwnedResources = Seq(initContainerConfigMap) ++
+          maybeSubmittedDependenciesSecret.toSeq ++
+          credentialsSecret.toSeq
+        val driverPodOwnerReference = new OwnerReferenceBuilder()
+          .withName(createdDriverPod.getMetadata.getName)
+          .withApiVersion(createdDriverPod.getApiVersion)
+          .withUid(createdDriverPod.getMetadata.getUid)
+          .withKind(createdDriverPod.getKind)
+          .withController(true)
+          .build()
+        driverOwnedResources.foreach { resource =>
+          val originalMetadata = resource.getMetadata
+          originalMetadata.setOwnerReferences(Collections.singletonList(driverPodOwnerReference))
+        }
+        kubernetesClient.resourceList(driverOwnedResources: _*).createOrReplace()
+      } catch {
+        case e: Throwable =>
+          kubernetesClient.pods().delete(createdDriverPod)
+          throw e
+      }
+      if (waitForAppCompletion) {
+        logInfo(s"Waiting for application $kubernetesAppId to finish...")
+        loggingPodStatusWatcher.awaitCompletion()
+        logInfo(s"Application $kubernetesAppId finished.")
+      } else {
+        logInfo(s"Deployed Spark application $kubernetesAppId into Kubernetes.")
+      }
+    }
 ```
 
 最后直接退出或者等待`driver`运行结束：
@@ -1471,7 +1505,7 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
   }
 ```
 
-**返回`KubernetesClusterSchedulerBackend`对象**
+**返回`KubernetesClusterSchedulerBackend`对象，该类继承`CoarseGrainedSchedulerBackend`类**
 
 3、再看`KubernetesClusterManager`的`initialize`函数，如下：
 
@@ -1520,4 +1554,317 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
 关系图示如下：
 
 ![](/public/img/spark/class_relation.png)
+
+再看如下代码：
+
+```scala
+    // start TaskScheduler after taskScheduler sets DAGScheduler reference in DAGScheduler's
+    // constructor
+    _taskScheduler.start()
+```
+
+运行`TaskSchedulerImpl`的`start`函数，如下：
+
+```scala
+  override def start() {
+    backend.start()
+
+    if (!isLocal && conf.getBoolean("spark.speculation", false)) {
+      logInfo("Starting speculative execution thread")
+      speculationScheduler.scheduleAtFixedRate(new Runnable {
+        override def run(): Unit = Utils.tryOrStopSparkContext(sc) {
+          checkSpeculatableTasks()
+        }
+      }, SPECULATION_INTERVAL_MS, SPECULATION_INTERVAL_MS, TimeUnit.MILLISECONDS)
+    }
+  }
+```
+
+运行`backend.start()`，也即运行`KubernetesClusterSchedulerBackend`的`start`函数，如下：
+
+```scala
+  override def start(): Unit = {
+    super.start()
+    executorWatchResource.set(kubernetesClient.pods().withLabel(SPARK_APP_ID_LABEL, applicationId())
+      .watch(new ExecutorPodsWatcher()))
+
+    allocator.scheduleWithFixedDelay(
+      allocatorRunnable, 0, podAllocationInterval, TimeUnit.SECONDS)
+
+    if (!Utils.isDynamicAllocationEnabled(sc.conf)) {
+      doRequestTotalExecutors(initialExecutors)
+    } else {
+      shufflePodCache = shuffleServiceConfig
+        .map { config => new ShufflePodCache(
+          kubernetesClient, config.shuffleNamespace, config.shuffleLabels) }
+      shufflePodCache.foreach(_.start())
+      kubernetesExternalShuffleClient.foreach(_.init(applicationId()))
+    }
+  }
+```
+
+1、运行`CoarseGrainedSchedulerBackend`的`start`函数，如下：
+
+```scala
+  override def start() {
+    val properties = new ArrayBuffer[(String, String)]
+    for ((key, value) <- scheduler.sc.conf.getAll) {
+      if (key.startsWith("spark.")) {
+        properties += ((key, value))
+      }
+    }
+
+    // TODO (prashant) send conf instead of properties
+    driverEndpoint = createDriverEndpointRef(properties)
+  }
+```
+
+2、`watch`具有如下labels:`spark-app-id`:`spark.kubernetes.driver.pod.name`的`Pod`状态：
+
+```scala
+    executorWatchResource.set(kubernetesClient.pods().withLabel(SPARK_APP_ID_LABEL, applicationId())
+      .watch(new ExecutorPodsWatcher()))
+```
+
+`ExecutorPodsWatcher`类如下：
+
+```scala
+  private class ExecutorPodsWatcher extends Watcher[Pod] {
+
+    override def eventReceived(action: Action, pod: Pod): Unit = {
+      if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
+          && pod.getMetadata.getDeletionTimestamp == null) {
+        val podIP = pod.getStatus.getPodIP
+        val clusterNodeName = pod.getSpec.getNodeName
+        logDebug(s"Executor pod $pod ready, launched at $clusterNodeName as IP $podIP.")
+        EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+          executorPodsByIPs += ((podIP, pod))
+        }
+      } else if ((action == Action.MODIFIED && pod.getMetadata.getDeletionTimestamp != null) ||
+          action == Action.DELETED || action == Action.ERROR) {
+        val podName = pod.getMetadata.getName
+        val podIP = pod.getStatus.getPodIP
+        logDebug(s"Executor pod $podName at IP $podIP was at $action.")
+        if (podIP != null) {
+          EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+            executorPodsByIPs -= podIP
+          }
+        }
+      }
+    }
+
+    override def onClose(cause: KubernetesClientException): Unit = {
+      logDebug("Executor pod watch closed.", cause)
+    }
+  }
+```
+
+3、在`static allocation`配置下（默认配置），执行`doRequestTotalExecutors(initialExecutors)`函数，设置`totalExpectedExecutors`为参数`spark.executor.instances`，如下：
+
+```scala
+  protected var totalExpectedExecutors = new AtomicInteger(0)
+
+  override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Future[Boolean] {
+    totalExpectedExecutors.set(requestedTotal)
+    true
+  }
+
+  private val initialExecutors = getInitialTargetExecutorNumber(1)
+
+  private def getInitialTargetExecutorNumber(defaultNumExecutors: Int = 1): Int = {
+    if (Utils.isDynamicAllocationEnabled(conf)) {
+      val minNumExecutors = conf.getInt("spark.dynamicAllocation.minExecutors", 0)
+      val initialNumExecutors = Utils.getDynamicAllocationInitialExecutors(conf)
+      val maxNumExecutors = conf.getInt("spark.dynamicAllocation.maxExecutors", 1)
+      require(initialNumExecutors >= minNumExecutors && initialNumExecutors <= maxNumExecutors,
+        s"initial executor number $initialNumExecutors must between min executor number " +
+          s"$minNumExecutors and max executor number $maxNumExecutors")
+
+      initialNumExecutors
+    } else {
+      conf.getInt("spark.executor.instances", defaultNumExecutors)
+    }
+
+  }
+```
+
+4、运行`allocatorRunnable`批量创建`executor`Pod，如下：
+
+```scala
+  private val runningExecutorPods = new mutable.HashMap[String, Pod] // Indexed by executor IDs.
+
+  // Total number of executors that are currently registered
+  protected val totalRegisteredExecutors = new AtomicInteger(0)
+
+  private val allocatorRunnable: Runnable = new Runnable {
+    override def run(): Unit = {
+      if (totalRegisteredExecutors.get() < runningExecutorPods.size) {
+        logDebug("Waiting for pending executors before scaling")
+      } else if (totalExpectedExecutors.get() <= runningExecutorPods.size) {
+        logDebug("Maximum allowed executor limit reached. Not scaling up further.")
+      } else {
+        RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+          for (i <- 0 until math.min(
+            totalExpectedExecutors.get - runningExecutorPods.size, podAllocationSize)) {
+            runningExecutorPods += allocateNewExecutorPod()
+            logInfo(
+              s"Requesting a new executor, total executors is now ${runningExecutorPods.size}")
+          }
+        }
+      }
+    }
+  }
+``` 
+
+这是创建`executor`的主要函数，逻辑很简单：
+
+* 1、若已经成功创建的`executor` pod数量（`totalRegisteredExecutors`） < 已经发出创建请求的数量(`runningExecutorPods`)，则等待`k8s`创建`executor` pod，直到两者相等为止
+* 2、若需要创建的`executor` pod数量（`totalExpectedExecutors`）= 已经发出创建请求的数量(`runningExecutorPods`)，则不再发出新的创建请求
+* 3、否则，按照策略：`math.min(totalExpectedExecutors.get - runningExecutorPods.size, podAllocationSize)`批量发出`executor` pod 创建请求，并同时增加`runningExecutorPods`数值
+
+`podAllocationSize`数值如下：
+
+```scala
+  private val podAllocationSize = conf.get(KUBERNETES_ALLOCATION_BATCH_SIZE)
+
+  private[spark] val KUBERNETES_ALLOCATION_BATCH_SIZE =
+    ConfigBuilder("spark.kubernetes.allocation.batch.size")
+      .doc("Number of pods to launch at once in each round of dynamic allocation. ")
+      .intConf
+      .createWithDefault(5)
+```
+
+其中，当每个`executor` pod被成功创建后，会调用`CoarseGrainedSchedulerBackend`的`receiveAndReply`函数相应地增加`totalRegisteredExecutors`数值，这个后续会详细说明
+
+创建`executor` pod的具体逻辑在函数`allocateNewExecutorPod`中，如下：
+
+```scala
+  private def allocateNewExecutorPod(): (String, Pod) = {
+    val executorId = EXECUTOR_ID_COUNTER.incrementAndGet().toString
+    val name = s"${applicationId()}-exec-$executorId"
+
+    // hostname must be no longer than 63 characters, so take the last 63 characters of the pod
+    // name as the hostname.  This preserves uniqueness since the end of name contains
+    // executorId and applicationId
+    val hostname = name.substring(Math.max(0, name.length - 63))
+    val resolvedExecutorLabels = Map(
+      SPARK_EXECUTOR_ID_LABEL -> executorId,
+      SPARK_APP_ID_LABEL -> applicationId(),
+      SPARK_ROLE_LABEL -> "executor") ++
+      executorLabels
+    val executorMemoryQuantity = new QuantityBuilder(false)
+      .withAmount(s"${executorMemoryMb}M")
+      .build()
+    val executorMemoryLimitQuantity = new QuantityBuilder(false)
+      .withAmount(s"${executorMemoryWithOverhead}M")
+      .build()
+    val executorCpuQuantity = new QuantityBuilder(false)
+      .withAmount(executorCores)
+      .build()
+    val executorExtraClasspathEnv = executorExtraClasspath.map { cp =>
+      new EnvVarBuilder()
+        .withName(ENV_EXECUTOR_EXTRA_CLASSPATH)
+        .withValue(cp)
+        .build()
+    }
+    val requiredEnv = Seq(
+      (ENV_EXECUTOR_PORT, executorPort.toString),
+      (ENV_DRIVER_URL, driverUrl),
+      (ENV_EXECUTOR_CORES, executorCores),
+      (ENV_EXECUTOR_MEMORY, executorMemoryString),
+      (ENV_APPLICATION_ID, applicationId()),
+      (ENV_EXECUTOR_ID, executorId),
+      (ENV_MOUNTED_CLASSPATH, s"$executorJarsDownloadDir/*"))
+      .map(env => new EnvVarBuilder()
+        .withName(env._1)
+        .withValue(env._2)
+        .build()
+      ) ++ Seq(
+      new EnvVarBuilder()
+        .withName(ENV_EXECUTOR_POD_IP)
+        .withValueFrom(new EnvVarSourceBuilder()
+          .withNewFieldRef("v1", "status.podIP")
+          .build())
+        .build()
+      )
+    val requiredPorts = Seq(
+      (EXECUTOR_PORT_NAME, executorPort),
+      (BLOCK_MANAGER_PORT_NAME, blockmanagerPort))
+      .map(port => {
+        new ContainerPortBuilder()
+          .withName(port._1)
+          .withContainerPort(port._2)
+          .build()
+      })
+
+    val basePodBuilder = new PodBuilder()
+      .withNewMetadata()
+        .withName(name)
+        .withLabels(resolvedExecutorLabels.asJava)
+        .withAnnotations(executorAnnotations.asJava)
+        .withOwnerReferences()
+        .addNewOwnerReference()
+          .withController(true)
+          .withApiVersion(driverPod.getApiVersion)
+          .withKind(driverPod.getKind)
+          .withName(driverPod.getMetadata.getName)
+          .withUid(driverPod.getMetadata.getUid)
+        .endOwnerReference()
+      .endMetadata()
+      .withNewSpec()
+        .withRestartPolicy("Never")
+        .withHostname(hostname)
+        .addNewContainer()
+          .withName(s"executor")
+          .withImage(executorDockerImage)
+          .withImagePullPolicy("IfNotPresent")
+          .withNewResources()
+            .addToRequests("memory", executorMemoryQuantity)
+            .addToLimits("memory", executorMemoryLimitQuantity)
+            .addToRequests("cpu", executorCpuQuantity)
+            .addToLimits("cpu", executorCpuQuantity)
+          .endResources()
+          .addAllToEnv(requiredEnv.asJava)
+          .addToEnv(executorExtraClasspathEnv.toSeq: _*)
+          .withPorts(requiredPorts.asJava)
+        .endContainer()
+      .endSpec()
+
+    val withMaybeShuffleConfigPodBuilder = shuffleServiceConfig
+      .map { config =>
+        config.shuffleDirs.foldLeft(basePodBuilder) { (builder, dir) =>
+          builder
+            .editSpec()
+              .addNewVolume()
+                .withName(FilenameUtils.getBaseName(dir))
+                .withNewHostPath()
+                  .withPath(dir)
+                .endHostPath()
+              .endVolume()
+              .editFirstContainer()
+                .addNewVolumeMount()
+                  .withName(FilenameUtils.getBaseName(dir))
+                  .withMountPath(dir)
+                .endVolumeMount()
+              .endContainer()
+            .endSpec()
+        }
+      }.getOrElse(basePodBuilder)
+    val resolvedExecutorPod = executorInitContainerBootstrap.map { bootstrap =>
+      bootstrap.bootstrapInitContainerAndVolumes(
+        "executor",
+        withMaybeShuffleConfigPodBuilder)
+    }.getOrElse(withMaybeShuffleConfigPodBuilder)
+
+    try {
+      (executorId, kubernetesClient.pods.create(resolvedExecutorPod.build()))
+    } catch {
+      case throwable: Throwable =>
+        logError("Failed to allocate executor pod.", throwable)
+        throw throwable
+    }
+  }
+```
+
+返回创建的`executor` pod的`id`和`Pod`对象实例（这个时候`k8s`不一定成功创建了相应的`Pod`）
 
