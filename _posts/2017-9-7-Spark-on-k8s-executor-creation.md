@@ -7,7 +7,7 @@ tags: Kubernetes Docker Spark
 excerpt: Spark on k8s executors调度……
 ---
 
-本文分析[Spark on k8s项目](https://github.com/apache-spark-on-k8s/spark)`k8s`集群调度流程（相关源码可能不是最新，仅供参考）
+本文分析[Spark on k8s项目](https://github.com/apache-spark-on-k8s/spark)集群调度流程（相关源码可能不是最新，仅供参考）
 
 ## 一、submit传递相关参数
 
