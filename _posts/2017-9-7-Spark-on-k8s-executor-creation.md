@@ -1387,7 +1387,9 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 ```
 
-由于集群是k8s：`--master k8s://https://<k8s-apiserver-host>:<k8s-apiserver-port>`，则对应`KubernetesClusterManager`，如下：
+由于集群是k8s：`--master k8s://https://<k8s-apiserver-host>:<k8s-apiserver-port>`，则对应`KubernetesClusterManager`
+
+1、运行`KubernetesClusterManager`的`createTaskScheduler`函数，如下：
 
 ```scala
   override def createTaskScheduler(sc: SparkContext, masterURL: String): TaskScheduler = {
@@ -1411,7 +1413,7 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
 **该类继承自`TaskSchedulerImpl`类**
 
 
-再看`val backend = cm.createSchedulerBackend(sc, masterUrl, scheduler)`语句，如下：
+2、再看`val backend = cm.createSchedulerBackend(sc, masterUrl, scheduler)`语句，如下：
 
 ```scala
   override def createSchedulerBackend(sc: SparkContext, masterURL: String, scheduler: TaskScheduler)
@@ -1471,7 +1473,7 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
 
 **返回`KubernetesClusterSchedulerBackend`对象**
 
-再看`KubernetesClusterManager`的`initialize`函数，如下：
+3、再看`KubernetesClusterManager`的`initialize`函数，如下：
 
 ```scala
   override def initialize(scheduler: TaskScheduler, backend: SchedulerBackend): Unit = {
@@ -1498,6 +1500,21 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
     }
     schedulableBuilder.buildPools()
   }
+```
+
+`createTaskScheduler`函数最后返回`(backend, scheduler)`，如下:
+
+```scala
+        try {
+          val scheduler = cm.createTaskScheduler(sc, masterUrl)
+          val backend = cm.createSchedulerBackend(sc, masterUrl, scheduler)
+          cm.initialize(scheduler, backend)
+          (backend, scheduler)
+        } catch {
+          case se: SparkException => throw se
+          case NonFatal(e) =>
+            throw new SparkException("External scheduler cannot be instantiated", e)
+        }
 ```
 
 关系图示如下：
