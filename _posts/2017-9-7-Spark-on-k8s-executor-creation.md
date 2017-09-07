@@ -1868,7 +1868,7 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
 
 返回创建的`executor` pod的`id`和`Pod`对象实例（这个时候`k8s`不一定成功创建了相应的`Pod`）
 
-## 三、executor与driver交互
+## 三、executor与driver交互(executor注册)
 
 如下是`executor` Dockerfile内容：
 
