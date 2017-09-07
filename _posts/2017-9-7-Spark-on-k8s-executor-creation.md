@@ -1870,6 +1870,8 @@ private[spark] class KubernetesTaskSchedulerImpl(sc: SparkContext) extends TaskS
 
 ## 三、executor与driver交互
 
+如下是`executor` Dockerfile内容：
+
 ```
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
@@ -2076,7 +2078,7 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
       fetcher.shutdown()
 ```
 
-2、`Create SparkEnv using properties we fetched from the driver.`，如下：
+2、`Create SparkEnv using properties we fetched from the driver`，如下：
 
 ```scala
       // Create SparkEnv using properties we fetched from the driver.
@@ -2270,7 +2272,7 @@ private[spark] class CoarseGrainedExecutorBackend(
   }
 ```
 
-远程调用`CoarseGrainedSchedulerBackend`的`RegisterExecutor`函数，如下：
+远程调用`driver`类`CoarseGrainedSchedulerBackend`的`RegisterExecutor`函数，如下：
 
 ```scala
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
@@ -2339,7 +2341,7 @@ private[spark] class CoarseGrainedExecutorBackend(
     }
 ```
 
-driver在收到`executor`的Rpc`RegisterExecutor`调用后，便将`executor`的信息存放到`executorDataMap`中，如下：
+`driver`在收到`executor`的Rpc `RegisterExecutor`调用后，便将`executor`的信息存放到`executorDataMap`中，如下：
 
 ```scala
 val data = new ExecutorData(executorRef, executorRef.address, hostname,cores, cores, logUrls)
@@ -2369,7 +2371,7 @@ context.reply(true)
       }
 ```
 
-创建`Executor`，如下：
+也即创建`Executor`实例，如下：
 
 ```scala
 /**
@@ -2391,7 +2393,7 @@ private[spark] class Executor(
   ...
 ```
 
-这样从`submit`交付spark application到`driver` Pod产生，再到所有`executor` Pod产生就分析完毕了，大致图示如下：
+这样从`submit`交付`spark application`到`driver` Pod产生，再到所有`executor` Pod产生就分析完毕了，大致图示如下：
 
 ![](/public/img/spark/pod_creation.png)
 
