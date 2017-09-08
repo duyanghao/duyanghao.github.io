@@ -297,6 +297,44 @@ Server is ready.
 
 上面红线框出来的部分大家可以自己去摸索下，最后一项支持OQL（对象查询语言）
 
+### <font color="#8B0000">jstat（JVM统计监测工具）</font>
+
+语法格式如下：
+
+```
+jstat [ generalOption | outputOptions vmid [interval[s|ms] [count]] ]
+```
+
+`vmid`是Java虚拟机ID，在Linux/Unix系统上一般就是进程ID。`interval`是采样时间间隔。`count`是采样数目。比如下面输出的是GC信息，采样时间间隔为250ms，采样数为4：
+
+```bash
+root@ubuntu:/# jstat -gc 21711 250 4
+ S0C    S1C    S0U    S1U      EC       EU        OC         OU       PC     PU    YGC     YGCT    FGC    FGCT     GCT   
+192.0  192.0   64.0   0.0    6144.0   1854.9   32000.0     4111.6   55296.0 25472.7    702    0.431   3      0.218    0.649
+192.0  192.0   64.0   0.0    6144.0   1972.2   32000.0     4111.6   55296.0 25472.7    702    0.431   3      0.218    0.649
+192.0  192.0   64.0   0.0    6144.0   1972.2   32000.0     4111.6   55296.0 25472.7    702    0.431   3      0.218    0.649
+192.0  192.0   64.0   0.0    6144.0   2109.7   32000.0     4111.6   55296.0 25472.7    702    0.431   3      0.218    0.649
+```
+
+要明白上面各列的意义，先看JVM堆内存布局：
+
+![](/public/img/java/jvm-heap.jpg)
+
+可以看出：
+
+
+* 堆内存 = 年轻代 + 年老代 + 永久代
+* 年轻代 = Eden区 + 两个`Survivor`区（From和To）
+
+现在来解释各列含义：
+
+* S0C、S1C、S0U、S1U：Survivor 0/1区容量（Capacity）和使用量（Used）
+* EC、EU：Eden区容量和使用量
+* OC、OU：年老代容量和使用量
+* PC、PU：永久代容量和使用量
+* YGC、YGT：年轻代GC次数和GC耗时
+* FGC、FGCT：Full GC次数和Full GC耗时
+* GCT：GC总耗时
 
 
 
