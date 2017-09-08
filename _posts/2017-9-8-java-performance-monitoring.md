@@ -144,7 +144,7 @@ jmap -permstat pid
 
 打印进程的类加载器和类加载器加载的持久代对象信息，输出：类加载器名称、对象是否存活（不可靠）、对象地址、父类加载器、已加载的类大小等信息，如下图：
 
-![](/public/img/spark/jmap-result.jpg)
+![](/public/img/java/jmap-result.png)
 
 * 2、jmap -heap pid
 
@@ -336,9 +336,74 @@ root@ubuntu:/# jstat -gc 21711 250 4
 * FGC、FGCT：Full GC次数和Full GC耗时
 * GCT：GC总耗时
 
+### <font color="#8B0000">hprof（Heap/CPU Profiling Tool）</font>
 
+hprof能够展现CPU使用率，统计堆内存使用情况
 
+语法格式如下：
 
+```
+java -agentlib:hprof[=options] ToBeProfiledClass
+java -Xrunprof[:options] ToBeProfiledClass
+javac -J-agentlib:hprof[=options] ToBeProfiledClass
+```
+
+完整的命令选项如下：
+
+```
+Option Name and Value  Description                    Default
+---------------------  -----------                    -------
+heap=dump|sites|all    heap profiling                 all
+cpu=samples|times|old  CPU usage                      off
+monitor=y|n            monitor contention             n
+format=a|b             text(txt) or binary output     a
+file=<file>            write data to file             java.hprof[.txt]
+net=<host>:<port>      send data over a socket        off
+depth=<size>           stack trace depth              4
+interval=<ms>          sample interval in ms          10
+cutoff=<value>         output cutoff point            0.0001
+lineno=y|n             line number in traces?         y
+thread=y|n             thread in traces?              n
+doe=y|n                dump on exit?                  y
+msa=y|n                Solaris micro state accounting n
+force=y|n              force output to <file>         y
+verbose=y|n            print messages about dumps     y
+```
+
+来几个官方指南上的实例
+
+CPU Usage Sampling Profiling(cpu=samples)的例子：
+
+```bash
+java -agentlib:hprof=cpu=samples,interval=20,depth=3 Hello
+```
+
+上面每隔20毫秒采样CPU消耗信息，堆栈深度为3，生成的profile文件名称是java.hprof.txt，在当前目录
+
+CPU Usage Times Profiling(cpu=times)的例子，它相对于CPU Usage Sampling Profile能够获得更加细粒度的CPU消耗信息，能够细到每个方法调用的开始和结束，它的实现使用了字节码注入技术（BCI）：
+
+```bash
+javac -J-agentlib:hprof=cpu=times Hello.java
+```
+
+Heap Allocation Profiling(heap=sites)的例子：
+
+```bash
+javac -J-agentlib:hprof=heap=sites Hello.java
+```
+
+Heap Dump(heap=dump)的例子，它比上面的Heap Allocation Profiling能生成更详细的Heap Dump信息：
+
+```bash
+javac -J-agentlib:hprof=heap=dump Hello.java
+```
+
+**虽然在JVM启动参数中加入`-Xrunprof:heap=sites`参数可以生成`CPU/Heap Profile`文件，但对JVM性能影响非常大，不建议在线上服务器环境使用**
+
+## Refs
+
+* [JVM性能调优监控工具jps、jstack、jmap、jhat、jstat、hprof使用详解](https://my.oschina.net/feichexia/blog/196575)
+ 
 
 
 
