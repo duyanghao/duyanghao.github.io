@@ -400,10 +400,20 @@ javac -J-agentlib:hprof=heap=dump Hello.java
 
 **虽然在JVM启动参数中加入`-Xrunprof:heap=sites`参数可以生成`CPU/Heap Profile`文件，但对JVM性能影响非常大，不建议在线上服务器环境使用**
 
+### 补充
+
+* 1、利用`JMX`+`jvisualvm`来观察Java进程运行时的堆栈内存、线程使用情况（[JMX](https://docs.oracle.com/javase/tutorial/jmx/index.html)（Java Management Extensions，即Java管理扩展）是Java平台上为应用程序、设备、系统等植入管理功能的框架；[jvisualvm](http://openjdk.java.net/projects/visualvm/)是JDK内置的性能分析工具，位于JDK根目录的bin文件夹下面，它可以通过JMX从Java程序获取运行时的实时数据）
+
+* 2、使用 [jinfo](https://docs.oracle.com/javase/8/docs/technotes/tools/unix/jinfo.html) 查看Java进程相关信息
+
+**真实案例解决流程**：
+
+cpu利用率飙升->jstack观察线程堆栈->gc耗时->jstat观察gc->内存泄漏->jmap观察内存使用->定位问题代码
+
 ## Refs
 
 * [JVM性能调优监控工具jps、jstack、jmap、jhat、jstat、hprof使用详解](https://my.oschina.net/feichexia/blog/196575)
- 
+* [使用 VisualVM 进行性能分析及调优](https://www.ibm.com/developerworks/cn/java/j-lo-visualvm/)
 
 
 
