@@ -403,7 +403,6 @@ javac -J-agentlib:hprof=heap=dump Hello.java
 ### 补充
 
 * 1、利用`JMX`+`jvisualvm`来观察Java进程运行时的堆栈内存、线程使用情况（[JMX](https://docs.oracle.com/javase/tutorial/jmx/index.html)（Java Management Extensions，即Java管理扩展）是Java平台上为应用程序、设备、系统等植入管理功能的框架；[jvisualvm](http://openjdk.java.net/projects/visualvm/)是JDK内置的性能分析工具，位于JDK根目录的bin文件夹下面，它可以通过JMX从Java程序获取运行时的实时数据）
-
 * 2、使用 [jinfo](https://docs.oracle.com/javase/8/docs/technotes/tools/unix/jinfo.html) 查看Java进程相关信息
 
 **真实案例解决流程**：
