@@ -144,7 +144,7 @@ jmap -permstat pid
 
 打印进程的类加载器和类加载器加载的持久代对象信息，输出：类加载器名称、对象是否存活（不可靠）、对象地址、父类加载器、已加载的类大小等信息，如下图：
 
-![](/public/img/spark/jmap-result.png)
+![](/public/img/spark/jmap-result.jpg)
 
 * 2、jmap -heap pid
 
