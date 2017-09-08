@@ -414,6 +414,8 @@ cpu利用率飙升->jstack观察线程堆栈->gc耗时->jstat观察gc->内存泄
 * [JVM性能调优监控工具jps、jstack、jmap、jhat、jstat、hprof使用详解](https://my.oschina.net/feichexia/blog/196575)
 * [使用 VisualVM 进行性能分析及调优](https://www.ibm.com/developerworks/cn/java/j-lo-visualvm/)
 * [Tuning Java Garbage Collection for Apache Spark Applications](https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html)
+* [Spark Architecture](https://0x0fff.com/spark-architecture/)
+* [Spark: shuffle operation leading to long GC pause](https://stackoverflow.com/questions/38981772/spark-shuffle-operation-leading-to-long-gc-pause)
 
 
 

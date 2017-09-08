@@ -22,5 +22,7 @@ excerpt: 工作中常用口语和术语积累……
 * WIP：半成品
 * LGTM：看起来不错
 * QOS：服务质量(Quality Of Service)
+* PTAL：Please Take Another Look（请再看一下）
+* on green：
 
 后续不断补充……
