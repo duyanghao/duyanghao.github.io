@@ -58,9 +58,13 @@ This implies that if we use Spark cache and the total amount of data cached on e
 
 I hope this article helped you better understand Apache Spark memory management principles and design your applications accordingly. If you have any questions, feel free to ask them in comments.
 
-## Addition
+### Addition
 
 As for [Spark 2.1.0](https://github.com/apache/spark/blob/branch-2.1/core/src/main/scala/org/apache/spark/memory/UnifiedMemoryManager.scala),the `spark.memory.fraction` is by default equal to `0.6` instead of `0.75`.
+
+## Java Garbage Collection for Apache Spark
+
+后续补充……
 
 ## Refs
 
