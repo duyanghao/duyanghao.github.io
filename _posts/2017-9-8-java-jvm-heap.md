@@ -17,7 +17,7 @@ This article describes new memory management model used in Apache Spark starting
 
 Long story short, new memory management model looks like this:
 
-![](/public/img/java/Spark-Memory-Management-1.6.0-768x808.png)
+![](/public/img/spark/Spark-Memory-Management-1.6.0-768x808.png)
 Apache Spark Unified Memory Manager introduced in v1.6.0+
 
 You can see 3 main memory regions on the diagram:
@@ -40,7 +40,7 @@ This pool is used for both storing Apache Spark cached data and for temporary sp
 * 2.`Execution Memory`
 This pool is used for storing the objects required during the execution of Spark tasks. For example, it is used to store [shuffle intermediate buffer on the Map side](https://0x0fff.com/spark-architecture-shuffle/) in memory, also it is used to store hash table for hash aggregation step. This pool also supports spilling on disk if not enough memory is available, but the blocks from this pool cannot be forcefully evicted by other threads (tasks).
 
-Ok, so now let’s focus on the moving boundary between Storage Memory and Execution Memory. Due to nature of Execution Memory, you cannot forcefully evict blocks from this pool, because this is the data used in intermediate computations and the process requiring this memory would simply fail if the block it refers to won’t be found. But it is not so for the Storage Memory – it is just a cache of blocks stored in RAM, and if we evict the block from there we can just update the block metadata reflecting the fact this block was evicted to HDD (or simply removed), and trying to access this block Spark would read it from HDD (or recalculate in case your persistence level does not allow to spill on HDD).
+Ok, so now let’s focus on the moving boundary between `Storage Memory` and `Execution Memory`. Due to nature of `Execution Memory`, you cannot forcefully evict blocks from this pool, because this is the data used in intermediate computations and the process requiring this memory would simply fail if the block it refers to won’t be found. But it is not so for the `Storage Memory` – it is just a cache of blocks stored in RAM, and if we evict the block from there we can just update the block metadata reflecting the fact this block was evicted to HDD (or simply removed), and trying to access this block Spark would read it from HDD (or recalculate in case your persistence level does not allow to spill on HDD).
 
 
 
