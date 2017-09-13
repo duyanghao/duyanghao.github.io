@@ -60,7 +60,7 @@ I hope this article helped you better understand Apache Spark memory management 
 
 ## Addition
 
-As for [Spark 2.1.0](https://github.com/apache/spark/blob/branch-2.1/core/src/main/scala/org/apache/spark/memory/UnifiedMemoryManager.scala),the `spark.memory.fraction` is by default equal to `0.6` instead of `0.7.5`.
+As for [Spark 2.1.0](https://github.com/apache/spark/blob/branch-2.1/core/src/main/scala/org/apache/spark/memory/UnifiedMemoryManager.scala),the `spark.memory.fraction` is by default equal to `0.6` instead of `0.75`.
 
 ## Refs
 
