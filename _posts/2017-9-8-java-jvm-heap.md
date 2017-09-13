@@ -46,9 +46,9 @@ Ok, so now let’s focus on the moving boundary between `Storage Memory` and `Ex
 
 So, we can forcefully evict the block from `Storage Memory`, but cannot do so from `Execution Memory`. When `Execution Memory` pool can borrow some space from `Storage Memory`? It happens when either:
 
-* There is free space available in `Storage Memory` pool, i.e. cached blocks don’t use all the memory available there. Then it just reduces the `Storage Memory` pool size, increasing the `Execution Memory` pool.
+>>There is free space available in `Storage Memory` pool, i.e. cached blocks don’t use all the memory available there. Then it just reduces the `Storage Memory` pool size, increasing the `Execution Memory` pool.
 
-* `Storage Memory` pool size exceeds the initial `Storage Memory` region size and it has all this space utilized. This situation causes forceful eviction of the blocks from `Storage Memory` pool, unless it reaches its initial size.
+>>`Storage Memory` pool size exceeds the initial `Storage Memory` region size and it has all this space utilized. This situation causes forceful eviction of the blocks from `Storage Memory` pool, unless it reaches its initial size.
 
 In turn, `Storage Memory` pool can borrow some space from `Execution Memory` pool only if there is some free space in `Execution Memory` pool available.
 
