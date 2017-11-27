@@ -184,10 +184,44 @@ excerpt: Spark on k8s executors静态恢复机制……
   private var numPendingExecutors = 0
 ```
 
-
 ## 解决方案调研
 
+官方有开源解决方案[Changes to support executor recovery behavior during static allocation.](https://github.com/apache-spark-on-k8s/spark/pull/244)，基本是参考`spark on yarn`的静态恢复方案
+
 ## 改进方案解析
+
+>>
+What changes were proposed in this pull request?
+
+Added initial support for driver to ask for more executors in case of framework faults.
+
+Reviewer notes:
+This is WIP and currently being tested. Seems to work for simple smoke-tests. Looking for feedback on
+
+* Any major blindspots in logic or functionality
+* General flow. Potential issues with control/data flows.
+* Are style guidelines followed.
+
+Potential issues/Todos:
+
+* Verify that no deadlocks are possible.
+* May be explore message passing between threads instead of using synchronization
+* Any uncovered issues in further testing
+
+Reviewer notes
+
+Main business logic is in
+removeFailedAndRequestNewExecutors()
+
+Overall executor recovery logic at a high-level:
+
+* On executor disconnect, we immediately disable the executor.
+* Delete/Error Watcher actions will trigger a capture of executor loss reasons. This happens on a separate thread.
+* There is another dedicated recovery thread, which looks at all previously disconnected executors and their loss reasons to remove those executors with the right loss reasons or keep trying till the loss reasons' are discovered. If the loss reason of a lost executors is not discovered within a sufficient time window, then we give up and still remove the executor. For all removed executors, we request new executors on this recovery thread.
+
+How was this patch tested?
+
+Manually tested that on deleting a pod, new pods were being requested.
 
 ## 改进方案测试
 
