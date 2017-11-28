@@ -223,6 +223,16 @@ How was this patch tested?
 >>
 Manually tested that on deleting a pod, new pods were being requested.
 
+参考如下三个Commits（`SAR`）：
+
+* [Changes to support executor recovery behavior during static allocation.](https://github.com/apache-spark-on-k8s/spark/pull/244/files)
+* [Unit Tests for KubernetesClusterSchedulerBackend](https://github.com/apache-spark-on-k8s/spark/pull/459/files)
+* [Code enhancement: Replaced explicit synchronized access to a hashmap with a concurrent map.](https://github.com/apache-spark-on-k8s/spark/pull/392/files)
+
+下面从源码分析`SAR`解决方案：
+
+
+
 ## 改进方案测试
 
 ## 结论
