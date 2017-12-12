@@ -250,7 +250,7 @@ Manually tested that on deleting a pod, new pods were being requested.
     new ConcurrentHashMap[String, Pod]().asScala
 ```
 
-`allocatorRunnable`执行具体分配`executor`逻辑（核心函数）：
+`allocatorRunnable`线程执行具体分配`executor`逻辑（核心函数）：
 
 ```scala
 override def start(): Unit = {
@@ -343,6 +343,17 @@ private val allocatorRunnable: Runnable = new Runnable {
   }
 }
 ```
+
+`allocatorRunnable`线程首先创建`executorReasonCheckAttemptCounts(executorId,executorCountCheckPerformed)`，如下：
+
+```scala
+// Maintains a map of executor id to count of checks performed to learn the loss reason
+// for an executor.
+private val executorReasonCheckAttemptCounts = new mutable.HashMap[String, Int]
+...
+```
+
+根据注释可以知道该结构体保存了`executor`已经被执行`removeExecutorOrIncrementLossReasonCheckCount`的次数 
 
 `run`函数首先执行`handleDisconnectedExecutors`如下：
 
@@ -465,5 +476,5 @@ def removeExecutorOrIncrementLossReasonCheckCount(executorId: String): Unit = {
 * [Unit Tests for KubernetesClusterSchedulerBackend ](https://github.com/apache-spark-on-k8s/spark/pull/459/files)
 * [Spark driver should exit and report a failure when all executors get killed/fail](https://github.com/apache-spark-on-k8s/spark/issues/134)
 * [Spark behavior on k8s vs yarn on executor failures](https://docs.google.com/document/d/1GX__jsCbeCw4RrUpHLqtpAzHwV82NQrgjz1dCCqqRes/edit#)
-
+* [Scala Runnable](https://twitter.github.io/scala_school/zh_cn/concurrency.html)
 
