@@ -252,7 +252,7 @@ Manually tested that on deleting a pod, new pods were being requested.
 
 `allocatorRunnable`执行具体分配`executor`逻辑（核心函数）：
 
-```
+```scala
   override def start(): Unit = {
     super.start()
     executorWatchResource.set(kubernetesClient.pods().withLabel(SPARK_APP_ID_LABEL, applicationId())
@@ -301,7 +301,7 @@ Manually tested that on deleting a pod, new pods were being requested.
 
 首先执行`handleDisconnectedExecutors`如下：
 
-```
+```scala
     def handleDisconnectedExecutors(): Unit = {
       // For each disconnected executor, synchronize with the loss reasons that may have been found
       // by the executor pod watcher. If the loss reason was discovered by the watcher,
