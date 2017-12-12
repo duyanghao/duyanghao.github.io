@@ -469,12 +469,124 @@ def removeExecutorOrIncrementLossReasonCheckCount(executorId: String): Unit = {
 * 根据`executorId`从`executorReasonCheckAttemptCounts`中获取（默认为0）count of checks performed（已经执行`removeExecutorOrIncrementLossReasonCheckCount`的次数）
 * 如果`reasonCheckCount`还没有达到最大check上限`MAX_EXECUTOR_LOST_REASON_CHECKS`，则添加对应`executorId`次数
 * 如果`reasonCheckCount`达到最大check上限`MAX_EXECUTOR_LOST_REASON_CHECKS`，则执行`removeExecutor`，如下：
+
 ```scala
 ...
 removeExecutor(executorId, SlaveLost("Executor lost for unknown reasons."))
 ...
+/**
+  * Called by subclasses when notified of a lost worker. It just fires the message and returns
+  * at once.
+  */
+protected def removeExecutor(executorId: String, reason: ExecutorLossReason): Unit = {
+  // Only log the failure since we don't care about the result.
+  driverEndpoint.ask[Boolean](RemoveExecutor(executorId, reason)).onFailure { case t =>
+    logError(t.getMessage, t)
+  }(ThreadUtils.sameThread)
+}
 
+...
 
+case class RemoveExecutor(executorId: String, reason: ExecutorLossReason)
+  extends CoarseGrainedClusterMessage
+
+...
+
+override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+
+  case RegisterExecutor(executorId, executorRef, hostname, cores, logUrls) =>
+    if (executorDataMap.contains(executorId)) {
+      executorRef.send(RegisterExecutorFailed("Duplicate executor ID: " + executorId))
+      context.reply(true)
+    } else {
+      // If the executor's rpc env is not listening for incoming connections, `hostPort`
+      // will be null, and the client connection should be used to contact the executor.
+      val executorAddress = if (executorRef.address != null) {
+          executorRef.address
+        } else {
+          context.senderAddress
+        }
+      logInfo(s"Registered executor $executorRef ($executorAddress) with ID $executorId")
+      addressToExecutorId(executorAddress) = executorId
+      totalCoreCount.addAndGet(cores)
+      totalRegisteredExecutors.addAndGet(1)
+      val data = new ExecutorData(executorRef, executorRef.address, hostname,
+        cores, cores, logUrls)
+      // This must be synchronized because variables mutated
+      // in this block are read when requesting executors
+      CoarseGrainedSchedulerBackend.this.synchronized {
+        executorDataMap.put(executorId, data)
+        if (currentExecutorIdCounter < executorId.toInt) {
+          currentExecutorIdCounter = executorId.toInt
+        }
+        if (numPendingExecutors > 0) {
+          numPendingExecutors -= 1
+          logDebug(s"Decremented number of pending executors ($numPendingExecutors left)")
+        }
+      }
+      executorRef.send(RegisteredExecutor)
+      // Note: some tests expect the reply to come after we put the executor in the map
+      context.reply(true)
+      listenerBus.post(
+        SparkListenerExecutorAdded(System.currentTimeMillis(), executorId, data))
+      makeOffers()
+    }
+
+  case StopDriver =>
+    context.reply(true)
+    stop()
+
+  case StopExecutors =>
+    logInfo("Asking each executor to shut down")
+    for ((_, executorData) <- executorDataMap) {
+      executorData.executorEndpoint.send(StopExecutor)
+    }
+    context.reply(true)
+
+  case RemoveExecutor(executorId, reason) =>
+    // We will remove the executor's state and cannot restore it. However, the connection
+    // between the driver and the executor may be still alive so that the executor won't exit
+    // automatically, so try to tell the executor to stop itself. See SPARK-13519.
+    executorDataMap.get(executorId).foreach(_.executorEndpoint.send(StopExecutor))
+    removeExecutor(executorId, reason)
+    context.reply(true)
+
+  case RetrieveSparkAppConfig(executorId) =>
+    val reply = SparkAppConfig(sparkProperties,
+      SparkEnv.get.securityManager.getIOEncryptionKey())
+    context.reply(reply)
+}
+
+...
+
+// Remove a disconnected slave from the cluster
+private def removeExecutor(executorId: String, reason: ExecutorLossReason): Unit = {
+  logDebug(s"Asked to remove executor $executorId with reason $reason")
+  executorDataMap.get(executorId) match {
+    case Some(executorInfo) =>
+      // This must be synchronized because variables mutated
+      // in this block are read when requesting executors
+      val killed = CoarseGrainedSchedulerBackend.this.synchronized {
+        addressToExecutorId -= executorInfo.executorAddress
+        executorDataMap -= executorId
+        executorsPendingLossReason -= executorId
+        executorsPendingToRemove.remove(executorId).getOrElse(false)
+      }
+      totalCoreCount.addAndGet(-executorInfo.totalCores)
+      totalRegisteredExecutors.addAndGet(-1)
+      scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)
+      listenerBus.post(
+        SparkListenerExecutorRemoved(System.currentTimeMillis(), executorId, reason.toString))
+    case None =>
+      // SPARK-15262: If an executor is still alive even after the scheduler has removed
+      // its metadata, we may receive a heartbeat from that executor and tell its block
+      // manager to reregister itself. If that happens, the block manager master will know
+      // about the executor, but the scheduler will not. Therefore, we should remove the
+      // executor from the block manager when we hit this case.
+      scheduler.sc.env.blockManager.master.removeExecutorAsync(executorId)
+      logInfo(s"Asked to remove non-existent executor $executorId")
+  }
+}
 ```
 
 
