@@ -231,7 +231,122 @@ Manually tested that on deleting a pod, new pods were being requested.
 
 下面从源码分析`SAR`解决方案：
 
+数据结构：
 
+```scala
+  private val RUNNING_EXECUTOR_PODS_LOCK = new Object
+
+  // Indexed by executor IDs and guarded by RUNNING_EXECUTOR_PODS_LOCK.
+  private val runningExecutorsToPods = new mutable.HashMap[String, Pod]
+  // Indexed by executor pod names and guarded by RUNNING_EXECUTOR_PODS_LOCK.
+  private val runningPodsToExecutors = new mutable.HashMap[String, String] 
+  // TODO(varun): Get rid of this lock object by my making the underlying map a concurrent hash map.
+  private val EXECUTOR_PODS_BY_IPS_LOCK = new Object
+  // Indexed by executor IP addrs and guarded by EXECUTOR_PODS_BY_IPS_LOCK
+  private val executorPodsByIPs = new mutable.HashMap[String, Pod]
+  private val podsWithKnownExitReasons: concurrent.Map[String, ExecutorExited] =
+    new ConcurrentHashMap[String, ExecutorExited]().asScala
+  private val disconnectedPodsByExecutorIdPendingRemoval =
+    new ConcurrentHashMap[String, Pod]().asScala
+```
+
+`allocatorRunnable`执行具体分配`executor`逻辑（核心函数）：
+
+```
+  override def start(): Unit = {
+    super.start()
+    executorWatchResource.set(kubernetesClient.pods().withLabel(SPARK_APP_ID_LABEL, applicationId())
+      .watch(new ExecutorPodsWatcher()))
+
+    allocator.scheduleWithFixedDelay(
+      allocatorRunnable, 0, podAllocationInterval, TimeUnit.SECONDS)
+
+    if (!Utils.isDynamicAllocationEnabled(sc.conf)) {
+      doRequestTotalExecutors(initialExecutors)
+    } else {
+      shufflePodCache = shuffleServiceConfig
+        .map { config => new ShufflePodCache(
+          kubernetesClient, config.shuffleNamespace, config.shuffleLabels) }
+      shufflePodCache.foreach(_.start())
+      kubernetesExternalShuffleClient.foreach(_.init(applicationId()))
+    }
+  }
+
+  private val allocatorRunnable: Runnable = new Runnable {
+ 
+    // Maintains a map of executor id to count of checks performed to learn the loss reason
+    // for an executor.
+    private val executorReasonCheckAttemptCounts = new mutable.HashMap[String, Int]
+
+    override def run(): Unit = {
+      handleDisconnectedExecutors()
+      RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+        if (totalRegisteredExecutors.get() < runningExecutorsToPods.size) {
+          logDebug("Waiting for pending executors before scaling")
+        } else if (totalExpectedExecutors.get() <= runningExecutorsToPods.size) {
+          logDebug("Maximum allowed executor limit reached. Not scaling up further.")
+        } else {
+          for (i <- 0 until math.min(
+            totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)) {
+            val (executorId, pod) = allocateNewExecutorPod()
+            runningExecutorsToPods.put(executorId, pod)
+            runningPodsToExecutors.put(pod.getMetadata.getName, executorId)
+            logInfo(
+              s"Requesting a new executor, total executors is now ${runningExecutorsToPods.size}")
+          }
+        }
+      }
+    }
+```
+
+首先执行`handleDisconnectedExecutors`如下：
+
+```
+    def handleDisconnectedExecutors(): Unit = {
+      // For each disconnected executor, synchronize with the loss reasons that may have been found
+      // by the executor pod watcher. If the loss reason was discovered by the watcher,
+      // inform the parent class with removeExecutor.
+      val disconnectedPodsByExecutorIdPendingRemovalCopy =
+          Map.empty ++ disconnectedPodsByExecutorIdPendingRemoval
+      disconnectedPodsByExecutorIdPendingRemovalCopy.foreach { case (executorId, executorPod) =>
+        val knownExitReason = podsWithKnownExitReasons.remove(executorPod.getMetadata.getName)
+        knownExitReason.fold {
+          removeExecutorOrIncrementLossReasonCheckCount(executorId)
+        } { executorExited =>
+          logDebug(s"Removing executor $executorId with loss reason " + executorExited.message)
+          removeExecutor(executorId, executorExited)
+          // We keep around executors that have exit conditions caused by the application. This
+          // allows them to be debugged later on. Otherwise, mark them as to be deleted from the
+          // the API server.
+          if (!executorExited.exitCausedByApp) {
+            deleteExecutorFromClusterAndDataStructures(executorId)
+          }
+        }
+      }
+    }
+
+    def removeExecutorOrIncrementLossReasonCheckCount(executorId: String): Unit = {
+      val reasonCheckCount = executorReasonCheckAttemptCounts.getOrElse(executorId, 0)
+      if (reasonCheckCount >= MAX_EXECUTOR_LOST_REASON_CHECKS) {
+        removeExecutor(executorId, SlaveLost("Executor lost for unknown reasons."))
+        deleteExecutorFromClusterAndDataStructures(executorId)
+      } else {
+        executorReasonCheckAttemptCounts.put(executorId, reasonCheckCount + 1)
+      }
+    }
+
+    def deleteExecutorFromClusterAndDataStructures(executorId: String): Unit = {
+      disconnectedPodsByExecutorIdPendingRemoval -= executorId
+      executorReasonCheckAttemptCounts -= executorId
+      RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+        runningExecutorsToPods.remove(executorId).map { pod =>
+          kubernetesClient.pods().delete(pod)
+          runningPodsToExecutors.remove(pod.getMetadata.getName)
+        }.getOrElse(logWarning(s"Unable to remove pod for unknown executor $executorId"))
+      }
+    }
+  }
+```
 
 ## 改进方案测试
 
