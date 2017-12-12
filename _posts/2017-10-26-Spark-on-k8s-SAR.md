@@ -589,6 +589,91 @@ private def removeExecutor(executorId: String, reason: ExecutorLossReason): Unit
 }
 ```
 
+`removeExecutor`执行如下：
+
+```scala
+// Remove a disconnected slave from the cluster
+private def removeExecutor(executorId: String, reason: ExecutorLossReason): Unit = {
+  logDebug(s"Asked to remove executor $executorId with reason $reason")
+  executorDataMap.get(executorId) match {
+    case Some(executorInfo) =>
+      // This must be synchronized because variables mutated
+      // in this block are read when requesting executors
+      val killed = CoarseGrainedSchedulerBackend.this.synchronized {
+        addressToExecutorId -= executorInfo.executorAddress
+        executorDataMap -= executorId
+        executorsPendingLossReason -= executorId
+        executorsPendingToRemove.remove(executorId).getOrElse(false)
+      }
+      totalCoreCount.addAndGet(-executorInfo.totalCores)
+      totalRegisteredExecutors.addAndGet(-1)
+      scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)
+      listenerBus.post(
+        SparkListenerExecutorRemoved(System.currentTimeMillis(), executorId, reason.toString))
+    case None =>
+      // SPARK-15262: If an executor is still alive even after the scheduler has removed
+      // its metadata, we may receive a heartbeat from that executor and tell its block
+      // manager to reregister itself. If that happens, the block manager master will know
+      // about the executor, but the scheduler will not. Therefore, we should remove the
+      // executor from the block manager when we hit this case.
+      scheduler.sc.env.blockManager.master.removeExecutorAsync(executorId)
+      logInfo(s"Asked to remove non-existent executor $executorId")
+  }
+}
+
+// Accessing `executorDataMap` in `DriverEndpoint.receive/receiveAndReply` doesn't need any
+// protection. But accessing `executorDataMap` out of `DriverEndpoint.receive/receiveAndReply`
+// must be protected by `CoarseGrainedSchedulerBackend.this`. Besides, `executorDataMap` should
+// only be modified in `DriverEndpoint.receive/receiveAndReply` with protection by
+// `CoarseGrainedSchedulerBackend.this`.
+private val executorDataMap = new HashMap[String, ExecutorData]
+
+/**
+ * Grouping of data for an executor used by CoarseGrainedSchedulerBackend.
+ *
+ * @param executorEndpoint The RpcEndpointRef representing this executor
+ * @param executorAddress The network address of this executor
+ * @param executorHost The hostname that this executor is running on
+ * @param freeCores  The current number of cores available for work on the executor
+ * @param totalCores The total number of cores available to the executor
+ */
+private[cluster] class ExecutorData(
+   val executorEndpoint: RpcEndpointRef,
+   val executorAddress: RpcAddress,
+   override val executorHost: String,
+   var freeCores: Int,
+   override val totalCores: Int,
+   override val logUrlMap: Map[String, String]
+) extends ExecutorInfo(executorHost, totalCores, logUrlMap)
+
+/**
+ * :: DeveloperApi ::
+ * Stores information about an executor to pass from the scheduler to SparkListeners.
+ */
+@DeveloperApi
+class ExecutorInfo(
+   val executorHost: String,
+   val totalCores: Int,
+   val logUrlMap: Map[String, String]) {
+
+  def canEqual(other: Any): Boolean = other.isInstanceOf[ExecutorInfo]
+
+  override def equals(other: Any): Boolean = other match {
+    case that: ExecutorInfo =>
+      (that canEqual this) &&
+        executorHost == that.executorHost &&
+        totalCores == that.totalCores &&
+        logUrlMap == that.logUrlMap
+    case _ => false
+  }
+
+  override def hashCode(): Int = {
+    val state = Seq(executorHost, totalCores, logUrlMap)
+    state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
+  }
+}
+```
+
 
 ## 改进方案测试
 
