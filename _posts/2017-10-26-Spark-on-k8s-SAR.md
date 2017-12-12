@@ -695,6 +695,40 @@ def deleteExecutorFromClusterAndDataStructures(executorId: String): Unit = {
 * 将`executorPod`从集群中物理上删除：`kubernetesClient.pods().delete(pod)`
 * 将`executorName`从`runningPodsToExecutors(executorName,executorId)`中剔除：`runningPodsToExecutors.remove(pod.getMetadata.getName)`
 
+总结`removeExecutorOrIncrementLossReasonCheckCount`函数逻辑也即：若`executorId`对应的check次数没有到达阈值：`MAX_EXECUTOR_LOST_REASON_CHECKS`，则增加check次数；否则删除`executorId`对应的Pod以及相应的结构
+
+* 4、若存在对应Pod `disconnected`的原因，执行如下：
+
+```scala
+def handleDisconnectedExecutors(): Unit = {
+  // For each disconnected executor, synchronize with the loss reasons that may have been found
+  // by the executor pod watcher. If the loss reason was discovered by the watcher,
+  // inform the parent class with removeExecutor.
+  val disconnectedPodsByExecutorIdPendingRemovalCopy =
+      Map.empty ++ disconnectedPodsByExecutorIdPendingRemoval
+  disconnectedPodsByExecutorIdPendingRemovalCopy.foreach { case (executorId, executorPod) =>
+    val knownExitReason = podsWithKnownExitReasons.remove(executorPod.getMetadata.getName)
+    knownExitReason.fold {
+      removeExecutorOrIncrementLossReasonCheckCount(executorId)
+    } { executorExited =>
+      logDebug(s"Removing executor $executorId with loss reason " + executorExited.message)
+      removeExecutor(executorId, executorExited)
+      // We keep around executors that have exit conditions caused by the application. This
+      // allows them to be debugged later on. Otherwise, mark them as to be deleted from the
+      // the API server.
+      if (!executorExited.exitCausedByApp) {
+        deleteExecutorFromClusterAndDataStructures(executorId)
+      }
+    }
+  }
+}
+```
+
+* 执行`removeExecutor`将`executorId`从`scheduler`和`block manager`中删除
+* 若该`executorId`对应的Pod `disconnected`不是由`spark`内部原因造成的，而是由外部原因造成的(比如从k8s master执行`kubectl delete pods/xxx`等外部命令)，则执行`deleteExecutorFromClusterAndDataStructures`将该`executorId`对应的Pod从集群中删除（也即内部原因造成的`disconnected`对应的Pod在集群中保留，以便后续debug；否则从集群中删除，不保留）
+
+
+
 ## 改进方案测试
 
 ## 结论
