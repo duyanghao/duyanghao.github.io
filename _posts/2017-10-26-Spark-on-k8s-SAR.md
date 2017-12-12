@@ -674,6 +674,26 @@ class ExecutorInfo(
 }
 ```
 
+转到`removeExecutorOrIncrementLossReasonCheckCount`函数，执行完`removeExecutor`后，执行`deleteExecutorFromClusterAndDataStructures`如下：
+
+```scala
+def deleteExecutorFromClusterAndDataStructures(executorId: String): Unit = {
+  disconnectedPodsByExecutorIdPendingRemoval -= executorId
+  executorReasonCheckAttemptCounts -= executorId
+  RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+    runningExecutorsToPods.remove(executorId).map { pod =>
+      kubernetesClient.pods().delete(pod)
+      runningPodsToExecutors.remove(pod.getMetadata.getName)
+    }.getOrElse(logWarning(s"Unable to remove pod for unknown executor $executorId"))
+  }
+}
+```
+
+* 将`executorId`从`disconnectedPodsByExecutorIdPendingRemoval(executorId,executorPod)`中剔除: `disconnectedPodsByExecutorIdPendingRemoval -= executorId`
+* 将`executorId`从`executorReasonCheckAttemptCounts(executorId,executorCountCheckPerformed)`中剔除：`executorReasonCheckAttemptCounts -= executorId`
+* 将`executorId`从`runningExecutorsToPods(executorId,executorPod)`中剔除：`runningExecutorsToPods.remove(executorId)`
+* 将`executorPod`从集群中物理上删除：`kubernetesClient.pods().delete(pod)`
+* 将`executorName`从`runningPodsToExecutors(executorName,executorId)`中剔除：`runningPodsToExecutors.remove(pod.getMetadata.getName)`
 
 ## 改进方案测试
 
@@ -687,4 +707,5 @@ class ExecutorInfo(
 * [Spark driver should exit and report a failure when all executors get killed/fail](https://github.com/apache-spark-on-k8s/spark/issues/134)
 * [Spark behavior on k8s vs yarn on executor failures](https://docs.google.com/document/d/1GX__jsCbeCw4RrUpHLqtpAzHwV82NQrgjz1dCCqqRes/edit#)
 * [Scala Runnable](https://twitter.github.io/scala_school/zh_cn/concurrency.html)
+
 
