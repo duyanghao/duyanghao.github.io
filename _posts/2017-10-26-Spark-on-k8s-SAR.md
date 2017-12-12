@@ -387,8 +387,8 @@ def handleDisconnectedExecutors(): Unit = {
 * 1、从`disconnectedPodsByExecutorIdPendingRemoval(executorId,executorPod)`获取`disconnected Pod`，如下：
 
 ```scala
-  private val disconnectedPodsByExecutorIdPendingRemoval =
-    new ConcurrentHashMap[String, Pod]().asScala
+private val disconnectedPodsByExecutorIdPendingRemoval =
+  new ConcurrentHashMap[String, Pod]().asScala
 
 def handleDisconnectedExecutors(): Unit = {
   // For each disconnected executor, synchronize with the loss reasons that may have been found
@@ -414,11 +414,11 @@ def handleDisconnectedExecutors(): Unit = {
 }
 ```
 
-* 2、遍历`disconnected Pod`判断`knownExitReason(executorName,ExecutorExited)`中是否已经存在Pod`disconnected`的原因`ExecutorExited`：
+* 2、遍历`disconnected Pod`判断`knownExitReason(executorName,ExecutorExited)`中是否已经存在Pod `disconnected`的原因`ExecutorExited`：
 
 ```scala
-  private val podsWithKnownExitReasons: concurrent.Map[String, ExecutorExited] =
-    new ConcurrentHashMap[String, ExecutorExited]().asScala
+private val podsWithKnownExitReasons: concurrent.Map[String, ExecutorExited] =
+  new ConcurrentHashMap[String, ExecutorExited]().asScala
 
 def handleDisconnectedExecutors(): Unit = {
   // For each disconnected executor, synchronize with the loss reasons that may have been found
@@ -444,7 +444,7 @@ def handleDisconnectedExecutors(): Unit = {
 }
 ```
 
-* 3、若不存在对应Pod`disconnected`的原因，则执行：
+* 3、若不存在对应Pod `disconnected`的原因，则执行：
 
 ```scala
 removeExecutorOrIncrementLossReasonCheckCount(executorId)
@@ -462,6 +462,19 @@ def removeExecutorOrIncrementLossReasonCheckCount(executorId: String): Unit = {
     executorReasonCheckAttemptCounts.put(executorId, reasonCheckCount + 1)
   }
 }
+```
+
+该函数执行逻辑是：
+
+* 根据`executorId`从`executorReasonCheckAttemptCounts`中获取（默认为0）count of checks performed（已经执行`removeExecutorOrIncrementLossReasonCheckCount`的次数）
+* 如果`reasonCheckCount`还没有达到最大check上限`MAX_EXECUTOR_LOST_REASON_CHECKS`，则添加对应`executorId`次数
+* 如果`reasonCheckCount`达到最大check上限`MAX_EXECUTOR_LOST_REASON_CHECKS`，则执行`removeExecutor`，如下：
+```scala
+...
+removeExecutor(executorId, SlaveLost("Executor lost for unknown reasons."))
+...
+
+
 ```
 
 
