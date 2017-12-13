@@ -695,7 +695,7 @@ def deleteExecutorFromClusterAndDataStructures(executorId: String): Unit = {
 * 将`executorPod`从集群中物理上删除：`kubernetesClient.pods().delete(pod)`
 * 将`executorName`从`runningPodsToExecutors(executorName,executorId)`中剔除：`runningPodsToExecutors.remove(pod.getMetadata.getName)`
 
-总结`removeExecutorOrIncrementLossReasonCheckCount`函数逻辑也即：若`executorId`对应的check次数没有到达阈值：`MAX_EXECUTOR_LOST_REASON_CHECKS`，则增加check次数；否则删除`executorId`对应的Pod以及相应的结构
+总结`removeExecutorOrIncrementLossReasonCheckCount`函数逻辑也即：若`executorId`对应的check次数没有到达阈值：`MAX_EXECUTOR_LOST_REASON_CHECKS`，则增加check次数；否则删除集群中`executorId`对应的Pod以及相应的结构
 
 * 4、若存在对应Pod `disconnected`的原因，执行如下：
 
@@ -727,7 +727,67 @@ def handleDisconnectedExecutors(): Unit = {
 * 执行`removeExecutor`将`executorId`从`scheduler`和`block manager`中删除
 * 若该`executorId`对应的Pod `disconnected`不是由`spark`内部原因造成的，而是由外部原因造成的(比如从k8s master执行`kubectl delete pods/xxx`等外部命令)，则执行`deleteExecutorFromClusterAndDataStructures`将该`executorId`对应的Pod从集群中删除（也即内部原因造成的`disconnected`对应的Pod在集群中保留，以便后续debug；否则从集群中删除，不保留）
 
+这里保留一个疑问：`executorExited.exitCausedByApp`具体可能是哪些？同时`!executorExited.exitCausedByApp`具体可能又是哪些？
 
+回到`allocatorRunnable`线程的`run`函数：
+
+```scala
+private val allocatorRunnable: Runnable = new Runnable {
+
+  // Maintains a map of executor id to count of checks performed to learn the loss reason
+  // for an executor.
+  private val executorReasonCheckAttemptCounts = new mutable.HashMap[String, Int]
+
+  override def run(): Unit = {
+    handleDisconnectedExecutors()
+    RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+      if (totalRegisteredExecutors.get() < runningExecutorsToPods.size) {
+        logDebug("Waiting for pending executors before scaling")
+      } else if (totalExpectedExecutors.get() <= runningExecutorsToPods.size) {
+        logDebug("Maximum allowed executor limit reached. Not scaling up further.")
+      } else {
+        for (i <- 0 until math.min(
+          totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)) {
+          val (executorId, pod) = allocateNewExecutorPod()
+          runningExecutorsToPods.put(executorId, pod)
+          runningPodsToExecutors.put(pod.getMetadata.getName, executorId)
+          logInfo(
+            s"Requesting a new executor, total executors is now ${runningExecutorsToPods.size}")
+        }
+      }
+    }
+  }
+}
+```
+
+修改前`allocatorRunnable`线程如下：
+
+```scala
+private val allocatorRunnable: Runnable = new Runnable {
+  override def run(): Unit = {
+    if (totalRegisteredExecutors.get() < runningExecutorPods.size) {
+      logDebug("Waiting for pending executors before scaling")
+    } else if (totalExpectedExecutors.get() <= runningExecutorPods.size) {
+      logDebug("Maximum allowed executor limit reached. Not scaling up further.")
+    } else {
+      RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+        for (i <- 0 until math.min(
+          totalExpectedExecutors.get - runningExecutorPods.size, podAllocationSize)) {
+          runningExecutorPods += allocateNewExecutorPod()
+          logInfo(
+            s"Requesting a new executor, total executors is now ${runningExecutorPods.size}")
+        }
+      }
+    }
+  }
+}
+```
+
+这是创建`executor`的主要函数，逻辑很清晰：
+
+* 1、若已经成功创建（`executor`注册了自己(register itself)，则视为成功创建）的`executor` pod数量（`totalRegisteredExecutors`） < 已经发出创建请求的数量(`runningExecutorsToPods`)，则等待`k8s`创建`executor` pod(或者等待`executor` register itself)，直到两者相等为止
+* 2、若需要创建的`executor` pod数量（`totalExpectedExecutors`）= 已经发出创建请求的数量(`runningExecutorsToPods`)，则不再发出新的创建请求
+* 3、否则，按照策略：`math.min(totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)`批量发出`executor` pod 创建请求`allocateNewExecutorPod`，并同时增加`runningExecutorsToPods(executorId,executorPod)`和`runningPodsToExecutors(executorName,executorId)`数值
 
 ## 改进方案测试
 
@@ -741,5 +801,6 @@ def handleDisconnectedExecutors(): Unit = {
 * [Spark driver should exit and report a failure when all executors get killed/fail](https://github.com/apache-spark-on-k8s/spark/issues/134)
 * [Spark behavior on k8s vs yarn on executor failures](https://docs.google.com/document/d/1GX__jsCbeCw4RrUpHLqtpAzHwV82NQrgjz1dCCqqRes/edit#)
 * [Scala Runnable](https://twitter.github.io/scala_school/zh_cn/concurrency.html)
+* [Scala - for Loops](https://www.tutorialspoint.com/scala/scala_for_loop.htm)
 
 
