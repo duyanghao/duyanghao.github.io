@@ -763,6 +763,8 @@ private val allocatorRunnable: Runnable = new Runnable {
 修改前`allocatorRunnable`线程如下：
 
 ```scala
+private val runningExecutorPods = new mutable.HashMap[String, Pod] // Indexed by executor IDs.
+
 private val allocatorRunnable: Runnable = new Runnable {
   override def run(): Unit = {
     if (totalRegisteredExecutors.get() < runningExecutorPods.size) {
@@ -789,7 +791,104 @@ private val allocatorRunnable: Runnable = new Runnable {
 * 2、若需要创建的`executor` pod数量（`totalExpectedExecutors`）= 已经发出创建请求的数量(`runningExecutorsToPods`)，则不再发出新的创建请求
 * 3、否则，按照策略：`math.min(totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)`批量发出`executor` pod 创建请求`allocateNewExecutorPod`，并同时增加`runningExecutorsToPods(executorId,executorPod)`和`runningPodsToExecutors(executorName,executorId)`数值
 
+<span style="color:red">接下来主要看`ExecutorPodsWatcher` class，由该类的`eventReceived`函数主要负责`executor`的监控工作……</span>
 
+```scala
+private class ExecutorPodsWatcher extends Watcher[Pod] {
+
+  private val DEFAULT_CONTAINER_FAILURE_EXIT_STATUS = -1
+
+  override def eventReceived(action: Action, pod: Pod): Unit = {
+    if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
+        && pod.getMetadata.getDeletionTimestamp == null) {
+      val podIP = pod.getStatus.getPodIP
+      val clusterNodeName = pod.getSpec.getNodeName
+      logDebug(s"Executor pod $pod ready, launched at $clusterNodeName as IP $podIP.")
+      EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+        executorPodsByIPs += ((podIP, pod))
+      }
+    } else if ((action == Action.MODIFIED && pod.getMetadata.getDeletionTimestamp != null) ||
+        action == Action.DELETED || action == Action.ERROR) {
+      val podName = pod.getMetadata.getName
+      val podIP = pod.getStatus.getPodIP
+      logDebug(s"Executor pod $podName at IP $podIP was at $action.")
+      if (podIP != null) {
+        EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+          executorPodsByIPs -= podIP
+        }
+      }
+      if (action == Action.ERROR) {
+        logInfo(s"Received pod $podName exited event. Reason: " + pod.getStatus.getReason)
+        handleErroredPod(pod)
+      } else if (action == Action.DELETED) {
+        logInfo(s"Received delete pod $podName event. Reason: " + pod.getStatus.getReason)
+        handleDeletedPod(pod)
+      }
+    }
+  }
+
+  override def onClose(cause: KubernetesClientException): Unit = {
+    logDebug("Executor pod watch closed.", cause)
+  }
+
+  def getExecutorExitStatus(pod: Pod): Int = {
+    val containerStatuses = pod.getStatus.getContainerStatuses
+    if (!containerStatuses.isEmpty) {
+      // we assume the first container represents the pod status. This assumption may not hold
+      // true in the future. Revisit this if side-car containers start running inside executor
+      // pods.
+      getExecutorExitStatus(containerStatuses.get(0))
+    } else DEFAULT_CONTAINER_FAILURE_EXIT_STATUS
+  }
+  
+  def getExecutorExitStatus(containerStatus: ContainerStatus): Int = {
+    Option(containerStatus.getState).map(containerState =>
+      Option(containerState.getTerminated).map(containerStateTerminated =>
+        containerStateTerminated.getExitCode.intValue()).getOrElse(UNKNOWN_EXIT_CODE)
+    ).getOrElse(UNKNOWN_EXIT_CODE)
+  }
+
+  def isPodAlreadyReleased(pod: Pod): Boolean = {
+    RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+      !runningPodsToExecutors.contains(pod.getMetadata.getName)
+    }
+  }
+
+  def handleErroredPod(pod: Pod): Unit = {
+    val containerExitStatus = getExecutorExitStatus(pod)
+    // container was probably actively killed by the driver.
+    val exitReason = if (isPodAlreadyReleased(pod)) {
+        ExecutorExited(containerExitStatus, exitCausedByApp = false,
+          s"Container in pod " + pod.getMetadata.getName +
+            " exited from explicit termination request.")
+      } else {
+        val containerExitReason = containerExitStatus match {
+          case VMEM_EXCEEDED_EXIT_CODE | PMEM_EXCEEDED_EXIT_CODE =>
+            memLimitExceededLogMessage(pod.getStatus.getReason)
+          case _ =>
+            // Here we can't be sure that that exit was caused by the application but this seems
+            // to be the right default since we know the pod was not explicitly deleted by
+            // the user.
+            s"Pod ${pod.getMetadata.getName}'s executor container exited with exit status" +
+              s" code $containerExitStatus."
+        }
+        ExecutorExited(containerExitStatus, exitCausedByApp = true, containerExitReason)
+      }
+    podsWithKnownExitReasons.put(pod.getMetadata.getName, exitReason)
+  }
+
+  def handleDeletedPod(pod: Pod): Unit = {
+    val exitMessage = if (isPodAlreadyReleased(pod)) {
+      s"Container in pod ${pod.getMetadata.getName} exited from explicit termination request."
+    } else {
+      s"Pod ${pod.getMetadata.getName} deleted or lost."
+    }
+    val exitReason = ExecutorExited(
+        getExecutorExitStatus(pod), exitCausedByApp = false, exitMessage)
+    podsWithKnownExitReasons.put(pod.getMetadata.getName, exitReason)
+  }
+}
+```
 
 ## 改进方案测试
 
