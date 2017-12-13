@@ -1087,9 +1087,70 @@ watch 如下：
 {"type":"MODIFIED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"71998362","creationTimestamp":"2017-12-13T03:49:29Z"},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:31Z"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","podIP":"192.168.22.112","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"running":{"startedAt":"2017-12-13T03:49:30Z"}},"lastState":{},"ready":true,"restartCount":0,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://42fed22e555dd83e8837d8211b352062dfda8b5e2a0d5b64aaf3cc80a6044342"}],"cpuSet":"7"}}}
 ```
 
-* step3: 制造`ERROR`事件
+* step3: 制造`ERROR`
 
+如果手动`kill -9 sleep_pid`，则`Watch`到发现如下`Action`：
 
+![](/public/img/SAR/MODIFIED2.png)
+
+重新创建一个Pod，设置`restartPolicy`为`Never`，如下：
+
+```bash
+#kubectl create -f test_dns2.yml
+```
+
+`test_dns2.yml`如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dns-test2
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - image: centos:6
+    imagePullPolicy: IfNotPresent
+    command:
+    - sleep
+    args:
+    - "9999999"
+    name: dns-test2
+    resources:
+      limits:
+        cpu: "1"
+        memory: 800Mi
+      requests:
+        cpu: "1"
+        memory: 800Mi
+```
+
+手动`kill -9 sleep_pid`，`Watch`到发现如下`Action`：
+
+![](/public/img/SAR/MODIFIED3.png)
+
+<span style="color:red">并没有`ERROR` Action出现？？？</span>
+
+* step4: 删除Pod
+
+删除`test_dns` Pod，如下：
+
+```bash
+#kubectl delete pods/dns-test 
+```
+
+watch 如下：
+
+```
+{"type":"MODIFIED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"72018227","creationTimestamp":"2017-12-13T03:49:29Z","deletionTimestamp":"2017-12-13T08:03:16Z","deletionGracePeriodSeconds":30},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T07:41:10Z"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","podIP":"192.168.22.112","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"running":{"startedAt":"2017-12-13T07:41:10Z"}},"lastState":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:22:15Z","finishedAt":"2017-12-13T07:41:08Z","containerID":"docker://b09320c3cad07d42f7fa0d6409777c6777447b287dddd30699c455f2b7fbea27"}},"ready":true,"restartCount":2,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}],"cpuSet":"7"}}}
+
+{"type":"MODIFIED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"72018272","creationTimestamp":"2017-12-13T03:49:29Z","deletionTimestamp":"2017-12-13T08:03:16Z","deletionGracePeriodSeconds":30},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"False","lastProbeTime":null,"lastTransitionTime":"2017-12-13T08:03:17Z","reason":"ContainersNotReady","message":"containers with unready status: [dns-test]"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:41:10Z","finishedAt":"2017-12-13T08:03:16Z","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}},"lastState":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:22:15Z","finishedAt":"2017-12-13T07:41:08Z","containerID":"docker://b09320c3cad07d42f7fa0d6409777c6777447b287dddd30699c455f2b7fbea27"}},"ready":false,"restartCount":2,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}],"cpuSet":"7"}}}
+
+{"type":"MODIFIED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"72018273","creationTimestamp":"2017-12-13T03:49:29Z","deletionTimestamp":"2017-12-13T08:02:46Z","deletionGracePeriodSeconds":0},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"False","lastProbeTime":null,"lastTransitionTime":"2017-12-13T08:03:17Z","reason":"ContainersNotReady","message":"containers with unready status: [dns-test]"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:41:10Z","finishedAt":"2017-12-13T08:03:16Z","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}},"lastState":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:22:15Z","finishedAt":"2017-12-13T07:41:08Z","containerID":"docker://b09320c3cad07d42f7fa0d6409777c6777447b287dddd30699c455f2b7fbea27"}},"ready":false,"restartCount":2,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}],"cpuSet":"7"}}}
+
+{"type":"DELETED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"72018274","creationTimestamp":"2017-12-13T03:49:29Z","deletionTimestamp":"2017-12-13T08:02:46Z","deletionGracePeriodSeconds":0},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"False","lastProbeTime":null,"lastTransitionTime":"2017-12-13T08:03:17Z","reason":"ContainersNotReady","message":"containers with unready status: [dns-test]"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:41:10Z","finishedAt":"2017-12-13T08:03:16Z","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}},"lastState":{"terminated":{"exitCode":137,"reason":"Error","startedAt":"2017-12-13T07:22:15Z","finishedAt":"2017-12-13T07:41:08Z","containerID":"docker://b09320c3cad07d42f7fa0d6409777c6777447b287dddd30699c455f2b7fbea27"}},"ready":false,"restartCount":2,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://76a62db64f8edf048b47cd24fe0bcd0950ad3a701eeeaf5e9ccbc455c450f91c"}],"cpuSet":"7"}}}
+```
 
 <span style="color:red">总结如下</span>：
 
@@ -1101,9 +1162,36 @@ watch 如下：
 
 ![](/public/img/SAR/MODIFIED.png)
 
-* `DELETED`：
-
 * `ERROR`：
+
+
+
+* `DELETED`：`Pod`从集群中被删除了
+
+```go
+// DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This
+// field is set by the server when a graceful deletion is requested by the user, and is not
+// directly settable by a client. The resource is expected to be deleted (no longer visible
+// from resource lists, and not reachable by name) after the time in this field. Once set,
+// this value may not be unset or be set further into the future, although it may be shortened
+// or the resource may be deleted prior to this time. For example, a user may request that
+// a pod is deleted in 30 seconds. The Kubelet will react by sending a graceful termination
+// signal to the containers in the pod. After that 30 seconds, the Kubelet will send a hard
+// termination signal (SIGKILL) to the container and after cleanup, remove the pod from the
+// API. In the presence of network partitions, this object may still exist after this
+// timestamp, until an administrator or automated process can determine the resource is
+// fully terminated.
+// If not set, graceful deletion of the object has not been requested.
+//
+// Populated by the system when a graceful deletion is requested.
+// Read-only.
+// More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata
+// +optional
+DeletionTimestamp *unversioned.Time `json:"deletionTimestamp,omitempty" protobuf:"bytes,9,opt,name=deletionTimestamp"`
+```
+
+![](/public/img/SAR/DELETED1.png)
+![](/public/img/SAR/DELETED2.png)
 
 ## 改进方案测试
 
