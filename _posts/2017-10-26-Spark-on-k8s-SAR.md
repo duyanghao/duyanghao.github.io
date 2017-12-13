@@ -727,7 +727,7 @@ def handleDisconnectedExecutors(): Unit = {
 * 执行`removeExecutor`将`executorId`从`scheduler`和`block manager`中删除
 * 若该`executorId`对应的Pod `disconnected`不是由`spark`内部原因造成的，而是由外部原因造成的(比如从k8s master执行`kubectl delete pods/xxx`等外部命令)，则执行`deleteExecutorFromClusterAndDataStructures`将该`executorId`对应的Pod从集群中删除（也即内部原因造成的`disconnected`对应的Pod在集群中保留，以便后续debug；否则从集群中删除，不保留）
 
-这里保留一个疑问：`executorExited.exitCausedByApp`具体可能是哪些？同时`!executorExited.exitCausedByApp`具体可能又是哪些？
+<span style="color:red">这里保留一个疑问：`executorExited.exitCausedByApp`具体可能是哪些？同时`!executorExited.exitCausedByApp`具体可能又是哪些？</span>
 
 回到`allocatorRunnable`线程的`run`函数：
 
@@ -783,11 +783,13 @@ private val allocatorRunnable: Runnable = new Runnable {
 }
 ```
 
-这是创建`executor`的主要函数，逻辑很清晰：
+<span style="color:red">这是创建`executor`的主要函数，逻辑很清晰：</span>
 
 * 1、若已经成功创建（`executor`注册了自己(register itself)，则视为成功创建）的`executor` pod数量（`totalRegisteredExecutors`） < 已经发出创建请求的数量(`runningExecutorsToPods`)，则等待`k8s`创建`executor` pod(或者等待`executor` register itself)，直到两者相等为止
 * 2、若需要创建的`executor` pod数量（`totalExpectedExecutors`）= 已经发出创建请求的数量(`runningExecutorsToPods`)，则不再发出新的创建请求
 * 3、否则，按照策略：`math.min(totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)`批量发出`executor` pod 创建请求`allocateNewExecutorPod`，并同时增加`runningExecutorsToPods(executorId,executorPod)`和`runningPodsToExecutors(executorName,executorId)`数值
+
+
 
 ## 改进方案测试
 
