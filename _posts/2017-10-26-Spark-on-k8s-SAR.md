@@ -1087,11 +1087,23 @@ watch 如下：
 {"type":"MODIFIED","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"dns-test","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/dns-test","uid":"9f08f36b-dfb8-11e7-9122-6c0b84be1f24","resourceVersion":"71998362","creationTimestamp":"2017-12-13T03:49:29Z"},"spec":{"volumes":[{"name":"default-token-1jw95","secret":{"secretName":"default-token-1jw95","defaultMode":420}}],"containers":[{"name":"dns-test","image":"centos:6","command":["sleep"],"args":["9999999"],"resources":{"limits":{"cpu":"1","memory":"800Mi"},"requests":{"cpu":"1","memory":"800Mi"}},"volumeMounts":[{"name":"default-token-1jw95","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","imagePullPolicy":"IfNotPresent"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"x.x.x.x","securityContext":{}},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"},{"type":"Ready","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:31Z"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2017-12-13T03:49:29Z"}],"hostIP":"x.x.x.x","podIP":"192.168.22.112","startTime":"2017-12-13T03:49:29Z","containerStatuses":[{"name":"dns-test","state":{"running":{"startedAt":"2017-12-13T03:49:30Z"}},"lastState":{},"ready":true,"restartCount":0,"image":"centos:6","imageID":"docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e","containerID":"docker://42fed22e555dd83e8837d8211b352062dfda8b5e2a0d5b64aaf3cc80a6044342"}],"cpuSet":"7"}}}
 ```
 
+* step3: 制造`ERROR`事件
+
+
+
+<span style="color:red">总结如下</span>：
 
 * `ADDED`：向`k8s master`发出了`Pod`创建请求，但是还没有分配`nodeName`和`hostIP`
-* `MODIFIED`：`k8s scheduler`从`etcd`中获取了该请求，并为该`Pod`分配`nodeName`和`hostIP`以及启动`container`，注意这是一个持续的过程，会不断有`MODIFIED` Action
+
+![](/public/img/SAR/ADDED.png)
+
+* `MODIFIED`：`k8s scheduler`从`etcd`中获取了该请求，并为该`Pod`分配`nodeName`和`hostIP`，之后`kubelet`从`etcd`中获取请求，在相应IP上启动相应`container`，注意这是一个持续的过程，会不断有`MODIFIED` Action
+
+![](/public/img/SAR/MODIFIED.png)
+
 * `DELETED`：
-* `ERROR`
+
+* `ERROR`：
 
 ## 改进方案测试
 
