@@ -1130,7 +1130,195 @@ spec:
 
 ![](/public/img/SAR/MODIFIED3.png)
 
-<span style="color:red">并没有`ERROR` Action出现？？？</span>
+<span style="color:red">并没有`ERROR` Action出现，那么`ERROR` Action什么时候触发？？？</span>
+
+```go
+func newErrWatcher(err error) *errWatcher {
+	// Create an error event
+	errEvent := watch.Event{Type: watch.Error}
+	switch err := err.(type) {
+	case runtime.Object:
+		errEvent.Object = err
+	case *errors.StatusError:
+		errEvent.Object = &err.ErrStatus
+	default:
+		errEvent.Object = &unversioned.Status{
+			Status:  unversioned.StatusFailure,
+			Message: err.Error(),
+			Reason:  unversioned.StatusReasonInternalError,
+			Code:    http.StatusInternalServerError,
+		}
+	}
+
+	// Create a watcher with room for a single event, populate it, and close the channel
+	watcher := &errWatcher{result: make(chan watch.Event, 1)}
+	watcher.result <- errEvent
+	close(watcher.result)
+
+	return watcher
+}
+
+...
+
+// Implements storage.Interface.
+func (c *Cacher) Watch(ctx context.Context, key string, resourceVersion string, pred SelectionPredicate) (watch.Interface, error) {
+	watchRV, err := ParseWatchResourceVersion(resourceVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	c.ready.wait()
+
+	// We explicitly use thread unsafe version and do locking ourself to ensure that
+	// no new events will be processed in the meantime. The watchCache will be unlocked
+	// on return from this function.
+	// Note that we cannot do it under Cacher lock, to avoid a deadlock, since the
+	// underlying watchCache is calling processEvent under its lock.
+	c.watchCache.RLock()
+	defer c.watchCache.RUnlock()
+	initEvents, err := c.watchCache.GetAllEventsSinceThreadUnsafe(watchRV)
+	if err != nil {
+		// To match the uncached watch implementation, once we have passed authn/authz/admission,
+		// and successfully parsed a resource version, other errors must fail with a watch event of type ERROR,
+		// rather than a directly returned error.
+		return newErrWatcher(err), nil
+	}
+
+	triggerValue, triggerSupported := "", false
+	// TODO: Currently we assume that in a given Cacher object, any <predicate> that is
+	// passed here is aware of exactly the same trigger (at most one).
+	// Thus, either 0 or 1 values will be returned.
+	if matchValues := pred.MatcherIndex(); len(matchValues) > 0 {
+		triggerValue, triggerSupported = matchValues[0].Value, true
+	}
+
+	// If there is triggerFunc defined, but triggerSupported is false,
+	// we can't narrow the amount of events significantly at this point.
+	//
+	// That said, currently triggerFunc is defined only for Pods and Nodes,
+	// and there is only constant number of watchers for which triggerSupported
+	// is false (excluding those issues explicitly by users).
+	// Thus, to reduce the risk of those watchers blocking all watchers of a
+	// given resource in the system, we increase the sizes of buffers for them.
+	chanSize := 10
+	if c.triggerFunc != nil && !triggerSupported {
+		// TODO: We should tune this value and ideally make it dependent on the
+		// number of objects of a given type and/or their churn.
+		chanSize = 1000
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	forget := forgetWatcher(c, c.watcherIdx, triggerValue, triggerSupported)
+	watcher := newCacheWatcher(watchRV, chanSize, initEvents, filterFunction(key, pred), forget)
+
+	c.watchers.addWatcher(watcher, c.watcherIdx, triggerValue, triggerSupported)
+	c.watcherIdx++
+	return watcher, nil
+}
+
+...
+
+func (w *watchCache) GetAllEventsSinceThreadUnsafe(resourceVersion uint64) ([]watchCacheEvent, error) {
+	size := w.endIndex - w.startIndex
+	oldest := w.resourceVersion
+	if size > 0 {
+		oldest = w.cache[w.startIndex%w.capacity].resourceVersion
+	}
+	if resourceVersion == 0 {
+		// resourceVersion = 0 means that we don't require any specific starting point
+		// and we would like to start watching from ~now.
+		// However, to keep backward compatibility, we additionally need to return the
+		// current state and only then start watching from that point.
+		//
+		// TODO: In v2 api, we should stop returning the current state - #13969.
+		allItems := w.store.List()
+		result := make([]watchCacheEvent, len(allItems))
+		for i, item := range allItems {
+			elem, ok := item.(*storeElement)
+			if !ok {
+				return nil, fmt.Errorf("not a storeElement: %v", elem)
+			}
+			result[i] = watchCacheEvent{
+				Type:            watch.Added,
+				Object:          elem.Object,
+				Key:             elem.Key,
+				ResourceVersion: w.resourceVersion,
+			}
+		}
+		return result, nil
+	}
+	if resourceVersion < oldest-1 {
+		return nil, errors.NewGone(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest-1))
+	}
+
+	// Binary search the smallest index at which resourceVersion is greater than the given one.
+	f := func(i int) bool {
+		return w.cache[(w.startIndex+i)%w.capacity].resourceVersion > resourceVersion
+	}
+	first := sort.Search(size, f)
+	result := make([]watchCacheEvent, size-first)
+	for i := 0; i < size-first; i++ {
+		result[i] = w.cache[(w.startIndex+first+i)%w.capacity].watchCacheEvent
+	}
+	return result, nil
+}
+
+...
+
+// NewGone returns an error indicating the item no longer available at the server and no forwarding address is known.
+func NewGone(message string) *StatusError {
+	return &StatusError{unversioned.Status{
+		Status:  unversioned.StatusFailure,
+		Code:    http.StatusGone,
+		Reason:  unversioned.StatusReasonGone,
+		Message: message,
+	}}
+}
+
+...
+
+// StatusError is an error intended for consumption by a REST API server; it can also be
+// reconstructed by clients from a REST response. Public to allow easy type switches.
+type StatusError struct {
+	ErrStatus unversioned.Status
+}
+
+// Status is a return value for calls that don't return other objects.
+type Status struct {
+	TypeMeta `json:",inline"`
+	// Standard list metadata.
+	// More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds
+	// +optional
+	ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+
+	// Status of the operation.
+	// One of: "Success" or "Failure".
+	// More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status
+	// +optional
+	Status string `json:"status,omitempty" protobuf:"bytes,2,opt,name=status"`
+	// A human-readable description of the status of this operation.
+	// +optional
+	Message string `json:"message,omitempty" protobuf:"bytes,3,opt,name=message"`
+	// A machine-readable description of why this operation is in the
+	// "Failure" status. If this value is empty there
+	// is no information available. A Reason clarifies an HTTP status
+	// code but does not override it.
+	// +optional
+	Reason StatusReason `json:"reason,omitempty" protobuf:"bytes,4,opt,name=reason,casttype=StatusReason"`
+	// Extended data associated with the reason.  Each reason may define its
+	// own extended details. This field is optional and the data returned
+	// is not guaranteed to conform to any schema except that defined by
+	// the reason type.
+	// +optional
+	Details *StatusDetails `json:"details,omitempty" protobuf:"bytes,5,opt,name=details"`
+	// Suggested HTTP return code for this status, 0 if not set.
+	// +optional
+	Code int32 `json:"code,omitempty" protobuf:"varint,6,opt,name=code"`
+}
+```
+
+从上述`k8s watch`代码可以看出`ERROR` Action是watch失败时产生的
 
 * step4: 删除Pod
 
@@ -1154,22 +1342,17 @@ watch 如下：
 
 <span style="color:red">总结如下</span>：
 
-* `ADDED`：向`k8s master`发出了`Pod`创建请求，但是还没有分配`nodeName`和`hostIP`
+`ADDED`：向`k8s master`发出了`Pod`创建请求，但是还没有分配`nodeName`和`hostIP`
 
 ![](/public/img/SAR/ADDED.png)
 
-* `MODIFIED`：`k8s scheduler`从`etcd`中获取了该请求，并为该`Pod`分配`nodeName`和`hostIP`，之后`kubelet`从`etcd`中获取请求，在相应IP上启动相应`container`，注意这是一个持续的过程，会不断有`MODIFIED` Action
+`MODIFIED`：`k8s scheduler`从`etcd`中获取了该请求，并为该`Pod`分配`nodeName`和`hostIP`，之后`kubelet`从`etcd`中获取请求，在相应IP上启动相应`container`，注意这是一个持续的过程，会不断有`MODIFIED` Action
 
 ![](/public/img/SAR/MODIFIED.png)
 
-* `ERROR`：
+`ERROR`：执行`watch`失败
 
-
-
-* `DELETED`：`Pod`从集群中被删除了
-
-![](/public/img/SAR/DELETE1.png)
-![](/public/img/SAR/DELETE2.png)
+`DELETED`：`Pod`从集群中被删除了
 
 ```go
 // DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This
@@ -1192,6 +1375,11 @@ watch 如下：
 // +optional
 DeletionTimestamp *unversioned.Time `json:"deletionTimestamp,omitempty" protobuf:"bytes,9,opt,name=deletionTimestamp"`
 ```
+
+![](/public/img/SAR/DELETE1.png)
+![](/public/img/SAR/DELETE2.png)
+
+
 
 ## 改进方案测试
 
