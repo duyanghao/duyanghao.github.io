@@ -1168,6 +1168,9 @@ watch 如下：
 
 * `DELETED`：`Pod`从集群中被删除了
 
+![](/public/img/SAR/DELETE1.png)
+![](/public/img/SAR/DELETE2.png)
+
 ```go
 // DeletionTimestamp is RFC 3339 date and time at which this resource will be deleted. This
 // field is set by the server when a graceful deletion is requested by the user, and is not
@@ -1189,9 +1192,6 @@ watch 如下：
 // +optional
 DeletionTimestamp *unversioned.Time `json:"deletionTimestamp,omitempty" protobuf:"bytes,9,opt,name=deletionTimestamp"`
 ```
-
-![](/public/img/SAR/DELETE1.png)
-![](/public/img/SAR/DELETE2.png)
 
 ## 改进方案测试
 
