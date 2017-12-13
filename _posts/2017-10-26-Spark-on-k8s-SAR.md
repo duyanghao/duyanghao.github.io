@@ -1190,8 +1190,8 @@ watch 如下：
 DeletionTimestamp *unversioned.Time `json:"deletionTimestamp,omitempty" protobuf:"bytes,9,opt,name=deletionTimestamp"`
 ```
 
-![](/public/img/SAR/DELETED1.png)
-![](/public/img/SAR/DELETED2.png)
+![](/public/img/SAR/DELETE1.png)
+![](/public/img/SAR/DELETE2.png)
 
 ## 改进方案测试
 
