@@ -919,6 +919,17 @@ override def start(): Unit = {
 `eventReceived` watch `executor` action，如下：
 
 ```scala
+// Indexed by executor IP addrs and guarded by EXECUTOR_PODS_BY_IPS_LOCK
+private val executorPodsByIPs = new mutable.HashMap[String, Pod]
+
+def getExecutorPodByIP(podIP: String): Option[Pod] = {
+  EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+    executorPodsByIPs.get(podIP)
+  }
+}
+
+...
+
 override def eventReceived(action: Action, pod: Pod): Unit = {
   if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
       && pod.getMetadata.getDeletionTimestamp == null) {
@@ -951,8 +962,83 @@ override def eventReceived(action: Action, pod: Pod): Unit = {
 
 这里分析之前介绍一下`k8s`中`Pod` Watch 的几种状态：
 
-* 
-* 
+[io.fabric8.kubernetes.client.Watcher.Action](https://github.com/fabric8io/kubernetes-client/blob/master/kubernetes-client/src/main/java/io/fabric8/kubernetes/client/Watcher.java) `Action` 如下：
+
+```java
+package io.fabric8.kubernetes.client;
+
+import io.fabric8.kubernetes.api.model.Status;
+
+public interface Watcher<T> {
+
+  void eventReceived(Action action, T resource);
+
+  /**
+   * Run when the watcher finally closes.
+   *
+   * @param cause What caused the watcher to be closed. Null means normal close.
+   */
+  void onClose(KubernetesClientException cause);
+
+  enum Action {
+    ADDED, MODIFIED, DELETED, ERROR
+  }
+
+}
+```
+
+`k8s` `Watch` event 如下：
+
+```go
+// EventType defines the possible types of events.
+type EventType string
+
+const (
+	Added    EventType = "ADDED"
+	Modified EventType = "MODIFIED"
+	Deleted  EventType = "DELETED"
+	Error    EventType = "ERROR"
+
+	DefaultChanSize int32 = 100
+)
+
+// Event represents a single event to a watched resource.
+type Event struct {
+	Type EventType
+
+	// Object is:
+	//  * If Type is Added or Modified: the new state of the object.
+	//  * If Type is Deleted: the state of the object immediately before deletion.
+	//  * If Type is Error: *api.Status is recommended; other types may make sense
+	//    depending on context.
+	Object runtime.Object
+}
+
+// Add sends an add event.
+func (f *FakeWatcher) Add(obj runtime.Object) {
+	f.result <- Event{Added, obj}
+}
+
+// Modify sends a modify event.
+func (f *FakeWatcher) Modify(obj runtime.Object) {
+	f.result <- Event{Modified, obj}
+}
+
+// Delete sends a delete event.
+func (f *FakeWatcher) Delete(lastValue runtime.Object) {
+	f.result <- Event{Deleted, lastValue}
+}
+
+// Error sends an Error event.
+func (f *FakeWatcher) Error(errValue runtime.Object) {
+	f.result <- Event{Error, errValue}
+}
+```
+
+* `ADDED`：
+* `MODIFIED`
+* `DELETED`
+* `ERROR`
 
 ## 改进方案测试
 
@@ -967,5 +1053,6 @@ override def eventReceived(action: Action, pod: Pod): Unit = {
 * [Spark behavior on k8s vs yarn on executor failures](https://docs.google.com/document/d/1GX__jsCbeCw4RrUpHLqtpAzHwV82NQrgjz1dCCqqRes/edit#)
 * [Scala Runnable](https://twitter.github.io/scala_school/zh_cn/concurrency.html)
 * [Scala - for Loops](https://www.tutorialspoint.com/scala/scala_for_loop.htm)
+* [GET /api/v1/watch/namespaces/{namespace}/pods/{name}](https://v1-5.docs.kubernetes.io/docs/api-reference/v1.5/#list-all-namespaces-63)
 
 
