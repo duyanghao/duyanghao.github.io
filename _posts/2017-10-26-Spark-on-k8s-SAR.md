@@ -791,7 +791,7 @@ private val allocatorRunnable: Runnable = new Runnable {
 * 2、若需要创建的`executor` pod数量（`totalExpectedExecutors`）= 已经发出创建请求的数量(`runningExecutorsToPods`)，则不再发出新的创建请求
 * 3、否则，按照策略：`math.min(totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)`批量发出`executor` pod 创建请求`allocateNewExecutorPod`，并同时增加`runningExecutorsToPods(executorId,executorPod)`和`runningPodsToExecutors(executorName,executorId)`数值
 
-<span style="color:red">接下来主要看`ExecutorPodsWatcher` class，由该类的`eventReceived`函数主要负责`executor`的监控工作……</span>
+<span style="color:red">接下来主要看`ExecutorPodsWatcher` class，由该类的`eventReceived`函数负责`executor`的监控工作……</span>
 
 ```scala
 private class ExecutorPodsWatcher extends Watcher[Pod] {
@@ -889,6 +889,70 @@ private class ExecutorPodsWatcher extends Watcher[Pod] {
   }
 }
 ```
+
+回到最开始的`start`函数如下：
+
+```scala
+private val executorWatchResource = new AtomicReference[Closeable]
+...
+
+override def start(): Unit = {
+  super.start()
+  executorWatchResource.set(kubernetesClient.pods().withLabel(SPARK_APP_ID_LABEL, applicationId())
+    .watch(new ExecutorPodsWatcher()))
+
+  allocator.scheduleWithFixedDelay(
+    allocatorRunnable, 0, podAllocationInterval, TimeUnit.SECONDS)
+
+  if (!Utils.isDynamicAllocationEnabled(sc.conf)) {
+    doRequestTotalExecutors(initialExecutors)
+  } else {
+    shufflePodCache = shuffleServiceConfig
+      .map { config => new ShufflePodCache(
+        kubernetesClient, config.shuffleNamespace, config.shuffleLabels) }
+    shufflePodCache.foreach(_.start())
+    kubernetesExternalShuffleClient.foreach(_.init(applicationId()))
+  }
+}
+```
+
+`eventReceived` watch `executor` action，如下：
+
+```scala
+override def eventReceived(action: Action, pod: Pod): Unit = {
+  if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
+      && pod.getMetadata.getDeletionTimestamp == null) {
+    val podIP = pod.getStatus.getPodIP
+    val clusterNodeName = pod.getSpec.getNodeName
+    logDebug(s"Executor pod $pod ready, launched at $clusterNodeName as IP $podIP.")
+    EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+      executorPodsByIPs += ((podIP, pod))
+    }
+  } else if ((action == Action.MODIFIED && pod.getMetadata.getDeletionTimestamp != null) ||
+      action == Action.DELETED || action == Action.ERROR) {
+    val podName = pod.getMetadata.getName
+    val podIP = pod.getStatus.getPodIP
+    logDebug(s"Executor pod $podName at IP $podIP was at $action.")
+    if (podIP != null) {
+      EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+        executorPodsByIPs -= podIP
+      }
+    }
+    if (action == Action.ERROR) {
+      logInfo(s"Received pod $podName exited event. Reason: " + pod.getStatus.getReason)
+      handleErroredPod(pod)
+    } else if (action == Action.DELETED) {
+      logInfo(s"Received delete pod $podName event. Reason: " + pod.getStatus.getReason)
+      handleDeletedPod(pod)
+    }
+  }
+}
+```
+
+这里分析之前介绍一下`k8s`中`Pod` Watch 的几种状态：
+
+* 
+* 
 
 ## 改进方案测试
 
