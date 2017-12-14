@@ -1458,7 +1458,7 @@ private class ExecutorPodsWatcher extends Watcher[Pod] {
 
 <span style="color:red">修改前后相同处理逻辑（same）如下：</span>
 
-* 1、如果watch到action为`MODIFIED`且Pod状态(`pod.getStatus.getPhase`)为`Running`，同时Pod没有被删除`pod.getMetadata.getDeletionTimestamp == null`，则认为Pod成功产生了，取该`Pod`信息添加到`executorPodsByIPs(PodIP,Pod)`
+* 1、如果watch到*action为`MODIFIED`且Pod状态(`pod.getStatus.getPhase`)为`Running`，同时Pod没有被删除`pod.getMetadata.getDeletionTimestamp == null`*，则认为Pod成功产生了，取该`Pod`信息添加到`executorPodsByIPs(PodIP,Pod)`
 * 2、如果watch到*action为`MODIFIED`且Pod没有被删除`pod.getMetadata.getDeletionTimestamp == null`*，或者*action为`DELETE`*或者*action为`ERROR`*，则从`executorPodsByIPs`中剔除该`Pod`:`executorPodsByIPs -= podIP`
 
 <span style="color:red">修改后新增处理逻辑（added）如下：</span>
@@ -1471,9 +1471,149 @@ private class ExecutorPodsWatcher extends Watcher[Pod] {
 * 1、<span style="color:red">正常Pod产生错误，Pod状态(`pod.getStatus.getPhase`)为`Failed`，这在上述中不会得到处理</span>
 * 2、有一些处理函数的作用以及它们之间的联系没搞清楚：`doKillExecutors`、`removeExecutor`以及新添加的`onDisconnected`？
 
+保留疑问，我们先按照改进方案逻辑 分析action为`ERROR` or `DELETE`的情况：
 
+1、如果watch到*action为`ERROR`*则单独调用`handleErroredPod(pod)`进行处理，如下：
+
+```scala
+def handleErroredPod(pod: Pod): Unit = {
+  val containerExitStatus = getExecutorExitStatus(pod)
+  // container was probably actively killed by the driver.
+  val exitReason = if (isPodAlreadyReleased(pod)) {
+      ExecutorExited(containerExitStatus, exitCausedByApp = false,
+        s"Container in pod " + pod.getMetadata.getName +
+          " exited from explicit termination request.")
+    } else {
+      val containerExitReason = containerExitStatus match {
+        case VMEM_EXCEEDED_EXIT_CODE | PMEM_EXCEEDED_EXIT_CODE =>
+          memLimitExceededLogMessage(pod.getStatus.getReason)
+        case _ =>
+          // Here we can't be sure that that exit was caused by the application but this seems
+          // to be the right default since we know the pod was not explicitly deleted by
+          // the user.
+          s"Pod ${pod.getMetadata.getName}'s executor container exited with exit status" +
+            s" code $containerExitStatus."
+      }
+      ExecutorExited(containerExitStatus, exitCausedByApp = true, containerExitReason)
+    }
+  podsWithKnownExitReasons.put(pod.getMetadata.getName, exitReason)
+}
+```
+
+首先调用`getExecutorExitStatus`获取`Pod`退出码，如下：
+
+```scala
+private val DEFAULT_CONTAINER_FAILURE_EXIT_STATUS = -1
+
+def getExecutorExitStatus(pod: Pod): Int = {
+  val containerStatuses = pod.getStatus.getContainerStatuses
+  if (!containerStatuses.isEmpty) {
+    // we assume the first container represents the pod status. This assumption may not hold
+    // true in the future. Revisit this if side-car containers start running inside executor
+    // pods.
+    getExecutorExitStatus(containerStatuses.get(0))
+  } else DEFAULT_CONTAINER_FAILURE_EXIT_STATUS
+}
+
+def getExecutorExitStatus(containerStatus: ContainerStatus): Int = {
+  Option(containerStatus.getState).map(containerState =>
+    Option(containerState.getTerminated).map(containerStateTerminated =>
+      containerStateTerminated.getExitCode.intValue()).getOrElse(UNKNOWN_EXIT_CODE)
+  ).getOrElse(UNKNOWN_EXIT_CODE)
+}
+```
+
+对应Pod `containerStatuses` 结构如下：
+
+```
+"containerStatuses": [
+    {
+        "containerID": "docker://682c611be906064fb5e9a419c9f45f683f6c9cf90f496944da8c4423eb4c9e25",
+        "image": "centos:6",
+        "imageID": "docker://sha256:38255ae1ae4375616b659950294364918d8079bb352dcf858d5053c7223b5e3e",
+        "lastState": {},
+        "name": "dns-test2",
+        "ready": false,
+        "restartCount": 0,
+        "state": {
+            "terminated": {
+                "containerID": "docker://682c611be906064fb5e9a419c9f45f683f6c9cf90f496944da8c4423eb4c9e25",
+                "exitCode": 137,
+                "finishedAt": "2017-12-13T07:54:16Z",
+                "reason": "Error",
+                "startedAt": "2017-12-13T07:51:11Z"
+            }
+        }
+    }
+]
+```
+
+接着根据`isPodAlreadyReleased(pod)`构造`ExecutorExited`返回，`isPodAlreadyReleased`如下：
+
+```scala
+def isPodAlreadyReleased(pod: Pod): Boolean = {
+  RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+    !runningPodsToExecutors.contains(pod.getMetadata.getName)
+  }
+}
+
+def handleErroredPod(pod: Pod): Unit = {
+  val containerExitStatus = getExecutorExitStatus(pod)
+  // container was probably actively killed by the driver.
+  val exitReason = if (isPodAlreadyReleased(pod)) {
+      ExecutorExited(containerExitStatus, exitCausedByApp = false,
+        s"Container in pod " + pod.getMetadata.getName +
+          " exited from explicit termination request.")
+    } else {
+      val containerExitReason = containerExitStatus match {
+        case VMEM_EXCEEDED_EXIT_CODE | PMEM_EXCEEDED_EXIT_CODE =>
+          memLimitExceededLogMessage(pod.getStatus.getReason)
+        case _ =>
+          // Here we can't be sure that that exit was caused by the application but this seems
+          // to be the right default since we know the pod was not explicitly deleted by
+          // the user.
+          s"Pod ${pod.getMetadata.getName}'s executor container exited with exit status" +
+            s" code $containerExitStatus."
+      }
+      ExecutorExited(containerExitStatus, exitCausedByApp = true, containerExitReason)
+    }
+  podsWithKnownExitReasons.put(pod.getMetadata.getName, exitReason)
+}
+
+private val podsWithKnownExitReasons: concurrent.Map[String, ExecutorExited] =
+  new ConcurrentHashMap[String, ExecutorExited]().asScala
+
+private[spark]
+case class ExecutorExited(exitCode: Int, exitCausedByApp: Boolean, reason: String)
+  extends ExecutorLossReason(reason)
+
+private[spark] object ExecutorExited {
+  def apply(exitCode: Int, exitCausedByApp: Boolean): ExecutorExited = {
+    ExecutorExited(
+      exitCode,
+      exitCausedByApp,
+      ExecutorExitCode.explainExitCode(exitCode))
+  }
+}
+```
+
+判断`runningPodsToExecutors(executorName,executorId)`中是否不包含该`Pod`。如果不包含该`Pod`，则认为`exited from explicit termination request`；否则认为：`pod was not explicitly deleted`
+
+<span style="color:red">这里不明白什么意思？？？</span>
+
+最后将`ExecutorExited`添加到`podsWithKnownExitReasons(executorName,ExecutorExited)`
+
+
+2、如果watch到*action为`DELETE`*则单独调用`handleDeletedPod(pod)`进行处理，如下：
+
+```scala
+```
 
 ## 改进方案测试
+
+## 修正方案
+
+## 修正方案测试
 
 ## 结论
 
