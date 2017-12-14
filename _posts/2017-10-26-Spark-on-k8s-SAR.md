@@ -1379,6 +1379,98 @@ DeletionTimestamp *unversioned.Time `json:"deletionTimestamp,omitempty" protobuf
 ![](/public/img/SAR/DELETE1.png)
 ![](/public/img/SAR/DELETE2.png)
 
+回到`eventReceived`函数，如下：
+
+```scala
+// Indexed by executor IP addrs and guarded by EXECUTOR_PODS_BY_IPS_LOCK
+private val executorPodsByIPs = new mutable.HashMap[String, Pod]
+
+def getExecutorPodByIP(podIP: String): Option[Pod] = {
+  EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+    executorPodsByIPs.get(podIP)
+  }
+}
+
+...
+
+override def eventReceived(action: Action, pod: Pod): Unit = {
+  if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
+      && pod.getMetadata.getDeletionTimestamp == null) {
+    val podIP = pod.getStatus.getPodIP
+    val clusterNodeName = pod.getSpec.getNodeName
+    logDebug(s"Executor pod $pod ready, launched at $clusterNodeName as IP $podIP.")
+    EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+      executorPodsByIPs += ((podIP, pod))
+    }
+  } else if ((action == Action.MODIFIED && pod.getMetadata.getDeletionTimestamp != null) ||
+      action == Action.DELETED || action == Action.ERROR) {
+    val podName = pod.getMetadata.getName
+    val podIP = pod.getStatus.getPodIP
+    logDebug(s"Executor pod $podName at IP $podIP was at $action.")
+    if (podIP != null) {
+      EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+        executorPodsByIPs -= podIP
+      }
+    }
+    if (action == Action.ERROR) {
+      logInfo(s"Received pod $podName exited event. Reason: " + pod.getStatus.getReason)
+      handleErroredPod(pod)
+    } else if (action == Action.DELETED) {
+      logInfo(s"Received delete pod $podName event. Reason: " + pod.getStatus.getReason)
+      handleDeletedPod(pod)
+    }
+  }
+}
+```
+
+修改前`eventReceived`如下：
+
+```scala
+private class ExecutorPodsWatcher extends Watcher[Pod] {
+
+  override def eventReceived(action: Action, pod: Pod): Unit = {
+    if (action == Action.MODIFIED && pod.getStatus.getPhase == "Running"
+        && pod.getMetadata.getDeletionTimestamp == null) {
+      val podIP = pod.getStatus.getPodIP
+      val clusterNodeName = pod.getSpec.getNodeName
+      logDebug(s"Executor pod $pod ready, launched at $clusterNodeName as IP $podIP.")
+      EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+        executorPodsByIPs += ((podIP, pod))
+      }
+    } else if ((action == Action.MODIFIED && pod.getMetadata.getDeletionTimestamp != null) ||
+        action == Action.DELETED || action == Action.ERROR) {
+      val podName = pod.getMetadata.getName
+      val podIP = pod.getStatus.getPodIP
+      logDebug(s"Executor pod $podName at IP $podIP was at $action.")
+      if (podIP != null) {
+        EXECUTOR_PODS_BY_IPS_LOCK.synchronized {
+          executorPodsByIPs -= podIP
+        }
+      }
+    }
+  }
+
+  override def onClose(cause: KubernetesClientException): Unit = {
+    logDebug("Executor pod watch closed.", cause)
+  }
+}
+```
+
+<span style="color:red">修改前后相同处理逻辑（same）如下：</span>
+
+* 1、如果watch到action为`MODIFIED`且Pod状态(`pod.getStatus.getPhase`)为`Running`，同时Pod没有被删除`pod.getMetadata.getDeletionTimestamp == null`，则认为Pod成功产生了，取该`Pod`信息添加到`executorPodsByIPs(PodIP,Pod)`
+* 2、如果watch到*action为`MODIFIED`且Pod没有被删除`pod.getMetadata.getDeletionTimestamp == null`*，或者*action为`DELETE`*或者*action为`ERROR`*，则从`executorPodsByIPs`中剔除该`Pod`:`executorPodsByIPs -= podIP`
+
+<span style="color:red">修改后新增处理逻辑（added）如下：</span>
+
+* 1、如果watch到*action为`ERROR`*则单独调用`handleErroredPod(pod)`进行处理
+* 2、如果watch到*action为`DELETE`*则单独调用`handleDeletedPod(pod)`进行处理
+
+分析到这里，有一些疑问：
+
+* 1、<span style="color:red">正常Pod产生错误，Pod状态(`pod.getStatus.getPhase`)为`Failed`，这在上述中不会得到处理</span>
+* 2、有一些处理函数的作用以及它们之间的联系没搞清楚：`doKillExecutors`、`removeExecutor`以及新添加的`onDisconnected`？
+
 
 
 ## 改进方案测试
