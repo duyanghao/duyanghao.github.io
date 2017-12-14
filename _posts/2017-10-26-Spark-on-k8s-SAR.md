@@ -3050,6 +3050,39 @@ private def removeExecutor(executorId: String, reason: ExecutorLossReason): Unit
       logInfo(s"Asked to remove non-existent executor $executorId")
   }
 }
+
+...
+
+// Executors that have been lost, but for which we don't yet know the real exit reason.
+protected val executorsPendingLossReason = new HashSet[String]
+
+...
+
+// Executors we have requested the cluster manager to kill that have not died yet; maps
+// the executor ID to whether it was explicitly killed by the driver (and thus shouldn't
+// be considered an app-related failure).
+@GuardedBy("CoarseGrainedSchedulerBackend.this")
+private val executorsPendingToRemove = new HashMap[String, Boolean]
+
+...
+
+/**
+ * Grouping of data for an executor used by CoarseGrainedSchedulerBackend.
+ *
+ * @param executorEndpoint The RpcEndpointRef representing this executor
+ * @param executorAddress The network address of this executor
+ * @param executorHost The hostname that this executor is running on
+ * @param freeCores  The current number of cores available for work on the executor
+ * @param totalCores The total number of cores available to the executor
+ */
+private[cluster] class ExecutorData(
+   val executorEndpoint: RpcEndpointRef,
+   val executorAddress: RpcAddress,
+   override val executorHost: String,
+   var freeCores: Int,
+   override val totalCores: Int,
+   override val logUrlMap: Map[String, String]
+) extends ExecutorInfo(executorHost, totalCores, logUrlMap)
 ```
 
 要弄清楚这个先看`receiveAndReply`的`RegisterExecutor`消息处理逻辑：
@@ -3092,7 +3125,39 @@ case RegisterExecutor(executorId, executorRef, hostname, cores, logUrls) =>
       SparkListenerExecutorAdded(System.currentTimeMillis(), executorId, data))
     makeOffers()
   }
+
+...
+
+// The num of current max ExecutorId used to re-register appMaster
+@volatile protected var currentExecutorIdCounter = 0
+
+// Number of executors requested from the cluster manager that have not registered yet
+@GuardedBy("CoarseGrainedSchedulerBackend.this")
+private var numPendingExecutors = 0
 ```
+
+`RegisterExecutor`逻辑如下：
+
+1、添加信息到`addressToExecutorId(executorAddress,executorId)`：`addressToExecutorId(executorAddress) = executorId`
+2、增加`totalCoreCount`：`totalCoreCount.addAndGet(cores)`——增加总核数
+3、增加totalRegisteredExecutors：`totalRegisteredExecutors.addAndGet(1)`——增加总注册`executor`数量
+4、构造`ExecutorData`：`val data = new ExecutorData(executorRef, executorRef.address, hostname, cores, cores, logUrls)`
+5、添加`(executorId,ExecutorData)`到`executorDataMap`中：`executorDataMap.put(executorId, data)`
+6、更新`currentExecutorIdCounter`
+7、减少`numPendingExecutors`：`numPendingExecutors -= 1`
+8、向`executorRef`发送`RegisteredExecutor`消息：`executorRef.send(RegisteredExecutor)`
+
+`removeExecutor`逻辑如下：
+
+1、从`addressToExecutorId(executorAddress,executorId)`中剔除`executorAddress`
+2、从`executorDataMap.put(executorId, data)`中剔除`executorId`
+3、从`executorsPendingLossReason(executorId)`中剔除`executorId`
+4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`
+5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
+6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
+7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，如下：
+
+
 
 ## 改进方案测试
 
