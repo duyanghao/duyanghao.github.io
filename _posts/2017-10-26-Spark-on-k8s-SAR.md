@@ -3149,10 +3149,10 @@ private var numPendingExecutors = 0
 
 `removeExecutor`逻辑如下：
 
-1、从`addressToExecutorId(executorAddress,executorId)`中剔除`executorAddress`
-2、从`executorDataMap.put(executorId, data)`中剔除`executorId`
-3、从`executorsPendingLossReason(executorId)`中剔除`executorId`
-4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`
+1、从`addressToExecutorId(executorAddress,executorId)`中剔除`executorAddress`：`addressToExecutorId -= executorInfo.executorAddress`
+2、从`executorDataMap(executorId,ExecutorData)`中剔除`executorId`：`executorDataMap -= executorId`
+3、从`executorsPendingLossReason(executorId)`中剔除`executorId`：`executorsPendingLossReason -= executorId`
+4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`：`executorsPendingToRemove.remove(executorId).getOrElse(false)`
 5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
 6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，如下：
