@@ -3138,24 +3138,24 @@ private var numPendingExecutors = 0
 
 `RegisterExecutor`逻辑如下：
 
-1、添加信息到`addressToExecutorId(executorAddress,executorId)`：`addressToExecutorId(executorAddress) = executorId`
-2、增加`totalCoreCount`：`totalCoreCount.addAndGet(cores)`——增加总核数
-3、增加totalRegisteredExecutors：`totalRegisteredExecutors.addAndGet(1)`——增加总注册`executor`数量
-4、构造`ExecutorData`：`val data = new ExecutorData(executorRef, executorRef.address, hostname, cores, cores, logUrls)`
-5、添加`(executorId,ExecutorData)`到`executorDataMap`中：`executorDataMap.put(executorId, data)`
-6、更新`currentExecutorIdCounter`
-7、减少`numPendingExecutors`：`numPendingExecutors -= 1`
-8、向`executorRef`发送`RegisteredExecutor`消息：`executorRef.send(RegisteredExecutor)`
+* 1、添加信息到`addressToExecutorId(executorAddress,executorId)`：`addressToExecutorId(executorAddress) = executorId`
+* 2、增加`totalCoreCount`：`totalCoreCount.addAndGet(cores)`——增加总核数
+* 3、增加totalRegisteredExecutors：`totalRegisteredExecutors.addAndGet(1)`——增加总注册`executor`数量
+* 4、构造`ExecutorData`：`val data = new ExecutorData(executorRef, executorRef.address, hostname, cores, cores, logUrls)`
+* 5、添加`(executorId,ExecutorData)`到`executorDataMap`中：`executorDataMap.put(executorId, data)`
+* 6、更新`currentExecutorIdCounter`
+* 7、减少`numPendingExecutors`：`numPendingExecutors -= 1`
+* 8、向`executorRef`发送`RegisteredExecutor`消息：`executorRef.send(RegisteredExecutor)`
 
 `removeExecutor`逻辑如下：
 
-1、从`addressToExecutorId(executorAddress,executorId)`中剔除`executorAddress`：`addressToExecutorId -= executorInfo.executorAddress`
-2、从`executorDataMap(executorId,ExecutorData)`中剔除`executorId`：`executorDataMap -= executorId`
-3、从`executorsPendingLossReason(executorId)`中剔除`executorId`：`executorsPendingLossReason -= executorId`
-4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`：`executorsPendingToRemove.remove(executorId).getOrElse(false)`
-5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
-6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
-7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，如下：
+* 1、从`addressToExecutorId(executorAddress,executorId)`中剔除`executorAddress`：`addressToExecutorId -= executorInfo.executorAddress`
+* 2、从`executorDataMap(executorId,ExecutorData)`中剔除`executorId`：`executorDataMap -= executorId`
+* 3、从`executorsPendingLossReason(executorId)`中剔除`executorId`：`executorsPendingLossReason -= executorId`
+* 4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`：`executorsPendingToRemove.remove(executorId).getOrElse(false)`
+* 5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
+* 6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
+* 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，如下：
 
 
 
