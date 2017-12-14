@@ -2633,11 +2633,12 @@ protected val executorsPendingLossReason = new HashSet[String]
 
 2、`eventReceived`作用是什么？
 
+<span style="color:red">`eventReceived`函数watch `executor` Pod，并记录`executor` `disconnected`原因：`podsWithKnownExitReasons(executorName,ExecutorExited)`</span>
 
 3、整个处理逻辑是什么（总结+疑点解答）？
 
 
-顺着这里的逻辑：<span style="color:red">watch是为了找`executor` `disconnected`原因</span>，我们再看`handleDisconnectedExecutors`核心函数：
+由于`handleDisconnectedExecutors`是`SAR`核心函数，我们从该函数整体分析流程，如下：
 
 ```scala
 private val allocatorRunnable: Runnable = new Runnable {
