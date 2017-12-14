@@ -1695,738 +1695,7 @@ private class KubernetesDriverEndpoint(
 }
 ```
 
-如何发现的？
-
-```scala
-/**
-  * Process stored messages.
-  */
-def process(dispatcher: Dispatcher): Unit = {
-  var message: InboxMessage = null
-  inbox.synchronized {
-    if (!enableConcurrent && numActiveThreads != 0) {
-      return
-    }
-    message = messages.poll()
-    if (message != null) {
-      numActiveThreads += 1
-    } else {
-      return
-    }
-  }
-  while (true) {
-    safelyCall(endpoint) {
-      message match {
-        case RpcMessage(_sender, content, context) =>
-          try {
-            endpoint.receiveAndReply(context).applyOrElse[Any, Unit](content, { msg =>
-              throw new SparkException(s"Unsupported message $message from ${_sender}")
-            })
-          } catch {
-            case NonFatal(e) =>
-              context.sendFailure(e)
-              // Throw the exception -- this exception will be caught by the safelyCall function.
-              // The endpoint's onError function will be called.
-              throw e
-          }
-
-        case OneWayMessage(_sender, content) =>
-          endpoint.receive.applyOrElse[Any, Unit](content, { msg =>
-            throw new SparkException(s"Unsupported message $message from ${_sender}")
-          })
-
-        case OnStart =>
-          endpoint.onStart()
-          if (!endpoint.isInstanceOf[ThreadSafeRpcEndpoint]) {
-            inbox.synchronized {
-              if (!stopped) {
-                enableConcurrent = true
-              }
-            }
-          }
-
-        case OnStop =>
-          val activeThreads = inbox.synchronized { inbox.numActiveThreads }
-          assert(activeThreads == 1,
-            s"There should be only a single active thread but found $activeThreads threads.")
-          dispatcher.removeRpcEndpointRef(endpoint)
-          endpoint.onStop()
-          assert(isEmpty, "OnStop should be the last message")
-
-        case RemoteProcessConnected(remoteAddress) =>
-          endpoint.onConnected(remoteAddress)
-
-        case RemoteProcessDisconnected(remoteAddress) =>
-          endpoint.onDisconnected(remoteAddress)
-
-        case RemoteProcessConnectionError(cause, remoteAddress) =>
-          endpoint.onNetworkError(cause, remoteAddress)
-      }
-    }
-
-    inbox.synchronized {
-      // "enableConcurrent" will be set to false after `onStop` is called, so we should check it
-      // every time.
-      if (!enableConcurrent && numActiveThreads != 1) {
-        // If we are not the only one worker, exit
-        numActiveThreads -= 1
-        return
-      }
-      message = messages.poll()
-      if (message == null) {
-        numActiveThreads -= 1
-        return
-      }
-    }
-  }
-}
-
-...
-
-/** Message loop used for dispatching messages. */
-private class MessageLoop extends Runnable {
-  override def run(): Unit = {
-    try {
-      while (true) {
-        try {
-          val data = receivers.take()
-          if (data == PoisonPill) {
-            // Put PoisonPill back so that other MessageLoops can see it.
-            receivers.offer(PoisonPill)
-            return
-          }
-          data.inbox.process(Dispatcher.this)
-        } catch {
-          case NonFatal(e) => logError(e.getMessage, e)
-        }
-      }
-    } catch {
-      case ie: InterruptedException => // exit
-    }
-  }
-}
-
-...
-
-/** Thread pool used for dispatching messages. */
-private val threadpool: ThreadPoolExecutor = {
-  val numThreads = nettyEnv.conf.getInt("spark.rpc.netty.dispatcher.numThreads",
-    math.max(2, Runtime.getRuntime.availableProcessors()))
-  val pool = ThreadUtils.newDaemonFixedThreadPool(numThreads, "dispatcher-event-loop")
-  for (i <- 0 until numThreads) {
-    pool.execute(new MessageLoop)
-  }
-  pool
-}
-
-...
-
-private[netty] class NettyRpcEnv(
-    val conf: SparkConf,
-    javaSerializerInstance: JavaSerializerInstance,
-    host: String,
-    securityManager: SecurityManager) extends RpcEnv(conf) with Logging {
-
-  private[netty] val transportConf = SparkTransportConf.fromSparkConf(
-    conf.clone.set("spark.rpc.io.numConnectionsPerPeer", "1"),
-    "rpc",
-    conf.getInt("spark.rpc.io.threads", 0))
-
-  private val dispatcher: Dispatcher = new Dispatcher(this)
-  ...
-}
-
-...
-
-private[rpc] class NettyRpcEnvFactory extends RpcEnvFactory with Logging {
-
-  def create(config: RpcEnvConfig): RpcEnv = {
-    val sparkConf = config.conf
-    // Use JavaSerializerInstance in multiple threads is safe. However, if we plan to support
-    // KryoSerializer in future, we have to use ThreadLocal to store SerializerInstance
-    val javaSerializerInstance =
-      new JavaSerializer(sparkConf).newInstance().asInstanceOf[JavaSerializerInstance]
-    val nettyEnv =
-      new NettyRpcEnv(sparkConf, javaSerializerInstance, config.advertiseAddress,
-        config.securityManager)
-    if (!config.clientMode) {
-      val startNettyRpcEnv: Int => (NettyRpcEnv, Int) = { actualPort =>
-        nettyEnv.startServer(config.bindAddress, actualPort)
-        (nettyEnv, nettyEnv.address.port)
-      }
-      try {
-        Utils.startServiceOnPort(config.port, startNettyRpcEnv, sparkConf, config.name)._1
-      } catch {
-        case NonFatal(e) =>
-          nettyEnv.shutdown()
-          throw e
-      }
-    }
-    nettyEnv
-  }
-}
-
-...
-
-/**
- * A RpcEnv implementation must have a [[RpcEnvFactory]] implementation with an empty constructor
- * so that it can be created via Reflection.
- */
-private[spark] object RpcEnv {
-
-  def create(
-      name: String,
-      host: String,
-      port: Int,
-      conf: SparkConf,
-      securityManager: SecurityManager,
-      clientMode: Boolean = false): RpcEnv = {
-    create(name, host, host, port, conf, securityManager, clientMode)
-  }
-
-  def create(
-      name: String,
-      bindAddress: String,
-      advertiseAddress: String,
-      port: Int,
-      conf: SparkConf,
-      securityManager: SecurityManager,
-      clientMode: Boolean): RpcEnv = {
-    val config = RpcEnvConfig(conf, name, bindAddress, advertiseAddress, port, securityManager,
-      clientMode)
-    new NettyRpcEnvFactory().create(config)
-  }
-}
-
-...
-
-/**
-  * Helper method to create a SparkEnv for a driver or an executor.
-  */
-private def create(
-    conf: SparkConf,
-    executorId: String,
-    bindAddress: String,
-    advertiseAddress: String,
-    port: Int,
-    isLocal: Boolean,
-    numUsableCores: Int,
-    ioEncryptionKey: Option[Array[Byte]],
-    listenerBus: LiveListenerBus = null,
-    mockOutputCommitCoordinator: Option[OutputCommitCoordinator] = None): SparkEnv = {
-
-  val isDriver = executorId == SparkContext.DRIVER_IDENTIFIER
-
-  // Listener bus is only used on the driver
-  if (isDriver) {
-    assert(listenerBus != null, "Attempted to create driver SparkEnv with null listener bus!")
-  }
-
-  val securityManager = new SecurityManager(conf, ioEncryptionKey)
-  ioEncryptionKey.foreach { _ =>
-    if (!securityManager.isSaslEncryptionEnabled()) {
-      logWarning("I/O encryption enabled without RPC encryption: keys will be visible on the " +
-        "wire.")
-    }
-  }
-
-  val systemName = if (isDriver) driverSystemName else executorSystemName
-  val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port, conf,
-    securityManager, clientMode = !isDriver)
-
-  // Figure out which port RpcEnv actually bound to in case the original port is 0 or occupied.
-  // In the non-driver case, the RPC env's address may be null since it may not be listening
-  // for incoming connections.
-  if (isDriver) {
-    conf.set("spark.driver.port", rpcEnv.address.port.toString)
-  } else if (rpcEnv.address != null) {
-    conf.set("spark.executor.port", rpcEnv.address.port.toString)
-    logInfo(s"Setting spark.executor.port to: ${rpcEnv.address.port.toString}")
-  }
-
-  // Create an instance of the class with the given name, possibly initializing it with our conf
-  def instantiateClass[T](className: String): T = {
-    val cls = Utils.classForName(className)
-    // Look for a constructor taking a SparkConf and a boolean isDriver, then one taking just
-    // SparkConf, then one taking no arguments
-    try {
-      cls.getConstructor(classOf[SparkConf], java.lang.Boolean.TYPE)
-        .newInstance(conf, new java.lang.Boolean(isDriver))
-        .asInstanceOf[T]
-    } catch {
-      case _: NoSuchMethodException =>
-        try {
-          cls.getConstructor(classOf[SparkConf]).newInstance(conf).asInstanceOf[T]
-        } catch {
-          case _: NoSuchMethodException =>
-            cls.getConstructor().newInstance().asInstanceOf[T]
-        }
-    }
-  }
-
-  // Create an instance of the class named by the given SparkConf property, or defaultClassName
-  // if the property is not set, possibly initializing it with our conf
-  def instantiateClassFromConf[T](propertyName: String, defaultClassName: String): T = {
-    instantiateClass[T](conf.get(propertyName, defaultClassName))
-  }
-
-  val serializer = instantiateClassFromConf[Serializer](
-    "spark.serializer", "org.apache.spark.serializer.JavaSerializer")
-  logDebug(s"Using serializer: ${serializer.getClass}")
-
-  val serializerManager = new SerializerManager(serializer, conf, ioEncryptionKey)
-
-  val closureSerializer = new JavaSerializer(conf)
-
-  def registerOrLookupEndpoint(
-      name: String, endpointCreator: => RpcEndpoint):
-    RpcEndpointRef = {
-    if (isDriver) {
-      logInfo("Registering " + name)
-      rpcEnv.setupEndpoint(name, endpointCreator)
-    } else {
-      RpcUtils.makeDriverRef(name, conf, rpcEnv)
-    }
-  }
-
-  val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
-
-  val mapOutputTracker = if (isDriver) {
-    new MapOutputTrackerMaster(conf, broadcastManager, isLocal)
-  } else {
-    new MapOutputTrackerWorker(conf)
-  }
-
-  // Have to assign trackerEndpoint after initialization as MapOutputTrackerEndpoint
-  // requires the MapOutputTracker itself
-  mapOutputTracker.trackerEndpoint = registerOrLookupEndpoint(MapOutputTracker.ENDPOINT_NAME,
-    new MapOutputTrackerMasterEndpoint(
-      rpcEnv, mapOutputTracker.asInstanceOf[MapOutputTrackerMaster], conf))
-
-  // Let the user specify short names for shuffle managers
-  val shortShuffleMgrNames = Map(
-    "sort" -> classOf[org.apache.spark.shuffle.sort.SortShuffleManager].getName,
-    "tungsten-sort" -> classOf[org.apache.spark.shuffle.sort.SortShuffleManager].getName)
-  val shuffleMgrName = conf.get("spark.shuffle.manager", "sort")
-  val shuffleMgrClass = shortShuffleMgrNames.getOrElse(shuffleMgrName.toLowerCase, shuffleMgrName)
-  val shuffleManager = instantiateClass[ShuffleManager](shuffleMgrClass)
-
-  val useLegacyMemoryManager = conf.getBoolean("spark.memory.useLegacyMode", false)
-  val memoryManager: MemoryManager =
-    if (useLegacyMemoryManager) {
-      new StaticMemoryManager(conf, numUsableCores)
-    } else {
-      UnifiedMemoryManager(conf, numUsableCores)
-    }
-
-  val blockManagerPort = if (isDriver) {
-    conf.get(DRIVER_BLOCK_MANAGER_PORT)
-  } else {
-    conf.get(BLOCK_MANAGER_PORT)
-  }
-
-  val blockTransferService =
-    new NettyBlockTransferService(conf, securityManager, bindAddress, advertiseAddress,
-      blockManagerPort, numUsableCores)
-
-  val blockManagerMaster = new BlockManagerMaster(registerOrLookupEndpoint(
-    BlockManagerMaster.DRIVER_ENDPOINT_NAME,
-    new BlockManagerMasterEndpoint(rpcEnv, isLocal, conf, listenerBus)),
-    conf, isDriver)
-
-  // NB: blockManager is not valid until initialize() is called later.
-  val blockManager = new BlockManager(executorId, rpcEnv, blockManagerMaster,
-    serializerManager, conf, memoryManager, mapOutputTracker, shuffleManager,
-    blockTransferService, securityManager, numUsableCores)
-
-  val metricsSystem = if (isDriver) {
-    // Don't start metrics system right now for Driver.
-    // We need to wait for the task scheduler to give us an app ID.
-    // Then we can start the metrics system.
-    MetricsSystem.createMetricsSystem("driver", conf, securityManager)
-  } else {
-    // We need to set the executor ID before the MetricsSystem is created because sources and
-    // sinks specified in the metrics configuration file will want to incorporate this executor's
-    // ID into the metrics they report.
-    conf.set("spark.executor.id", executorId)
-    val ms = MetricsSystem.createMetricsSystem("executor", conf, securityManager)
-    ms.start()
-    ms
-  }
-
-  val outputCommitCoordinator = mockOutputCommitCoordinator.getOrElse {
-    new OutputCommitCoordinator(conf, isDriver)
-  }
-  val outputCommitCoordinatorRef = registerOrLookupEndpoint("OutputCommitCoordinator",
-    new OutputCommitCoordinatorEndpoint(rpcEnv, outputCommitCoordinator))
-  outputCommitCoordinator.coordinatorRef = Some(outputCommitCoordinatorRef)
-
-  val envInstance = new SparkEnv(
-    executorId,
-    rpcEnv,
-    serializer,
-    closureSerializer,
-    serializerManager,
-    mapOutputTracker,
-    shuffleManager,
-    broadcastManager,
-    blockManager,
-    securityManager,
-    metricsSystem,
-    memoryManager,
-    outputCommitCoordinator,
-    conf)
-
-  // Add a reference to tmp dir created by driver, we will delete this tmp dir when stop() is
-  // called, and we only need to do it for driver. Because driver may run as a service, and if we
-  // don't delete this tmp dir when sc is stopped, then will create too many tmp dirs.
-  if (isDriver) {
-    val sparkFilesDir = Utils.createTempDir(Utils.getLocalDir(conf), "userFiles").getAbsolutePath
-    envInstance.driverTmpDir = Some(sparkFilesDir)
-  }
-
-  envInstance
-}
-
-...
-
-/**
- * Main entry point for Spark functionality. A SparkContext represents the connection to a Spark
- * cluster, and can be used to create RDDs, accumulators and broadcast variables on that cluster.
- *
- * Only one SparkContext may be active per JVM.  You must `stop()` the active SparkContext before
- * creating a new one.  This limitation may eventually be removed; see SPARK-2243 for more details.
- *
- * @param config a Spark Config object describing the application configuration. Any settings in
- *   this config overrides the default configs as well as system properties.
- */
-class SparkContext(config: SparkConf) extends Logging {
-
-  // The call site where this SparkContext was constructed.
-  private val creationSite: CallSite = Utils.getCallSite()
-
-  // If true, log warnings instead of throwing exceptions when multiple SparkContexts are active
-  private val allowMultipleContexts: Boolean =
-    config.getBoolean("spark.driver.allowMultipleContexts", false)
-
-  // In order to prevent multiple SparkContexts from being active at the same time, mark this
-  // context as having started construction.
-  // NOTE: this must be placed at the beginning of the SparkContext constructor.
-  SparkContext.markPartiallyConstructed(this, allowMultipleContexts)
-
-  val startTime = System.currentTimeMillis()
-
-  private[spark] val stopped: AtomicBoolean = new AtomicBoolean(false)
-
-  private[spark] def assertNotStopped(): Unit = {
-    if (stopped.get()) {
-      val activeContext = SparkContext.activeContext.get()
-      val activeCreationSite =
-        if (activeContext == null) {
-          "(No active SparkContext.)"
-        } else {
-          activeContext.creationSite.longForm
-        }
-      throw new IllegalStateException(
-        s"""Cannot call methods on a stopped SparkContext.
-           |This stopped SparkContext was created at:
-           |
-           |${creationSite.longForm}
-           |
-           |The currently active SparkContext was created at:
-           |
-           |$activeCreationSite
-         """.stripMargin)
-    }
-  }
-
-  /**
-   * Create a SparkContext that loads settings from system properties (for instance, when
-   * launching with ./bin/spark-submit).
-   */
-  def this() = this(new SparkConf())
-
-  /**
-   * Alternative constructor that allows setting common Spark properties directly
-   *
-   * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
-   * @param appName A name for your application, to display on the cluster web UI
-   * @param conf a [[org.apache.spark.SparkConf]] object specifying other Spark parameters
-   */
-  def this(master: String, appName: String, conf: SparkConf) =
-    this(SparkContext.updatedConf(conf, master, appName))
-
-  /**
-   * Alternative constructor that allows setting common Spark properties directly
-   *
-   * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
-   * @param appName A name for your application, to display on the cluster web UI.
-   * @param sparkHome Location where Spark is installed on cluster nodes.
-   * @param jars Collection of JARs to send to the cluster. These can be paths on the local file
-   *             system or HDFS, HTTP, HTTPS, or FTP URLs.
-   * @param environment Environment variables to set on worker nodes.
-   */
-  def this(
-      master: String,
-      appName: String,
-      sparkHome: String = null,
-      jars: Seq[String] = Nil,
-      environment: Map[String, String] = Map()) = {
-    this(SparkContext.updatedConf(new SparkConf(), master, appName, sparkHome, jars, environment))
-  }
-
-  // NOTE: The below constructors could be consolidated using default arguments. Due to
-  // Scala bug SI-8479, however, this causes the compile step to fail when generating docs.
-  // Until we have a good workaround for that bug the constructors remain broken out.
-
-  /**
-   * Alternative constructor that allows setting common Spark properties directly
-   *
-   * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
-   * @param appName A name for your application, to display on the cluster web UI.
-   */
-  private[spark] def this(master: String, appName: String) =
-    this(master, appName, null, Nil, Map())
-
-  /**
-   * Alternative constructor that allows setting common Spark properties directly
-   *
-   * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
-   * @param appName A name for your application, to display on the cluster web UI.
-   * @param sparkHome Location where Spark is installed on cluster nodes.
-   */
-  private[spark] def this(master: String, appName: String, sparkHome: String) =
-    this(master, appName, sparkHome, Nil, Map())
-
-  /**
-   * Alternative constructor that allows setting common Spark properties directly
-   *
-   * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
-   * @param appName A name for your application, to display on the cluster web UI.
-   * @param sparkHome Location where Spark is installed on cluster nodes.
-   * @param jars Collection of JARs to send to the cluster. These can be paths on the local file
-   *             system or HDFS, HTTP, HTTPS, or FTP URLs.
-   */
-  private[spark] def this(master: String, appName: String, sparkHome: String, jars: Seq[String]) =
-    this(master, appName, sparkHome, jars, Map())
-
-  // log out Spark Version in Spark driver log
-  logInfo(s"Running Spark version $SPARK_VERSION")
-
-  warnDeprecatedVersions()
-
-  /* ------------------------------------------------------------------------------------- *
-   | Private variables. These variables keep the internal state of the context, and are    |
-   | not accessible by the outside world. They're mutable since we want to initialize all  |
-   | of them to some neutral value ahead of time, so that calling "stop()" while the       |
-   | constructor is still running is safe.                                                 |
-   * ------------------------------------------------------------------------------------- */
-
-  private var _conf: SparkConf = _
-  private var _eventLogDir: Option[URI] = None
-  private var _eventLogCodec: Option[String] = None
-  private var _env: SparkEnv = _
-  private var _jobProgressListener: JobProgressListener = _
-  private var _statusTracker: SparkStatusTracker = _
-  private var _progressBar: Option[ConsoleProgressBar] = None
-  private var _ui: Option[SparkUI] = None
-  private var _hadoopConfiguration: Configuration = _
-  private var _executorMemory: Int = _
-  private var _schedulerBackend: SchedulerBackend = _
-  private var _taskScheduler: TaskScheduler = _
-  private var _heartbeatReceiver: RpcEndpointRef = _
-  @volatile private var _dagScheduler: DAGScheduler = _
-  private var _applicationId: String = _
-  private var _applicationAttemptId: Option[String] = None
-  private var _eventLogger: Option[EventLoggingListener] = None
-  private var _executorAllocationManager: Option[ExecutorAllocationManager] = None
-  private var _cleaner: Option[ContextCleaner] = None
-  private var _listenerBusStarted: Boolean = false
-  private var _jars: Seq[String] = _
-  private var _files: Seq[String] = _
-  private var _shutdownHookRef: AnyRef = _
-
-  /* ------------------------------------------------------------------------------------- *
-   | Accessors and public fields. These provide access to the internal state of the        |
-   | context.                                                                              |
-   * ------------------------------------------------------------------------------------- */
-
-  private[spark] def conf: SparkConf = _conf
-
-  /**
-   * Return a copy of this SparkContext's configuration. The configuration ''cannot'' be
-   * changed at runtime.
-   */
-  def getConf: SparkConf = conf.clone()
-
-  def jars: Seq[String] = _jars
-  def files: Seq[String] = _files
-  def master: String = _conf.get("spark.master")
-  def deployMode: String = _conf.getOption("spark.submit.deployMode").getOrElse("client")
-  def appName: String = _conf.get("spark.app.name")
-
-  private[spark] def isEventLogEnabled: Boolean = _conf.getBoolean("spark.eventLog.enabled", false)
-  private[spark] def eventLogDir: Option[URI] = _eventLogDir
-  private[spark] def eventLogCodec: Option[String] = _eventLogCodec
-
-  def isLocal: Boolean = Utils.isLocalMaster(_conf)
-
-  /**
-   * @return true if context is stopped or in the midst of stopping.
-   */
-  def isStopped: Boolean = stopped.get()
-
-  // An asynchronous listener bus for Spark events
-  private[spark] val listenerBus = new LiveListenerBus(this)
-
-  // This function allows components created by SparkEnv to be mocked in unit tests:
-  private[spark] def createSparkEnv(
-      conf: SparkConf,
-      isLocal: Boolean,
-      listenerBus: LiveListenerBus): SparkEnv = {
-    SparkEnv.createDriverEnv(conf, isLocal, listenerBus, SparkContext.numDriverCores(master))
-  }
-  ...
-}
-
-...
-
-private[spark] object CoarseGrainedExecutorBackend extends Logging {
-
-  private def run(
-      driverUrl: String,
-      executorId: String,
-      hostname: String,
-      cores: Int,
-      appId: String,
-      workerUrl: Option[String],
-      userClassPath: Seq[URL]) {
-
-    Utils.initDaemon(log)
-
-    SparkHadoopUtil.get.runAsSparkUser { () =>
-      // Debug code
-      Utils.checkHost(hostname)
-
-      // Bootstrap to fetch the driver's Spark properties.
-      val executorConf = new SparkConf
-      val port = executorConf.getInt("spark.executor.port", 0)
-      val fetcher = RpcEnv.create(
-        "driverPropsFetcher",
-        hostname,
-        port,
-        executorConf,
-        new SecurityManager(executorConf),
-        clientMode = true)
-      val driver = fetcher.setupEndpointRefByURI(driverUrl)
-      val cfg = driver.askWithRetry[SparkAppConfig](RetrieveSparkAppConfig(executorId))
-      val props = cfg.sparkProperties ++ Seq[(String, String)](("spark.app.id", appId))
-      fetcher.shutdown()
-
-      // Create SparkEnv using properties we fetched from the driver.
-      val driverConf = new SparkConf()
-      for ((key, value) <- props) {
-        // this is required for SSL in standalone mode
-        if (SparkConf.isExecutorStartupConf(key)) {
-          driverConf.setIfMissing(key, value)
-        } else {
-          driverConf.set(key, value)
-        }
-      }
-      if (driverConf.contains("spark.yarn.credentials.file")) {
-        logInfo("Will periodically update credentials from: " +
-          driverConf.get("spark.yarn.credentials.file"))
-        SparkHadoopUtil.get.startCredentialUpdater(driverConf)
-      }
-
-      val env = SparkEnv.createExecutorEnv(
-        driverConf, executorId, hostname, port, cores, cfg.ioEncryptionKey, isLocal = false)
-
-      env.rpcEnv.setupEndpoint("Executor", new CoarseGrainedExecutorBackend(
-        env.rpcEnv, driverUrl, executorId, hostname, cores, userClassPath, env))
-      workerUrl.foreach { url =>
-        env.rpcEnv.setupEndpoint("WorkerWatcher", new WorkerWatcher(env.rpcEnv, url))
-      }
-      env.rpcEnv.awaitTermination()
-      SparkHadoopUtil.get.stopCredentialUpdater()
-    }
-  }
-
-  def main(args: Array[String]) {
-    var driverUrl: String = null
-    var executorId: String = null
-    var hostname: String = null
-    var cores: Int = 0
-    var appId: String = null
-    var workerUrl: Option[String] = None
-    val userClassPath = new mutable.ListBuffer[URL]()
-
-    var argv = args.toList
-    while (!argv.isEmpty) {
-      argv match {
-        case ("--driver-url") :: value :: tail =>
-          driverUrl = value
-          argv = tail
-        case ("--executor-id") :: value :: tail =>
-          executorId = value
-          argv = tail
-        case ("--hostname") :: value :: tail =>
-          hostname = value
-          argv = tail
-        case ("--cores") :: value :: tail =>
-          cores = value.toInt
-          argv = tail
-        case ("--app-id") :: value :: tail =>
-          appId = value
-          argv = tail
-        case ("--worker-url") :: value :: tail =>
-          // Worker url is used in spark standalone mode to enforce fate-sharing with worker
-          workerUrl = Some(value)
-          argv = tail
-        case ("--user-class-path") :: value :: tail =>
-          userClassPath += new URL(value)
-          argv = tail
-        case Nil =>
-        case tail =>
-          // scalastyle:off println
-          System.err.println(s"Unrecognized options: ${tail.mkString(" ")}")
-          // scalastyle:on println
-          printUsageAndExit()
-      }
-    }
-
-    if (driverUrl == null || executorId == null || hostname == null || cores <= 0 ||
-      appId == null) {
-      printUsageAndExit()
-    }
-
-    run(driverUrl, executorId, hostname, cores, appId, workerUrl, userClassPath)
-    System.exit(0)
-  }
-
-  private def printUsageAndExit() = {
-    // scalastyle:off println
-    System.err.println(
-      """
-      |Usage: CoarseGrainedExecutorBackend [options]
-      |
-      | Options are:
-      |   --driver-url <driverUrl>
-      |   --executor-id <executorId>
-      |   --hostname <hostname>
-      |   --cores <cores>
-      |   --app-id <appid>
-      |   --worker-url <workerUrl>
-      |   --user-class-path <url>
-      |""".stripMargin)
-    // scalastyle:on println
-    System.exit(1)
-  }
-
-}
-```
-
-消息处理逻辑？？？
+<span style="color:red">消息处理逻辑？？？</span>
 
 由`SparkContext`实例初始化：`_env = createSparkEnv(_conf, isLocal, listenerBus)`：
 
@@ -2704,13 +1973,590 @@ private[spark] def createDriverEnv(
 }
 ```
 
+`create`函数如下：
 
+```scala
+/**
+  * Helper method to create a SparkEnv for a driver or an executor.
+  */
+private def create(
+    conf: SparkConf,
+    executorId: String,
+    bindAddress: String,
+    advertiseAddress: String,
+    port: Int,
+    isLocal: Boolean,
+    numUsableCores: Int,
+    ioEncryptionKey: Option[Array[Byte]],
+    listenerBus: LiveListenerBus = null,
+    mockOutputCommitCoordinator: Option[OutputCommitCoordinator] = None): SparkEnv = {
 
+  val isDriver = executorId == SparkContext.DRIVER_IDENTIFIER
 
+  // Listener bus is only used on the driver
+  if (isDriver) {
+    assert(listenerBus != null, "Attempted to create driver SparkEnv with null listener bus!")
+  }
 
+  val securityManager = new SecurityManager(conf, ioEncryptionKey)
+  ioEncryptionKey.foreach { _ =>
+    if (!securityManager.isSaslEncryptionEnabled()) {
+      logWarning("I/O encryption enabled without RPC encryption: keys will be visible on the " +
+        "wire.")
+    }
+  }
 
+  val systemName = if (isDriver) driverSystemName else executorSystemName
+  val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port, conf,
+    securityManager, clientMode = !isDriver)
 
+  // Figure out which port RpcEnv actually bound to in case the original port is 0 or occupied.
+  // In the non-driver case, the RPC env's address may be null since it may not be listening
+  // for incoming connections.
+  if (isDriver) {
+    conf.set("spark.driver.port", rpcEnv.address.port.toString)
+  } else if (rpcEnv.address != null) {
+    conf.set("spark.executor.port", rpcEnv.address.port.toString)
+    logInfo(s"Setting spark.executor.port to: ${rpcEnv.address.port.toString}")
+  }
 
+  // Create an instance of the class with the given name, possibly initializing it with our conf
+  def instantiateClass[T](className: String): T = {
+    val cls = Utils.classForName(className)
+    // Look for a constructor taking a SparkConf and a boolean isDriver, then one taking just
+    // SparkConf, then one taking no arguments
+    try {
+      cls.getConstructor(classOf[SparkConf], java.lang.Boolean.TYPE)
+        .newInstance(conf, new java.lang.Boolean(isDriver))
+        .asInstanceOf[T]
+    } catch {
+      case _: NoSuchMethodException =>
+        try {
+          cls.getConstructor(classOf[SparkConf]).newInstance(conf).asInstanceOf[T]
+        } catch {
+          case _: NoSuchMethodException =>
+            cls.getConstructor().newInstance().asInstanceOf[T]
+        }
+    }
+  }
+
+  // Create an instance of the class named by the given SparkConf property, or defaultClassName
+  // if the property is not set, possibly initializing it with our conf
+  def instantiateClassFromConf[T](propertyName: String, defaultClassName: String): T = {
+    instantiateClass[T](conf.get(propertyName, defaultClassName))
+  }
+
+  val serializer = instantiateClassFromConf[Serializer](
+    "spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+  logDebug(s"Using serializer: ${serializer.getClass}")
+
+  val serializerManager = new SerializerManager(serializer, conf, ioEncryptionKey)
+
+  val closureSerializer = new JavaSerializer(conf)
+
+  def registerOrLookupEndpoint(
+      name: String, endpointCreator: => RpcEndpoint):
+    RpcEndpointRef = {
+    if (isDriver) {
+      logInfo("Registering " + name)
+      rpcEnv.setupEndpoint(name, endpointCreator)
+    } else {
+      RpcUtils.makeDriverRef(name, conf, rpcEnv)
+    }
+  }
+
+  val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
+
+  val mapOutputTracker = if (isDriver) {
+    new MapOutputTrackerMaster(conf, broadcastManager, isLocal)
+  } else {
+    new MapOutputTrackerWorker(conf)
+  }
+
+  // Have to assign trackerEndpoint after initialization as MapOutputTrackerEndpoint
+  // requires the MapOutputTracker itself
+  mapOutputTracker.trackerEndpoint = registerOrLookupEndpoint(MapOutputTracker.ENDPOINT_NAME,
+    new MapOutputTrackerMasterEndpoint(
+      rpcEnv, mapOutputTracker.asInstanceOf[MapOutputTrackerMaster], conf))
+
+  // Let the user specify short names for shuffle managers
+  val shortShuffleMgrNames = Map(
+    "sort" -> classOf[org.apache.spark.shuffle.sort.SortShuffleManager].getName,
+    "tungsten-sort" -> classOf[org.apache.spark.shuffle.sort.SortShuffleManager].getName)
+  val shuffleMgrName = conf.get("spark.shuffle.manager", "sort")
+  val shuffleMgrClass = shortShuffleMgrNames.getOrElse(shuffleMgrName.toLowerCase, shuffleMgrName)
+  val shuffleManager = instantiateClass[ShuffleManager](shuffleMgrClass)
+
+  val useLegacyMemoryManager = conf.getBoolean("spark.memory.useLegacyMode", false)
+  val memoryManager: MemoryManager =
+    if (useLegacyMemoryManager) {
+      new StaticMemoryManager(conf, numUsableCores)
+    } else {
+      UnifiedMemoryManager(conf, numUsableCores)
+    }
+
+  val blockManagerPort = if (isDriver) {
+    conf.get(DRIVER_BLOCK_MANAGER_PORT)
+  } else {
+    conf.get(BLOCK_MANAGER_PORT)
+  }
+
+  val blockTransferService =
+    new NettyBlockTransferService(conf, securityManager, bindAddress, advertiseAddress,
+      blockManagerPort, numUsableCores)
+
+  val blockManagerMaster = new BlockManagerMaster(registerOrLookupEndpoint(
+    BlockManagerMaster.DRIVER_ENDPOINT_NAME,
+    new BlockManagerMasterEndpoint(rpcEnv, isLocal, conf, listenerBus)),
+    conf, isDriver)
+
+  // NB: blockManager is not valid until initialize() is called later.
+  val blockManager = new BlockManager(executorId, rpcEnv, blockManagerMaster,
+    serializerManager, conf, memoryManager, mapOutputTracker, shuffleManager,
+    blockTransferService, securityManager, numUsableCores)
+
+  val metricsSystem = if (isDriver) {
+    // Don't start metrics system right now for Driver.
+    // We need to wait for the task scheduler to give us an app ID.
+    // Then we can start the metrics system.
+    MetricsSystem.createMetricsSystem("driver", conf, securityManager)
+  } else {
+    // We need to set the executor ID before the MetricsSystem is created because sources and
+    // sinks specified in the metrics configuration file will want to incorporate this executor's
+    // ID into the metrics they report.
+    conf.set("spark.executor.id", executorId)
+    val ms = MetricsSystem.createMetricsSystem("executor", conf, securityManager)
+    ms.start()
+    ms
+  }
+
+  val outputCommitCoordinator = mockOutputCommitCoordinator.getOrElse {
+    new OutputCommitCoordinator(conf, isDriver)
+  }
+  val outputCommitCoordinatorRef = registerOrLookupEndpoint("OutputCommitCoordinator",
+    new OutputCommitCoordinatorEndpoint(rpcEnv, outputCommitCoordinator))
+  outputCommitCoordinator.coordinatorRef = Some(outputCommitCoordinatorRef)
+
+  val envInstance = new SparkEnv(
+    executorId,
+    rpcEnv,
+    serializer,
+    closureSerializer,
+    serializerManager,
+    mapOutputTracker,
+    shuffleManager,
+    broadcastManager,
+    blockManager,
+    securityManager,
+    metricsSystem,
+    memoryManager,
+    outputCommitCoordinator,
+    conf)
+
+  // Add a reference to tmp dir created by driver, we will delete this tmp dir when stop() is
+  // called, and we only need to do it for driver. Because driver may run as a service, and if we
+  // don't delete this tmp dir when sc is stopped, then will create too many tmp dirs.
+  if (isDriver) {
+    val sparkFilesDir = Utils.createTempDir(Utils.getLocalDir(conf), "userFiles").getAbsolutePath
+    envInstance.driverTmpDir = Some(sparkFilesDir)
+  }
+
+  envInstance
+}
+```
+
+`RpcEnv.create`如下：
+
+```scala
+val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port, conf,
+      securityManager, clientMode = !isDriver)
+
+/**
+ * A RpcEnv implementation must have a [[RpcEnvFactory]] implementation with an empty constructor
+ * so that it can be created via Reflection.
+ */
+private[spark] object RpcEnv {
+
+  def create(
+      name: String,
+      host: String,
+      port: Int,
+      conf: SparkConf,
+      securityManager: SecurityManager,
+      clientMode: Boolean = false): RpcEnv = {
+    create(name, host, host, port, conf, securityManager, clientMode)
+  }
+
+  def create(
+      name: String,
+      bindAddress: String,
+      advertiseAddress: String,
+      port: Int,
+      conf: SparkConf,
+      securityManager: SecurityManager,
+      clientMode: Boolean): RpcEnv = {
+    val config = RpcEnvConfig(conf, name, bindAddress, advertiseAddress, port, securityManager,
+      clientMode)
+    new NettyRpcEnvFactory().create(config)
+  }
+}
+
+private[rpc] class NettyRpcEnvFactory extends RpcEnvFactory with Logging {
+
+  def create(config: RpcEnvConfig): RpcEnv = {
+    val sparkConf = config.conf
+    // Use JavaSerializerInstance in multiple threads is safe. However, if we plan to support
+    // KryoSerializer in future, we have to use ThreadLocal to store SerializerInstance
+    val javaSerializerInstance =
+      new JavaSerializer(sparkConf).newInstance().asInstanceOf[JavaSerializerInstance]
+    val nettyEnv =
+      new NettyRpcEnv(sparkConf, javaSerializerInstance, config.advertiseAddress,
+        config.securityManager)
+    if (!config.clientMode) {
+      val startNettyRpcEnv: Int => (NettyRpcEnv, Int) = { actualPort =>
+        nettyEnv.startServer(config.bindAddress, actualPort)
+        (nettyEnv, nettyEnv.address.port)
+      }
+      try {
+        Utils.startServiceOnPort(config.port, startNettyRpcEnv, sparkConf, config.name)._1
+      } catch {
+        case NonFatal(e) =>
+          nettyEnv.shutdown()
+          throw e
+      }
+    }
+    nettyEnv
+  }
+}
+```
+
+`val nettyEnv = new NettyRpcEnv(sparkConf, javaSerializerInstance, config.advertiseAddress, config.securityManager)`如下：
+
+```scala
+private[netty] class NettyRpcEnv(
+    val conf: SparkConf,
+    javaSerializerInstance: JavaSerializerInstance,
+    host: String,
+    securityManager: SecurityManager) extends RpcEnv(conf) with Logging {
+
+  private[netty] val transportConf = SparkTransportConf.fromSparkConf(
+    conf.clone.set("spark.rpc.io.numConnectionsPerPeer", "1"),
+    "rpc",
+    conf.getInt("spark.rpc.io.threads", 0))
+
+  private val dispatcher: Dispatcher = new Dispatcher(this)
+  ...
+}
+```
+
+`Dispatcher`如下：
+
+```scala
+/**
+ * A message dispatcher, responsible for routing RPC messages to the appropriate endpoint(s).
+ */
+private[netty] class Dispatcher(nettyEnv: NettyRpcEnv) extends Logging {
+
+  private class EndpointData(
+      val name: String,
+      val endpoint: RpcEndpoint,
+      val ref: NettyRpcEndpointRef) {
+    val inbox = new Inbox(ref, endpoint)
+  }
+
+  private val endpoints: ConcurrentMap[String, EndpointData] =
+    new ConcurrentHashMap[String, EndpointData]
+  private val endpointRefs: ConcurrentMap[RpcEndpoint, RpcEndpointRef] =
+    new ConcurrentHashMap[RpcEndpoint, RpcEndpointRef]
+
+  // Track the receivers whose inboxes may contain messages.
+  private val receivers = new LinkedBlockingQueue[EndpointData]
+
+  /**
+   * True if the dispatcher has been stopped. Once stopped, all messages posted will be bounced
+   * immediately.
+   */
+  @GuardedBy("this")
+  private var stopped = false
+
+  def registerRpcEndpoint(name: String, endpoint: RpcEndpoint): NettyRpcEndpointRef = {
+    val addr = RpcEndpointAddress(nettyEnv.address, name)
+    val endpointRef = new NettyRpcEndpointRef(nettyEnv.conf, addr, nettyEnv)
+    synchronized {
+      if (stopped) {
+        throw new IllegalStateException("RpcEnv has been stopped")
+      }
+      if (endpoints.putIfAbsent(name, new EndpointData(name, endpoint, endpointRef)) != null) {
+        throw new IllegalArgumentException(s"There is already an RpcEndpoint called $name")
+      }
+      val data = endpoints.get(name)
+      endpointRefs.put(data.endpoint, data.ref)
+      receivers.offer(data)  // for the OnStart message
+    }
+    endpointRef
+  }
+
+  def getRpcEndpointRef(endpoint: RpcEndpoint): RpcEndpointRef = endpointRefs.get(endpoint)
+
+  def removeRpcEndpointRef(endpoint: RpcEndpoint): Unit = endpointRefs.remove(endpoint)
+
+  // Should be idempotent
+  private def unregisterRpcEndpoint(name: String): Unit = {
+    val data = endpoints.remove(name)
+    if (data != null) {
+      data.inbox.stop()
+      receivers.offer(data)  // for the OnStop message
+    }
+    // Don't clean `endpointRefs` here because it's possible that some messages are being processed
+    // now and they can use `getRpcEndpointRef`. So `endpointRefs` will be cleaned in Inbox via
+    // `removeRpcEndpointRef`.
+  }
+
+  def stop(rpcEndpointRef: RpcEndpointRef): Unit = {
+    synchronized {
+      if (stopped) {
+        // This endpoint will be stopped by Dispatcher.stop() method.
+        return
+      }
+      unregisterRpcEndpoint(rpcEndpointRef.name)
+    }
+  }
+
+  /**
+   * Send a message to all registered [[RpcEndpoint]]s in this process.
+   *
+   * This can be used to make network events known to all end points (e.g. "a new node connected").
+   */
+  def postToAll(message: InboxMessage): Unit = {
+    val iter = endpoints.keySet().iterator()
+    while (iter.hasNext) {
+      val name = iter.next
+      postMessage(name, message, (e) => logWarning(s"Message $message dropped. ${e.getMessage}"))
+    }
+  }
+
+  /** Posts a message sent by a remote endpoint. */
+  def postRemoteMessage(message: RequestMessage, callback: RpcResponseCallback): Unit = {
+    val rpcCallContext =
+      new RemoteNettyRpcCallContext(nettyEnv, callback, message.senderAddress)
+    val rpcMessage = RpcMessage(message.senderAddress, message.content, rpcCallContext)
+    postMessage(message.receiver.name, rpcMessage, (e) => callback.onFailure(e))
+  }
+
+  /** Posts a message sent by a local endpoint. */
+  def postLocalMessage(message: RequestMessage, p: Promise[Any]): Unit = {
+    val rpcCallContext =
+      new LocalNettyRpcCallContext(message.senderAddress, p)
+    val rpcMessage = RpcMessage(message.senderAddress, message.content, rpcCallContext)
+    postMessage(message.receiver.name, rpcMessage, (e) => p.tryFailure(e))
+  }
+
+  /** Posts a one-way message. */
+  def postOneWayMessage(message: RequestMessage): Unit = {
+    postMessage(message.receiver.name, OneWayMessage(message.senderAddress, message.content),
+      (e) => throw e)
+  }
+
+  /**
+   * Posts a message to a specific endpoint.
+   *
+   * @param endpointName name of the endpoint.
+   * @param message the message to post
+   * @param callbackIfStopped callback function if the endpoint is stopped.
+   */
+  private def postMessage(
+      endpointName: String,
+      message: InboxMessage,
+      callbackIfStopped: (Exception) => Unit): Unit = {
+    val error = synchronized {
+      val data = endpoints.get(endpointName)
+      if (stopped) {
+        Some(new RpcEnvStoppedException())
+      } else if (data == null) {
+        Some(new SparkException(s"Could not find $endpointName."))
+      } else {
+        data.inbox.post(message)
+        receivers.offer(data)
+        None
+      }
+    }
+    // We don't need to call `onStop` in the `synchronized` block
+    error.foreach(callbackIfStopped)
+  }
+
+  def stop(): Unit = {
+    synchronized {
+      if (stopped) {
+        return
+      }
+      stopped = true
+    }
+    // Stop all endpoints. This will queue all endpoints for processing by the message loops.
+    endpoints.keySet().asScala.foreach(unregisterRpcEndpoint)
+    // Enqueue a message that tells the message loops to stop.
+    receivers.offer(PoisonPill)
+    threadpool.shutdown()
+  }
+
+  def awaitTermination(): Unit = {
+    threadpool.awaitTermination(Long.MaxValue, TimeUnit.MILLISECONDS)
+  }
+
+  /**
+   * Return if the endpoint exists
+   */
+  def verify(name: String): Boolean = {
+    endpoints.containsKey(name)
+  }
+
+  /** Thread pool used for dispatching messages. */
+  private val threadpool: ThreadPoolExecutor = {
+    val numThreads = nettyEnv.conf.getInt("spark.rpc.netty.dispatcher.numThreads",
+      math.max(2, Runtime.getRuntime.availableProcessors()))
+    val pool = ThreadUtils.newDaemonFixedThreadPool(numThreads, "dispatcher-event-loop")
+    for (i <- 0 until numThreads) {
+      pool.execute(new MessageLoop)
+    }
+    pool
+  }
+
+  /** Message loop used for dispatching messages. */
+  private class MessageLoop extends Runnable {
+    override def run(): Unit = {
+      try {
+        while (true) {
+          try {
+            val data = receivers.take()
+            if (data == PoisonPill) {
+              // Put PoisonPill back so that other MessageLoops can see it.
+              receivers.offer(PoisonPill)
+              return
+            }
+            data.inbox.process(Dispatcher.this)
+          } catch {
+            case NonFatal(e) => logError(e.getMessage, e)
+          }
+        }
+      } catch {
+        case ie: InterruptedException => // exit
+      }
+    }
+  }
+
+  /** A poison endpoint that indicates MessageLoop should exit its message loop. */
+  private val PoisonPill = new EndpointData(null, null, null)
+}
+```
+
+`MessageLoop`如下：
+
+```scala
+/** Message loop used for dispatching messages. */
+private class MessageLoop extends Runnable {
+  override def run(): Unit = {
+    try {
+      while (true) {
+        try {
+          val data = receivers.take()
+          if (data == PoisonPill) {
+            // Put PoisonPill back so that other MessageLoops can see it.
+            receivers.offer(PoisonPill)
+            return
+          }
+          data.inbox.process(Dispatcher.this)
+        } catch {
+          case NonFatal(e) => logError(e.getMessage, e)
+        }
+      }
+    } catch {
+      case ie: InterruptedException => // exit
+    }
+  }
+}
+
+/**
+  * Process stored messages.
+  */
+def process(dispatcher: Dispatcher): Unit = {
+  var message: InboxMessage = null
+  inbox.synchronized {
+    if (!enableConcurrent && numActiveThreads != 0) {
+      return
+    }
+    message = messages.poll()
+    if (message != null) {
+      numActiveThreads += 1
+    } else {
+      return
+    }
+  }
+  while (true) {
+    safelyCall(endpoint) {
+      message match {
+        case RpcMessage(_sender, content, context) =>
+          try {
+            endpoint.receiveAndReply(context).applyOrElse[Any, Unit](content, { msg =>
+              throw new SparkException(s"Unsupported message $message from ${_sender}")
+            })
+          } catch {
+            case NonFatal(e) =>
+              context.sendFailure(e)
+              // Throw the exception -- this exception will be caught by the safelyCall function.
+              // The endpoint's onError function will be called.
+              throw e
+          }
+
+        case OneWayMessage(_sender, content) =>
+          endpoint.receive.applyOrElse[Any, Unit](content, { msg =>
+            throw new SparkException(s"Unsupported message $message from ${_sender}")
+          })
+
+        case OnStart =>
+          endpoint.onStart()
+          if (!endpoint.isInstanceOf[ThreadSafeRpcEndpoint]) {
+            inbox.synchronized {
+              if (!stopped) {
+                enableConcurrent = true
+              }
+            }
+          }
+
+        case OnStop =>
+          val activeThreads = inbox.synchronized { inbox.numActiveThreads }
+          assert(activeThreads == 1,
+            s"There should be only a single active thread but found $activeThreads threads.")
+          dispatcher.removeRpcEndpointRef(endpoint)
+          endpoint.onStop()
+          assert(isEmpty, "OnStop should be the last message")
+
+        case RemoteProcessConnected(remoteAddress) =>
+          endpoint.onConnected(remoteAddress)
+
+        case RemoteProcessDisconnected(remoteAddress) =>
+          endpoint.onDisconnected(remoteAddress)
+
+        case RemoteProcessConnectionError(cause, remoteAddress) =>
+          endpoint.onNetworkError(cause, remoteAddress)
+      }
+    }
+
+    inbox.synchronized {
+      // "enableConcurrent" will be set to false after `onStop` is called, so we should check it
+      // every time.
+      if (!enableConcurrent && numActiveThreads != 1) {
+        // If we are not the only one worker, exit
+        numActiveThreads -= 1
+        return
+      }
+      message = messages.poll()
+      if (message == null) {
+        numActiveThreads -= 1
+        return
+      }
+    }
+  }
+}
+```
 
 2、`eventReceived`作用是什么？
 
@@ -2792,8 +2638,6 @@ private val allocatorRunnable: Runnable = new Runnable {
   }
 }
 ```
-
-
 
 ## 改进方案测试
 
