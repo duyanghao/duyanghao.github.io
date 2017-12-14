@@ -1695,6 +1695,160 @@ private class KubernetesDriverEndpoint(
 }
 ```
 
+如何发现的？
+
+```scala
+/**
+  * Process stored messages.
+  */
+def process(dispatcher: Dispatcher): Unit = {
+  var message: InboxMessage = null
+  inbox.synchronized {
+    if (!enableConcurrent && numActiveThreads != 0) {
+      return
+    }
+    message = messages.poll()
+    if (message != null) {
+      numActiveThreads += 1
+    } else {
+      return
+    }
+  }
+  while (true) {
+    safelyCall(endpoint) {
+      message match {
+        case RpcMessage(_sender, content, context) =>
+          try {
+            endpoint.receiveAndReply(context).applyOrElse[Any, Unit](content, { msg =>
+              throw new SparkException(s"Unsupported message $message from ${_sender}")
+            })
+          } catch {
+            case NonFatal(e) =>
+              context.sendFailure(e)
+              // Throw the exception -- this exception will be caught by the safelyCall function.
+              // The endpoint's onError function will be called.
+              throw e
+          }
+
+        case OneWayMessage(_sender, content) =>
+          endpoint.receive.applyOrElse[Any, Unit](content, { msg =>
+            throw new SparkException(s"Unsupported message $message from ${_sender}")
+          })
+
+        case OnStart =>
+          endpoint.onStart()
+          if (!endpoint.isInstanceOf[ThreadSafeRpcEndpoint]) {
+            inbox.synchronized {
+              if (!stopped) {
+                enableConcurrent = true
+              }
+            }
+          }
+
+        case OnStop =>
+          val activeThreads = inbox.synchronized { inbox.numActiveThreads }
+          assert(activeThreads == 1,
+            s"There should be only a single active thread but found $activeThreads threads.")
+          dispatcher.removeRpcEndpointRef(endpoint)
+          endpoint.onStop()
+          assert(isEmpty, "OnStop should be the last message")
+
+        case RemoteProcessConnected(remoteAddress) =>
+          endpoint.onConnected(remoteAddress)
+
+        case RemoteProcessDisconnected(remoteAddress) =>
+          endpoint.onDisconnected(remoteAddress)
+
+        case RemoteProcessConnectionError(cause, remoteAddress) =>
+          endpoint.onNetworkError(cause, remoteAddress)
+      }
+    }
+
+    inbox.synchronized {
+      // "enableConcurrent" will be set to false after `onStop` is called, so we should check it
+      // every time.
+      if (!enableConcurrent && numActiveThreads != 1) {
+        // If we are not the only one worker, exit
+        numActiveThreads -= 1
+        return
+      }
+      message = messages.poll()
+      if (message == null) {
+        numActiveThreads -= 1
+        return
+      }
+    }
+  }
+}
+
+...
+
+/** Message loop used for dispatching messages. */
+private class MessageLoop extends Runnable {
+  override def run(): Unit = {
+    try {
+      while (true) {
+        try {
+          val data = receivers.take()
+          if (data == PoisonPill) {
+            // Put PoisonPill back so that other MessageLoops can see it.
+            receivers.offer(PoisonPill)
+            return
+          }
+          data.inbox.process(Dispatcher.this)
+        } catch {
+          case NonFatal(e) => logError(e.getMessage, e)
+        }
+      }
+    } catch {
+      case ie: InterruptedException => // exit
+    }
+  }
+}
+
+...
+
+/** Thread pool used for dispatching messages. */
+private val threadpool: ThreadPoolExecutor = {
+  val numThreads = nettyEnv.conf.getInt("spark.rpc.netty.dispatcher.numThreads",
+    math.max(2, Runtime.getRuntime.availableProcessors()))
+  val pool = ThreadUtils.newDaemonFixedThreadPool(numThreads, "dispatcher-event-loop")
+  for (i <- 0 until numThreads) {
+    pool.execute(new MessageLoop)
+  }
+  pool
+}
+
+...
+
+
+/**
+  * Stop making resource offers for the given executor. The executor is marked as lost with
+  * the loss reason still pending.
+  *
+  * @return Whether executor should be disabled
+  */
+protected def disableExecutor(executorId: String): Boolean = {
+  val shouldDisable = CoarseGrainedSchedulerBackend.this.synchronized {
+    if (executorIsAlive(executorId)) {
+      executorsPendingLossReason += executorId
+      true
+    } else {
+      // Returns true for explicitly killed executors, we also need to get pending loss reasons;
+      // For others return false.
+      executorsPendingToRemove.contains(executorId)
+    }
+  }
+
+  if (shouldDisable) {
+    logInfo(s"Disabling executor $executorId.")
+    scheduler.executorLost(executorId, LossReasonPending)
+  }
+
+  shouldDisable
+}
+```
+
 2、`eventReceived`作用是什么？
 
 
