@@ -1607,7 +1607,21 @@ private[spark] object ExecutorExited {
 2、如果watch到*action为`DELETE`*则单独调用`handleDeletedPod(pod)`进行处理，如下：
 
 ```scala
+  def handleDeletedPod(pod: Pod): Unit = {
+    val exitMessage = if (isPodAlreadyReleased(pod)) {
+      s"Container in pod ${pod.getMetadata.getName} exited from explicit termination request."
+    } else {
+      s"Pod ${pod.getMetadata.getName} deleted or lost."
+    }
+    val exitReason = ExecutorExited(
+        getExecutorExitStatus(pod), exitCausedByApp = false, exitMessage)
+    podsWithKnownExitReasons.put(pod.getMetadata.getName, exitReason)
+  }
 ```
+
+这里和`handleErroredPod`处理逻辑类似，也是：判断`runningPodsToExecutors(executorName,executorId)`中是否不包含该`Pod`。如果不包含该`Pod`，则认为`exited from explicit termination request`；否则认为：`pod was not explicitly deleted`
+
+<span style="color:red">不同点是直接都将`exitCausedByApp`设置为`false`，why???</span>
 
 ## 改进方案测试
 
