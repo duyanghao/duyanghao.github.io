@@ -1621,7 +1621,162 @@ private[spark] object ExecutorExited {
 
 这里和`handleErroredPod`处理逻辑类似，也是：判断`runningPodsToExecutors(executorName,executorId)`中是否不包含该`Pod`。如果不包含该`Pod`，则认为`exited from explicit termination request`；否则认为：`pod was not explicitly deleted`
 
-<span style="color:red">不同点是直接都将`exitCausedByApp`设置为`false`，why???</span>
+<span style="color:red">不同点是将`exitCausedByApp`统一设置为`false`，why？？？</span>
+
+重新理一下思路，有几个问题：
+
+1、`disassociated` `executor`到底怎么发现的？
+
+是通过`onDisconnected`进行发现的：
+
+```scala
+override def createDriverEndpoint(properties: Seq[(String, String)]): DriverEndpoint = {
+  new KubernetesDriverEndpoint(rpcEnv, properties)
+}
+
+private class KubernetesDriverEndpoint(
+  rpcEnv: RpcEnv,
+  sparkProperties: Seq[(String, String)])
+  extends DriverEndpoint(rpcEnv, sparkProperties) {
+  private val externalShufflePort = conf.getInt("spark.shuffle.service.port", 7337)
+
+  override def onDisconnected(rpcAddress: RpcAddress): Unit = {
+    addressToExecutorId.get(rpcAddress).foreach { executorId =>
+      if (disableExecutor(executorId)) {
+        RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+          runningExecutorsToPods.get(executorId).foreach { pod =>
+            disconnectedPodsByExecutorIdPendingRemoval.put(executorId, pod)
+            logInfo(s"executor $executorId Disconnected")
+          }
+        }
+      }
+    }
+  }
+
+  override def receiveAndReply(
+    context: RpcCallContext): PartialFunction[Any, Unit] = {
+    new PartialFunction[Any, Unit]() {
+      override def isDefinedAt(msg: Any): Boolean = {
+        msg match {
+          case RetrieveSparkAppConfig(executorId) =>
+            Utils.isDynamicAllocationEnabled(sc.conf)
+          case _ => false
+        }
+      }
+
+      override def apply(msg: Any): Unit = {
+        msg match {
+          case RetrieveSparkAppConfig(executorId) =>
+            RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+              var resolvedProperties = sparkProperties
+              val runningExecutorPod = kubernetesClient
+                .pods()
+                .withName(runningExecutorsToPods(executorId).getMetadata.getName)
+                .get()
+              val nodeName = runningExecutorPod.getSpec.getNodeName
+              val shufflePodIp = shufflePodCache.get.getShufflePodForExecutor(nodeName)
+
+              // Inform the shuffle pod about this application so it can watch.
+              kubernetesExternalShuffleClient.foreach(
+                _.registerDriverWithShuffleService(shufflePodIp, externalShufflePort))
+
+              resolvedProperties = resolvedProperties ++ Seq(
+                (SPARK_SHUFFLE_SERVICE_HOST.key, shufflePodIp))
+
+              val reply = SparkAppConfig(
+                resolvedProperties,
+                SparkEnv.get.securityManager.getIOEncryptionKey())
+              context.reply(reply)
+            }
+        }
+      }
+    }.orElse(super.receiveAndReply(context))
+  }
+}
+```
+
+2、`eventReceived`作用是什么？
+
+
+3、整个处理逻辑是什么（总结+疑点解答）？
+
+
+顺着这里的逻辑：<span style="color:red">watch是为了找`executor` `disconnected`原因</span>，我们再看`handleDisconnectedExecutors`核心函数：
+
+```scala
+private val allocatorRunnable: Runnable = new Runnable {
+
+  // Maintains a map of executor id to count of checks performed to learn the loss reason
+  // for an executor.
+  private val executorReasonCheckAttemptCounts = new mutable.HashMap[String, Int]
+
+  override def run(): Unit = {
+    handleDisconnectedExecutors()
+    RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+      if (totalRegisteredExecutors.get() < runningExecutorsToPods.size) {
+        logDebug("Waiting for pending executors before scaling")
+      } else if (totalExpectedExecutors.get() <= runningExecutorsToPods.size) {
+        logDebug("Maximum allowed executor limit reached. Not scaling up further.")
+      } else {
+        for (i <- 0 until math.min(
+          totalExpectedExecutors.get - runningExecutorsToPods.size, podAllocationSize)) {
+          val (executorId, pod) = allocateNewExecutorPod()
+          runningExecutorsToPods.put(executorId, pod)
+          runningPodsToExecutors.put(pod.getMetadata.getName, executorId)
+          logInfo(
+            s"Requesting a new executor, total executors is now ${runningExecutorsToPods.size}")
+        }
+      }
+    }
+  }
+  
+  def handleDisconnectedExecutors(): Unit = {
+    // For each disconnected executor, synchronize with the loss reasons that may have been found
+    // by the executor pod watcher. If the loss reason was discovered by the watcher,
+    // inform the parent class with removeExecutor.
+    val disconnectedPodsByExecutorIdPendingRemovalCopy =
+        Map.empty ++ disconnectedPodsByExecutorIdPendingRemoval
+    disconnectedPodsByExecutorIdPendingRemovalCopy.foreach { case (executorId, executorPod) =>
+      val knownExitReason = podsWithKnownExitReasons.remove(executorPod.getMetadata.getName)
+      knownExitReason.fold {
+        removeExecutorOrIncrementLossReasonCheckCount(executorId)
+      } { executorExited =>
+        logDebug(s"Removing executor $executorId with loss reason " + executorExited.message)
+        removeExecutor(executorId, executorExited)
+        // We keep around executors that have exit conditions caused by the application. This
+        // allows them to be debugged later on. Otherwise, mark them as to be deleted from the
+        // the API server.
+        if (!executorExited.exitCausedByApp) {
+          deleteExecutorFromClusterAndDataStructures(executorId)
+        }
+      }
+    }
+  }
+
+  def removeExecutorOrIncrementLossReasonCheckCount(executorId: String): Unit = {
+    val reasonCheckCount = executorReasonCheckAttemptCounts.getOrElse(executorId, 0)
+    if (reasonCheckCount >= MAX_EXECUTOR_LOST_REASON_CHECKS) {
+      removeExecutor(executorId, SlaveLost("Executor lost for unknown reasons."))
+      deleteExecutorFromClusterAndDataStructures(executorId)
+    } else {
+      executorReasonCheckAttemptCounts.put(executorId, reasonCheckCount + 1)
+    }
+  }
+
+  def deleteExecutorFromClusterAndDataStructures(executorId: String): Unit = {
+    disconnectedPodsByExecutorIdPendingRemoval -= executorId
+    executorReasonCheckAttemptCounts -= executorId
+    RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+      runningExecutorsToPods.remove(executorId).map { pod =>
+        kubernetesClient.pods().delete(pod)
+        runningPodsToExecutors.remove(pod.getMetadata.getName)
+      }.getOrElse(logWarning(s"Unable to remove pod for unknown executor $executorId"))
+    }
+  }
+}
+```
+
+
 
 ## 改进方案测试
 
