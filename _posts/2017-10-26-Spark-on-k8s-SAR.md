@@ -2558,6 +2558,79 @@ def process(dispatcher: Dispatcher): Unit = {
 }
 ```
 
+回到`onDisconnected`函数，如下：
+
+```scala
+protected val addressToExecutorId = new HashMap[RpcAddress, String]
+
+override def onDisconnected(rpcAddress: RpcAddress): Unit = {
+  addressToExecutorId.get(rpcAddress).foreach { executorId =>
+    if (disableExecutor(executorId)) {
+      RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+        runningExecutorsToPods.get(executorId).foreach { pod =>
+          disconnectedPodsByExecutorIdPendingRemoval.put(executorId, pod)
+          logInfo(s"executor $executorId Disconnected")
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Address for an RPC environment, with hostname and port.
+ */
+private[spark] case class RpcAddress(host: String, port: Int) {
+
+  def hostPort: String = host + ":" + port
+
+  /** Returns a string in the form of "spark://host:port". */
+  def toSparkURL: String = "spark://" + hostPort
+
+  override def toString: String = hostPort
+}
+
+/**
+  * Stop making resource offers for the given executor. The executor is marked as lost with
+  * the loss reason still pending.
+  *
+  * @return Whether executor should be disabled
+  */
+protected def disableExecutor(executorId: String): Boolean = {
+  val shouldDisable = CoarseGrainedSchedulerBackend.this.synchronized {
+    if (executorIsAlive(executorId)) {
+      executorsPendingLossReason += executorId
+      true
+    } else {
+      // Returns true for explicitly killed executors, we also need to get pending loss reasons;
+      // For others return false.
+      executorsPendingToRemove.contains(executorId)
+    }
+  }
+
+  if (shouldDisable) {
+    logInfo(s"Disabling executor $executorId.")
+    scheduler.executorLost(executorId, LossReasonPending)
+  }
+
+  shouldDisable
+}
+
+private def executorIsAlive(executorId: String): Boolean = synchronized {
+  !executorsPendingToRemove.contains(executorId) &&
+    !executorsPendingLossReason.contains(executorId)
+}
+
+// Executors we have requested the cluster manager to kill that have not died yet; maps
+// the executor ID to whether it was explicitly killed by the driver (and thus shouldn't
+// be considered an app-related failure).
+@GuardedBy("CoarseGrainedSchedulerBackend.this")
+private val executorsPendingToRemove = new HashMap[String, Boolean]
+
+// Executors that have been lost, but for which we don't yet know the real exit reason.
+protected val executorsPendingLossReason = new HashSet[String]
+```
+
+
 2、`eventReceived`作用是什么？
 
 
