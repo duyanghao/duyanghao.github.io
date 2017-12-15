@@ -3155,7 +3155,7 @@ private var numPendingExecutors = 0
 * 4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`：`executorsPendingToRemove.remove(executorId).getOrElse(false)`
 * 5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
 * 6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
-* 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，停止`executor`上执行的任务，如下：
+* 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，`clean up` `executor`上执行的任务，如下：
 
 ```scala
 override def executorLost(executorId: String, reason: ExecutorLossReason): Unit = {
@@ -3254,6 +3254,343 @@ private def removeExecutor(executorId: String, reason: ExecutorLossReason) {
   }
 }
 ```
+
+<span style="color:red">再看`doKillExecutors`函数：</span>
+
+```scala
+override def doKillExecutors(executorIds: Seq[String]): Future[Boolean] = Future[Boolean] {
+  RUNNING_EXECUTOR_PODS_LOCK.synchronized {
+    for (executor <- executorIds) {
+      val maybeRemovedExecutor = runningExecutorsToPods.remove(executor)
+      maybeRemovedExecutor.foreach { executorPod =>
+        kubernetesClient.pods().delete(executorPod)
+        disconnectedPodsByExecutorIdPendingRemoval(executor) = executorPod
+        runningPodsToExecutors.remove(executorPod.getMetadata.getName)
+      }
+      if (maybeRemovedExecutor.isEmpty) {
+        logWarning(s"Unable to remove pod for unknown executor $executor")
+      }
+    }
+  }
+  true
+}
+```
+
+***和`deleteExecutorFromClusterAndDataStructures`函数作用类似：是将`executorId`对应的Pod从`disconnectedPodsByExecutorIdPendingRemoval`、`runningExecutorsToPods`以及`runningPodsToExecutors`中剔除，同时将该Pod从集群中删除`kubernetesClient.pods().delete(executorPod)`，但是`executorReasonCheckAttemptCounts`并没有删除***
+
+那么什么时候调用`doKillExecutors`函数呢？
+
+```scala
+/**
+  * Request that the cluster manager kill the specified executors.
+  *
+  * When asking the executor to be replaced, the executor loss is considered a failure, and
+  * killed tasks that are running on the executor will count towards the failure limits. If no
+  * replacement is being requested, then the tasks will not count towards the limit.
+  *
+  * @param executorIds identifiers of executors to kill
+  * @param replace whether to replace the killed executors with new ones
+  * @param force whether to force kill busy executors
+  * @return whether the kill request is acknowledged. If list to kill is empty, it will return
+  *         false.
+  */
+final def killExecutors(
+    executorIds: Seq[String],
+    replace: Boolean,
+    force: Boolean): Seq[String] = {
+  logInfo(s"Requesting to kill executor(s) ${executorIds.mkString(", ")}")
+
+  val response = synchronized {
+    val (knownExecutors, unknownExecutors) = executorIds.partition(executorDataMap.contains)
+    unknownExecutors.foreach { id =>
+      logWarning(s"Executor to kill $id does not exist!")
+    }
+
+    // If an executor is already pending to be removed, do not kill it again (SPARK-9795)
+    // If this executor is busy, do not kill it unless we are told to force kill it (SPARK-9552)
+    val executorsToKill = knownExecutors
+      .filter { id => !executorsPendingToRemove.contains(id) }
+      .filter { id => force || !scheduler.isExecutorBusy(id) }
+    executorsToKill.foreach { id => executorsPendingToRemove(id) = !replace }
+
+    logInfo(s"Actual list of executor(s) to be killed is ${executorsToKill.mkString(", ")}")
+
+    // If we do not wish to replace the executors we kill, sync the target number of executors
+    // with the cluster manager to avoid allocating new ones. When computing the new target,
+    // take into account executors that are pending to be added or removed.
+    val adjustTotalExecutors =
+      if (!replace) {
+        doRequestTotalExecutors(
+          numExistingExecutors + numPendingExecutors - executorsPendingToRemove.size)
+      } else {
+        numPendingExecutors += knownExecutors.size
+        Future.successful(true)
+      }
+
+    val killExecutors: Boolean => Future[Boolean] =
+      if (!executorsToKill.isEmpty) {
+        _ => doKillExecutors(executorsToKill)
+      } else {
+        _ => Future.successful(false)
+      }
+
+    val killResponse = adjustTotalExecutors.flatMap(killExecutors)(ThreadUtils.sameThread)
+
+    killResponse.flatMap(killSuccessful =>
+      Future.successful (if (killSuccessful) executorsToKill else Seq.empty[String])
+    )(ThreadUtils.sameThread)
+  }
+
+  defaultAskTimeout.awaitResult(response)
+}
+
+/**
+  * Request that the cluster manager kill the specified executor without adjusting the
+  * application resource requirements.
+  *
+  * The effect is that a new executor will be launched in place of the one killed by
+  * this request. This assumes the cluster manager will automatically and eventually
+  * fulfill all missing application resource requests.
+  *
+  * @note The replace is by no means guaranteed; another application on the same cluster
+  * can steal the window of opportunity and acquire this application's resources in the
+  * mean time.
+  *
+  * @return whether the request is received.
+  */
+private[spark] def killAndReplaceExecutor(executorId: String): Boolean = {
+  schedulerBackend match {
+    case b: CoarseGrainedSchedulerBackend =>
+      b.killExecutors(Seq(executorId), replace = true, force = true).nonEmpty
+    case _ =>
+      logWarning("Killing executors is only supported in coarse-grained mode")
+      false
+  }
+}
+
+private def expireDeadHosts(): Unit = {
+  logTrace("Checking for hosts with no recent heartbeats in HeartbeatReceiver.")
+  val now = clock.getTimeMillis()
+  for ((executorId, lastSeenMs) <- executorLastSeen) {
+    if (now - lastSeenMs > executorTimeoutMs) {
+      logWarning(s"Removing executor $executorId with no recent heartbeats: " +
+        s"${now - lastSeenMs} ms exceeds timeout $executorTimeoutMs ms")
+      scheduler.executorLost(executorId, SlaveLost("Executor heartbeat " +
+        s"timed out after ${now - lastSeenMs} ms"))
+        // Asynchronously kill the executor to avoid blocking the current thread
+      killExecutorThread.submit(new Runnable {
+        override def run(): Unit = Utils.tryLogNonFatalError {
+          // Note: we want to get an executor back after expiring this one,
+          // so do not simply call `sc.killExecutor` here (SPARK-8119)
+          sc.killAndReplaceExecutor(executorId)
+        }
+      })
+      executorLastSeen.remove(executorId)
+    }
+  }
+}
+
+...
+
+/**
+ * Lives in the driver to receive heartbeats from executors..
+ */
+private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
+  extends SparkListener with ThreadSafeRpcEndpoint with Logging {
+
+  def this(sc: SparkContext) {
+    this(sc, new SystemClock)
+  }
+
+  sc.addSparkListener(this)
+
+  override val rpcEnv: RpcEnv = sc.env.rpcEnv
+
+  private[spark] var scheduler: TaskScheduler = null
+
+  // executor ID -> timestamp of when the last heartbeat from this executor was received
+  private val executorLastSeen = new mutable.HashMap[String, Long]
+
+  // "spark.network.timeout" uses "seconds", while `spark.storage.blockManagerSlaveTimeoutMs` uses
+  // "milliseconds"
+  private val slaveTimeoutMs =
+    sc.conf.getTimeAsMs("spark.storage.blockManagerSlaveTimeoutMs", "120s")
+  private val executorTimeoutMs =
+    sc.conf.getTimeAsSeconds("spark.network.timeout", s"${slaveTimeoutMs}ms") * 1000
+
+  // "spark.network.timeoutInterval" uses "seconds", while
+  // "spark.storage.blockManagerTimeoutIntervalMs" uses "milliseconds"
+  private val timeoutIntervalMs =
+    sc.conf.getTimeAsMs("spark.storage.blockManagerTimeoutIntervalMs", "60s")
+  private val checkTimeoutIntervalMs =
+    sc.conf.getTimeAsSeconds("spark.network.timeoutInterval", s"${timeoutIntervalMs}ms") * 1000
+
+  private var timeoutCheckingTask: ScheduledFuture[_] = null
+
+  // "eventLoopThread" is used to run some pretty fast actions. The actions running in it should not
+  // block the thread for a long time.
+  private val eventLoopThread =
+    ThreadUtils.newDaemonSingleThreadScheduledExecutor("heartbeat-receiver-event-loop-thread")
+
+  private val killExecutorThread = ThreadUtils.newDaemonSingleThreadExecutor("kill-executor-thread")
+
+  override def onStart(): Unit = {
+    timeoutCheckingTask = eventLoopThread.scheduleAtFixedRate(new Runnable {
+      override def run(): Unit = Utils.tryLogNonFatalError {
+        Option(self).foreach(_.ask[Boolean](ExpireDeadHosts))
+      }
+    }, 0, checkTimeoutIntervalMs, TimeUnit.MILLISECONDS)
+  }
+
+  override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+
+    // Messages sent and received locally
+    case ExecutorRegistered(executorId) =>
+      executorLastSeen(executorId) = clock.getTimeMillis()
+      context.reply(true)
+    case ExecutorRemoved(executorId) =>
+      executorLastSeen.remove(executorId)
+      context.reply(true)
+    case TaskSchedulerIsSet =>
+      scheduler = sc.taskScheduler
+      context.reply(true)
+    case ExpireDeadHosts =>
+      expireDeadHosts()
+      context.reply(true)
+
+    // Messages received from executors
+    case heartbeat @ Heartbeat(executorId, accumUpdates, blockManagerId) =>
+      if (scheduler != null) {
+        if (executorLastSeen.contains(executorId)) {
+          executorLastSeen(executorId) = clock.getTimeMillis()
+          eventLoopThread.submit(new Runnable {
+            override def run(): Unit = Utils.tryLogNonFatalError {
+              val unknownExecutor = !scheduler.executorHeartbeatReceived(
+                executorId, accumUpdates, blockManagerId)
+              val response = HeartbeatResponse(reregisterBlockManager = unknownExecutor)
+              context.reply(response)
+            }
+          })
+        } else {
+          // This may happen if we get an executor's in-flight heartbeat immediately
+          // after we just removed it. It's not really an error condition so we should
+          // not log warning here. Otherwise there may be a lot of noise especially if
+          // we explicitly remove executors (SPARK-4134).
+          logDebug(s"Received heartbeat from unknown executor $executorId")
+          context.reply(HeartbeatResponse(reregisterBlockManager = true))
+        }
+      } else {
+        // Because Executor will sleep several seconds before sending the first "Heartbeat", this
+        // case rarely happens. However, if it really happens, log it and ask the executor to
+        // register itself again.
+        logWarning(s"Dropping $heartbeat because TaskScheduler is not ready yet")
+        context.reply(HeartbeatResponse(reregisterBlockManager = true))
+      }
+  }
+  ...
+}
+```
+
+也即driver端心跳线程：`heartbeat-receiver-event-loop-thread`定期给自己发送`ExpireDeadHosts`消息，而`ExpireDeadHosts`消息对应的处理函数为`expireDeadHosts`如下：
+
+```scala
+private def expireDeadHosts(): Unit = {
+  logTrace("Checking for hosts with no recent heartbeats in HeartbeatReceiver.")
+  val now = clock.getTimeMillis()
+  for ((executorId, lastSeenMs) <- executorLastSeen) {
+    if (now - lastSeenMs > executorTimeoutMs) {
+      logWarning(s"Removing executor $executorId with no recent heartbeats: " +
+        s"${now - lastSeenMs} ms exceeds timeout $executorTimeoutMs ms")
+      scheduler.executorLost(executorId, SlaveLost("Executor heartbeat " +
+        s"timed out after ${now - lastSeenMs} ms"))
+        // Asynchronously kill the executor to avoid blocking the current thread
+      killExecutorThread.submit(new Runnable {
+        override def run(): Unit = Utils.tryLogNonFatalError {
+          // Note: we want to get an executor back after expiring this one,
+          // so do not simply call `sc.killExecutor` here (SPARK-8119)
+          sc.killAndReplaceExecutor(executorId)
+        }
+      })
+      executorLastSeen.remove(executorId)
+    }
+  }
+}
+
+// executor ID -> timestamp of when the last heartbeat from this executor was received
+private val executorLastSeen = new mutable.HashMap[String, Long]
+```
+
+主要完成心跳超时检测，对于心跳超时的`executor`执行`scheduler.executorLost(executorId, SlaveLost("Executor heartbeat " + s"timed out after ${now - lastSeenMs} ms"))`以及`sc.killAndReplaceExecutor(executorId)`，转而执行`b.killExecutors(Seq(executorId), replace = true, force = true).nonEmpty`：
+
+```scala
+/**
+  * Request that the cluster manager kill the specified executors.
+  *
+  * When asking the executor to be replaced, the executor loss is considered a failure, and
+  * killed tasks that are running on the executor will count towards the failure limits. If no
+  * replacement is being requested, then the tasks will not count towards the limit.
+  *
+  * @param executorIds identifiers of executors to kill
+  * @param replace whether to replace the killed executors with new ones
+  * @param force whether to force kill busy executors
+  * @return whether the kill request is acknowledged. If list to kill is empty, it will return
+  *         false.
+  */
+final def killExecutors(
+    executorIds: Seq[String],
+    replace: Boolean,
+    force: Boolean): Seq[String] = {
+  logInfo(s"Requesting to kill executor(s) ${executorIds.mkString(", ")}")
+
+  val response = synchronized {
+    val (knownExecutors, unknownExecutors) = executorIds.partition(executorDataMap.contains)
+    unknownExecutors.foreach { id =>
+      logWarning(s"Executor to kill $id does not exist!")
+    }
+
+    // If an executor is already pending to be removed, do not kill it again (SPARK-9795)
+    // If this executor is busy, do not kill it unless we are told to force kill it (SPARK-9552)
+    val executorsToKill = knownExecutors
+      .filter { id => !executorsPendingToRemove.contains(id) }
+      .filter { id => force || !scheduler.isExecutorBusy(id) }
+    executorsToKill.foreach { id => executorsPendingToRemove(id) = !replace }
+
+    logInfo(s"Actual list of executor(s) to be killed is ${executorsToKill.mkString(", ")}")
+
+    // If we do not wish to replace the executors we kill, sync the target number of executors
+    // with the cluster manager to avoid allocating new ones. When computing the new target,
+    // take into account executors that are pending to be added or removed.
+    val adjustTotalExecutors =
+      if (!replace) {
+        doRequestTotalExecutors(
+          numExistingExecutors + numPendingExecutors - executorsPendingToRemove.size)
+      } else {
+        numPendingExecutors += knownExecutors.size
+        Future.successful(true)
+      }
+
+    val killExecutors: Boolean => Future[Boolean] =
+      if (!executorsToKill.isEmpty) {
+        _ => doKillExecutors(executorsToKill)
+      } else {
+        _ => Future.successful(false)
+      }
+
+    val killResponse = adjustTotalExecutors.flatMap(killExecutors)(ThreadUtils.sameThread)
+
+    killResponse.flatMap(killSuccessful =>
+      Future.successful (if (killSuccessful) executorsToKill else Seq.empty[String])
+    )(ThreadUtils.sameThread)
+  }
+
+  defaultAskTimeout.awaitResult(response)
+}
+```
+
+
+
+
+
 
 
 
