@@ -3155,7 +3155,105 @@ private var numPendingExecutors = 0
 * 4、从`executorsPendingToRemove(executorId,bool)`中剔除`executorId`：`executorsPendingToRemove.remove(executorId).getOrElse(false)`
 * 5、减少`totalCoreCount`：`totalCoreCount.addAndGet(-executorInfo.totalCores)`——减少总核数
 * 6、减少`totalRegisteredExecutors`：`totalRegisteredExecutors.addAndGet(-1)`——减少总注册`executor`数量
-* 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，如下：
+* 7、执行`scheduler.executorLost(executorId, if (killed) ExecutorKilled else reason)`，停止`executor`上执行的任务，如下：
+
+```scala
+override def executorLost(executorId: String, reason: ExecutorLossReason): Unit = {
+  var failedExecutor: Option[String] = None
+
+  synchronized {
+    if (executorIdToRunningTaskIds.contains(executorId)) {
+      val hostPort = executorIdToHost(executorId)
+      logExecutorLoss(executorId, hostPort, reason)
+      removeExecutor(executorId, reason)
+      failedExecutor = Some(executorId)
+    } else {
+      executorIdToHost.get(executorId) match {
+        case Some(hostPort) =>
+          // If the host mapping still exists, it means we don't know the loss reason for the
+          // executor. So call removeExecutor() to update tasks running on that executor when
+          // the real loss reason is finally known.
+          logExecutorLoss(executorId, hostPort, reason)
+          removeExecutor(executorId, reason)
+
+        case None =>
+          // We may get multiple executorLost() calls with different loss reasons. For example,
+          // one may be triggered by a dropped connection from the slave while another may be a
+          // report of executor termination from Mesos. We produce log messages for both so we
+          // eventually report the termination reason.
+          logError(s"Lost an executor $executorId (already removed): $reason")
+      }
+    }
+  }
+  // Call dagScheduler.executorLost without holding the lock on this to prevent deadlock
+  if (failedExecutor.isDefined) {
+    dagScheduler.executorLost(failedExecutor.get, reason)
+    backend.reviveOffers()
+  }
+}
+
+// IDs of the tasks running on each executor
+private val executorIdToRunningTaskIds = new HashMap[String, HashSet[Long]]
+
+// The set of executors we have on each host; this is used to compute hostsAlive, which
+// in turn is used to decide when we can attain data locality on a given host
+protected val hostToExecutors = new HashMap[String, HashSet[String]]
+
+protected val hostsByRack = new HashMap[String, HashSet[String]]
+
+protected val executorIdToHost = new HashMap[String, String]
+
+...
+
+private def logExecutorLoss(
+    executorId: String,
+    hostPort: String,
+    reason: ExecutorLossReason): Unit = reason match {
+  case LossReasonPending =>
+    logDebug(s"Executor $executorId on $hostPort lost, but reason not yet known.")
+  case ExecutorKilled =>
+    logInfo(s"Executor $executorId on $hostPort killed by driver.")
+  case _ =>
+    logError(s"Lost executor $executorId on $hostPort: $reason")
+}
+
+...
+
+/**
+  * Remove an executor from all our data structures and mark it as lost. If the executor's loss
+  * reason is not yet known, do not yet remove its association with its host nor update the status
+  * of any running tasks, since the loss reason defines whether we'll fail those tasks.
+  */
+private def removeExecutor(executorId: String, reason: ExecutorLossReason) {
+  // The tasks on the lost executor may not send any more status updates (because the executor
+  // has been lost), so they should be cleaned up here.
+  executorIdToRunningTaskIds.remove(executorId).foreach { taskIds =>
+    logDebug("Cleaning up TaskScheduler state for tasks " +
+      s"${taskIds.mkString("[", ",", "]")} on failed executor $executorId")
+    // We do not notify the TaskSetManager of the task failures because that will
+    // happen below in the rootPool.executorLost() call.
+    taskIds.foreach(cleanupTaskState)
+  }
+
+  val host = executorIdToHost(executorId)
+  val execs = hostToExecutors.getOrElse(host, new HashSet)
+  execs -= executorId
+  if (execs.isEmpty) {
+    hostToExecutors -= host
+    for (rack <- getRackForHost(host); hosts <- hostsByRack.get(rack)) {
+      hosts -= host
+      if (hosts.isEmpty) {
+        hostsByRack -= rack
+      }
+    }
+  }
+
+  if (reason != LossReasonPending) {
+    executorIdToHost -= executorId
+    rootPool.executorLost(executorId, host, reason)
+  }
+}
+```
 
 
 
