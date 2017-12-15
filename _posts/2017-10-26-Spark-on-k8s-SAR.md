@@ -3585,14 +3585,27 @@ final def killExecutors(
 
   defaultAskTimeout.awaitResult(response)
 }
+
+// Executors we have requested the cluster manager to kill that have not died yet; maps
+// the executor ID to whether it was explicitly killed by the driver (and thus shouldn't
+// be considered an app-related failure).
+@GuardedBy("CoarseGrainedSchedulerBackend.this")
+private val executorsPendingToRemove = new HashMap[String, Boolean]
+
+...
+
+override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Future[Boolean] {
+  totalExpectedExecutors.set(requestedTotal)
+  true
+}
 ```
 
-
-
-
-
-
-
+* 1、从`executorIds`序列中分离出`executorDataMap`中包含的`executor`和不包含的`executor`：`val (knownExecutors, unknownExecutors) = executorIds.partition(executorDataMap.contains)`
+* 2、从`knownExecutors`中剔除`If an executor is already pending to be removed, do not kill it again (SPARK-9795)`和`If this executor is busy, do not kill it unless we are told to force kill it (SPARK-9552)`，构造`executorsToKill`
+* 3、从`executorsToKill`中根据`replace`设置`executorsPendingToRemove`：`executorsToKill.foreach { id => executorsPendingToRemove(id) = !replace }`
+* 4、如果希望替换(`replace`=`true`)则同步`totalExpectedExecutors`：`doRequestTotalExecutors(numExistingExecutors + numPendingExecutors - executorsPendingToRemove.size)`；否则增加`numPendingExecutors`：`numPendingExecutors += knownExecutors.size`
+* 5、对`executorsToKill`执行`doKillExecutors`：`doKillExecutors(executorsToKill)`
+* 6、最后如果`doKillExecutors(executorsToKill)`执行成功则返回`executorsToKill`；否则返回`Seq.empty[String]`
 
 ## 改进方案测试
 
