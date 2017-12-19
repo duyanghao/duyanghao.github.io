@@ -3607,6 +3607,10 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 * 5、对`executorsToKill`执行`doKillExecutors`：`doKillExecutors(executorsToKill)`
 * 6、最后如果`doKillExecutors(executorsToKill)`执行成功则返回`executorsToKill`；否则返回`Seq.empty[String]`
 
+<span style="color:red">这里有一个疑问：`removeExecutor`和`killExecutors`有什么区别？？？</span>
+
+
+
 ## 改进方案测试
 
 ## 修正方案
@@ -3625,5 +3629,5 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 * [Scala Runnable](https://twitter.github.io/scala_school/zh_cn/concurrency.html)
 * [Scala - for Loops](https://www.tutorialspoint.com/scala/scala_for_loop.htm)
 * [GET /api/v1/watch/namespaces/{namespace}/pods/{name}](https://v1-5.docs.kubernetes.io/docs/api-reference/v1.5/#list-all-namespaces-63)
-
+* [scala中的flatMap详解](https://www.zhihu.com/question/34548588)
 
