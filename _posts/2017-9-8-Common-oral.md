@@ -24,5 +24,6 @@ excerpt: 工作中常用口语和术语积累……
 * QOS：服务质量(Quality Of Service)
 * PTAL：Please Take Another Look（请再看一下）
 * on green：可以开始了(on green means that you can go on, or begin, or start)
+* FYI：供参考（For Your Information）
 
 后续不断补充……
