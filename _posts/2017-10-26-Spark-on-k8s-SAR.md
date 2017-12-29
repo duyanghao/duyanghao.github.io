@@ -3609,15 +3609,27 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 
 <span style="color:red">这里有一个疑问：`removeExecutor`和`killExecutors`有什么区别？？？</span>
 
-
-
 ## 改进方案测试
+
+……
 
 ## 修正方案
 
+按照上述分析，有一些疑问：
+
+* 1、<span style="color:red">正常Pod产生错误，Pod状态(`pod.getStatus.getPhase`)为`Failed`，这在上述中不会得到处理</span>
+* 2、有一些处理函数的作用以及它们之间的联系没搞清楚：`doKillExecutors`、`removeExecutor`以及新添加的`onDisconnected`？
+* 3、这里有一个疑问：`removeExecutor`和`killExecutors`有什么区别？？？
+* 4、这里保留一个疑问：`executorExited.exitCausedByApp`具体可能是哪些？同时`!executorExited.exitCausedByApp`具体可能又是哪些？
+* 5、那`么removeExecutor`的作用具体是什么，和`deleteExecutorFromClusterAndDataStructures`有什么联系？？？
+
 ## 修正方案测试
 
+……
+
 ## 结论
+
+……
 
 ## Refs
 
