@@ -3611,7 +3611,15 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 
 ## 改进方案测试
 
+初步测试见[github issue](https://github.com/apache-spark-on-k8s/spark/issues/591)
 
+测试疑问：
+
+1、We can see that Job still aborts even though the executor 3 is created when executor 1 is deleted.
+
+2、And if i don't use `SAR`(Static Allocation Recover), the spark application runs normally even though one executor has been deleted !!!
+
+3、Also, another question bothers me is that some spark applications still can't recover for lots of reasons, such as data loss and so on, even though new executors have been produced. How about this problem? Is there any thoughts to solve this problem?
 
 ## 修正方案
 
