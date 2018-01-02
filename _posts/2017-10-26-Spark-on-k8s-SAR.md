@@ -3611,7 +3611,7 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 
 ## 改进方案测试
 
-……
+
 
 ## 修正方案
 
@@ -3622,6 +3622,7 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 * 3、这里有一个疑问：`removeExecutor`和`killExecutors`有什么区别？？？
 * 4、这里保留一个疑问：`executorExited.exitCausedByApp`具体可能是哪些？同时`!executorExited.exitCausedByApp`具体可能又是哪些？
 * 5、那`么removeExecutor`的作用具体是什么，和`deleteExecutorFromClusterAndDataStructures`有什么联系？？？
+* 6、<span style="color:red">`k8s master`重启会导致任务失败？（测试发现`k8s master`重启不会导致任务失败，但是会导致`Executor pod watch closed`）</span>
 
 ## 修正方案测试
 
@@ -3642,4 +3643,4 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 * [Scala - for Loops](https://www.tutorialspoint.com/scala/scala_for_loop.htm)
 * [GET /api/v1/watch/namespaces/{namespace}/pods/{name}](https://v1-5.docs.kubernetes.io/docs/api-reference/v1.5/#list-all-namespaces-63)
 * [scala中的flatMap详解](https://www.zhihu.com/question/34548588)
-
+* [WatchConnectionManager closes when k8s master restarts](https://github.com/apache-spark-on-k8s/spark/issues/588)
