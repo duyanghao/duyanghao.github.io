@@ -229,3 +229,15 @@ File->Open…(directly open project directory)
 * find(project scope) -> ctrl+shift+f
 * jump to definition -> ctrl+b
 
+# Addition
+
+* `java`——[eclipse](https://www.eclipse.org/)
+* `常用编辑`——[Notepad++](https://notepad-plus-plus.org/) + [sublime text](https://www.sublimetext.com/)
+* `c/c++/c#`——[Microsoft Visual Studio](https://www.visualstudio.com/zh-hans/vs/)
+* `手游`——[Unity](https://unity3d.com/cn)
+* 记笔记——[Evernote](https://evernote.com/intl/zh-cn)
+* 抓包——[wireshark](https://www.wireshark.org/download.html)
+* 文本比较——[Beyond Compare](https://www.scootersoftware.com/features.php?zz=features_multifaceted)
+* 制作图像素材——[Photoshop](https://creative.adobe.com/products/download/photoshop?store_code=hk_en)
+* 画流程图——[亿图图示专家](http://www.edrawsoft.cn/)
+* 思维导图——[XMind](https://www.xmind.cn/)
