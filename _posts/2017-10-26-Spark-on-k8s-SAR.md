@@ -3638,6 +3638,14 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 
 ## 结论
 
+`SAR`目标如下：
+
+* 1、如果`executor`挂掉，则driver不会产生新的 替换`executor`
+* 2、如果`executor`全部挂掉，driver依然运行——bug（原因待查……）
+* 3、`executor`产生过程存在问题——如果某些`executor`因为某些原因始终无法起来，则`driver`不会继续产生新的`executor`
+
+最终想要的结果是在spark应用程序正确的情况下，始终产生并维持用户指定数目的`executor`数目，并采用某种机制保障（检测）运行的`executor`是`"健康状态"`，最终保证应用程序的成功运行
+
 ……
 
 ## Refs

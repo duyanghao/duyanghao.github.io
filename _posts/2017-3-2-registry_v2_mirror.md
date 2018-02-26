@@ -4998,3 +4998,384 @@ func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter,
 >>删除`<root>/v2/repositories/<name>/_uploads/<random_id>`目录及其下的文件（连带删除：`<root>/v2/repositories/<name>/_uploads/<random_id>/startedat`文件）(`removeResources`)
 
 >>最后向upstream(后端)发出`GET/HEAD /v2/library/centos/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4`请求，并构建回应报文，返回给docker daemon
+
+
+## 附加
+
+下面详细分析TTL算法原理：
+
+```go
+// NewRegistryPullThroughCache creates a registry acting as a pull through cache
+func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (distribution.Namespace, error) {
+	remoteURL, err := url.Parse(config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	v := storage.NewVacuum(ctx, driver)
+	s := scheduler.New(ctx, driver, "/scheduler-state.json")
+	s.OnBlobExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		blobs := repo.Blobs(ctx)
+
+		// Clear the repository reference and descriptor caches
+		err = blobs.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+
+		err = v.RemoveBlob(r.Digest().String())
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	s.OnManifestExpire(func(ref reference.Reference) error {
+		var r reference.Canonical
+		var ok bool
+		if r, ok = ref.(reference.Canonical); !ok {
+			return fmt.Errorf("unexpected reference type : %T", ref)
+		}
+
+		repo, err := registry.Repository(ctx, r)
+		if err != nil {
+			return err
+		}
+
+		manifests, err := repo.Manifests(ctx)
+		if err != nil {
+			return err
+		}
+		err = manifests.Delete(ctx, r.Digest())
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	err = s.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	cs, err := configureAuth(config.Username, config.Password, config.RemoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proxyingRegistry{
+		embedded:  registry,
+		scheduler: s,
+		remoteURL: *remoteURL,
+		authChallenger: &remoteAuthChallenger{
+			remoteURL: *remoteURL,
+			cm:        challenge.NewSimpleManager(),
+			cs:        cs,
+		},
+	}, nil
+}
+
+// New returns a new instance of the scheduler
+func New(ctx context.Context, driver driver.StorageDriver, path string) *TTLExpirationScheduler {
+	return &TTLExpirationScheduler{
+		entries:         make(map[string]*schedulerEntry),
+		driver:          driver,
+		pathToStateFile: path,
+		ctx:             ctx,
+		stopped:         true,
+		doneChan:        make(chan struct{}),
+		saveTimer:       time.NewTicker(indexSaveFrequency),
+	}
+}
+
+// onTTLExpiryFunc is called when a repository's TTL expires
+type expiryFunc func(reference.Reference) error
+
+const (
+	entryTypeBlob = iota
+	entryTypeManifest
+	indexSaveFrequency = 5 * time.Second
+)
+
+// TTLExpirationScheduler is a scheduler used to perform actions
+// when TTLs expire
+type TTLExpirationScheduler struct {
+	sync.Mutex
+
+	entries map[string]*schedulerEntry
+
+	driver          driver.StorageDriver
+	ctx             context.Context
+	pathToStateFile string
+
+	stopped bool
+
+	onBlobExpire     expiryFunc
+	onManifestExpire expiryFunc
+
+	indexDirty bool
+	saveTimer  *time.Ticker
+	doneChan   chan struct{}
+}
+
+// OnBlobExpire is called when a scheduled blob's TTL expires
+func (ttles *TTLExpirationScheduler) OnBlobExpire(f expiryFunc) {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	ttles.onBlobExpire = f
+}
+
+// Start starts the scheduler
+func (ttles *TTLExpirationScheduler) Start() error {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	err := ttles.readState()
+	if err != nil {
+		return err
+	}
+
+	if !ttles.stopped {
+		return fmt.Errorf("Scheduler already started")
+	}
+
+	context.GetLogger(ttles.ctx).Infof("Starting cached object TTL expiration scheduler...")
+	ttles.stopped = false
+
+	// Start timer for each deserialized entry
+	for _, entry := range ttles.entries {
+		entry.timer = ttles.startTimer(entry, entry.Expiry.Sub(time.Now()))
+	}
+
+	// Start a ticker to periodically save the entries index
+
+	go func() {
+		for {
+			select {
+			case <-ttles.saveTimer.C:
+				ttles.Lock()
+				if !ttles.indexDirty {
+					ttles.Unlock()
+					continue
+				}
+
+				err := ttles.writeState()
+				if err != nil {
+					context.GetLogger(ttles.ctx).Errorf("Error writing scheduler state: %s", err)
+				} else {
+					ttles.indexDirty = false
+				}
+				ttles.Unlock()
+
+			case <-ttles.doneChan:
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (ttles *TTLExpirationScheduler) readState() error {
+	if _, err := ttles.driver.Stat(ttles.ctx, ttles.pathToStateFile); err != nil {
+		switch err := err.(type) {
+		case driver.PathNotFoundError:
+			return nil
+		default:
+			return err
+		}
+	}
+
+	bytes, err := ttles.driver.GetContent(ttles.ctx, ttles.pathToStateFile)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(bytes, &ttles.entries)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ttles *TTLExpirationScheduler) startTimer(entry *schedulerEntry, ttl time.Duration) *time.Timer {
+	return time.AfterFunc(ttl, func() {
+		ttles.Lock()
+		defer ttles.Unlock()
+
+		var f expiryFunc
+
+		switch entry.EntryType {
+		case entryTypeBlob:
+			f = ttles.onBlobExpire
+		case entryTypeManifest:
+			f = ttles.onManifestExpire
+		default:
+			f = func(reference.Reference) error {
+				return fmt.Errorf("scheduler entry type")
+			}
+		}
+
+		ref, err := reference.Parse(entry.Key)
+		if err == nil {
+			if err := f(ref); err != nil {
+				context.GetLogger(ttles.ctx).Errorf("Scheduler error returned from OnExpire(%s): %s", entry.Key, err)
+			}
+		} else {
+			context.GetLogger(ttles.ctx).Errorf("Error unpacking reference: %s", err)
+		}
+
+		delete(ttles.entries, entry.Key)
+		ttles.indexDirty = true
+	})
+}
+
+func (pbs *proxyBlobStore) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {
+	served, err := pbs.serveLocal(ctx, w, r, dgst)
+	if err != nil {
+		context.GetLogger(ctx).Errorf("Error serving blob from local storage: %s", err.Error())
+		return err
+	}
+
+	if served {
+		return nil
+	}
+
+	if err := pbs.authChallenger.tryEstablishChallenges(ctx); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	_, ok := inflight[dgst]
+	if ok {
+		mu.Unlock()
+		_, err := pbs.copyContent(ctx, dgst, w)
+		return err
+	}
+	inflight[dgst] = struct{}{}
+	mu.Unlock()
+
+	go func(dgst digest.Digest) {
+		if err := pbs.storeLocal(ctx, dgst); err != nil {
+			context.GetLogger(ctx).Errorf("Error committing to storage: %s", err.Error())
+		}
+
+		blobRef, err := reference.WithDigest(pbs.repositoryName, dgst)
+		if err != nil {
+			context.GetLogger(ctx).Errorf("Error creating reference: %s", err)
+			return
+		}
+
+		pbs.scheduler.AddBlob(blobRef, repositoryTTL)
+	}(dgst)
+
+	_, err = pbs.copyContent(ctx, dgst, w)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// AddBlob schedules a blob cleanup after ttl expires
+func (ttles *TTLExpirationScheduler) AddBlob(blobRef reference.Canonical, ttl time.Duration) error {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	if ttles.stopped {
+		return fmt.Errorf("scheduler not started")
+	}
+
+	ttles.add(blobRef, ttl, entryTypeBlob)
+	return nil
+}
+func (ttles *TTLExpirationScheduler) add(r reference.Reference, ttl time.Duration, eType int) {
+	entry := &schedulerEntry{
+		Key:       r.String(),
+		Expiry:    time.Now().Add(ttl),
+		EntryType: eType,
+	}
+	context.GetLogger(ttles.ctx).Infof("Adding new scheduler entry for %s with ttl=%s", entry.Key, entry.Expiry.Sub(time.Now()))
+	if oldEntry, present := ttles.entries[entry.Key]; present && oldEntry.timer != nil {
+		oldEntry.timer.Stop()
+	}
+	ttles.entries[entry.Key] = entry
+	entry.timer = ttles.startTimer(entry, ttl)
+	ttles.indexDirty = true
+}
+
+func (ttles *TTLExpirationScheduler) startTimer(entry *schedulerEntry, ttl time.Duration) *time.Timer {
+	return time.AfterFunc(ttl, func() {
+		ttles.Lock()
+		defer ttles.Unlock()
+
+		var f expiryFunc
+
+		switch entry.EntryType {
+		case entryTypeBlob:
+			f = ttles.onBlobExpire
+		case entryTypeManifest:
+			f = ttles.onManifestExpire
+		default:
+			f = func(reference.Reference) error {
+				return fmt.Errorf("scheduler entry type")
+			}
+		}
+
+		ref, err := reference.Parse(entry.Key)
+		if err == nil {
+			if err := f(ref); err != nil {
+				context.GetLogger(ttles.ctx).Errorf("Scheduler error returned from OnExpire(%s): %s", entry.Key, err)
+			}
+		} else {
+			context.GetLogger(ttles.ctx).Errorf("Error unpacking reference: %s", err)
+		}
+
+		delete(ttles.entries, entry.Key)
+		ttles.indexDirty = true
+	})
+}
+
+// Stop stops the scheduler.
+func (ttles *TTLExpirationScheduler) Stop() {
+	ttles.Lock()
+	defer ttles.Unlock()
+
+	if err := ttles.writeState(); err != nil {
+		context.GetLogger(ttles.ctx).Errorf("Error writing scheduler state: %s", err)
+	}
+
+	for _, entry := range ttles.entries {
+		entry.timer.Stop()
+	}
+
+	close(ttles.doneChan)
+	ttles.saveTimer.Stop()
+	ttles.stopped = true
+}
+
+```
+
+待续……
+
+## Registry mirror supports registry backend with Token Authentication
+
+已经向官网提交[PR](https://github.com/docker/distribution/pull/2481)，实现`Registry mirror supports registry backend with Token Authentication`
+
+## Refs
+
+* [registry v2 mirror](https://github.com/docker/docker.github.io/blob/master/registry/recipes/mirror.md)
+* [Docker Registry v2 authentication via central service](https://github.com/docker/distribution/blob/master/docs/spec/auth/token.md)
+* [Master issue: private registry caching](https://github.com/docker/distribution/issues/1431)
