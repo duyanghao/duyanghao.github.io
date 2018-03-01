@@ -3632,19 +3632,30 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 * 5、那`么removeExecutor`的作用具体是什么，和`deleteExecutorFromClusterAndDataStructures`有什么联系？？？
 * 6、<span style="color:red">`k8s master`重启会导致任务失败？（测试发现`k8s master`重启不会导致任务失败，但是会导致`Executor pod watch closed`）</span>
 
-## 修正方案测试
-
-……
-
-## 结论
-
-`SAR`目标如下：
+修正方案需要完成`SAR`如下目标：
 
 * 1、如果`executor`挂掉，则driver不会产生新的 替换`executor`
 * 2、如果`executor`全部挂掉，driver依然运行——bug（原因待查……）
 * 3、`executor`产生过程存在问题——如果某些`executor`因为某些原因始终无法起来，则`driver`不会继续产生新的`executor`
 
 最终想要的结果是在spark应用程序正确的情况下，始终产生并维持用户指定数目的`executor`数目，并采用某种机制保障（检测）运行的`executor`是`"健康状态"`，最终保证应用程序的成功运行
+
+针对上述问题，我们需要做如下优化：
+
+* 1、添加Pod挂掉的处理逻辑，包括：`注册成功`和`注册失败`的`executor`
+* 2、添加超时机制，对于`executor container`一直不起来（因为某些外部的原因，例如：rbd挂载失败）的情况能够超时发现并处理
+
+## 修正方案测试
+
+测试如下：
+
+* 测试一：`executor`运行过程中挂掉
+
+* 测试二：`executor`产生过程中挂掉（还没有register itself）
+
+* 测试三：`executor container`一直起不来（例如挂载rbd一直有问题）
+
+## 结论
 
 ……
 
