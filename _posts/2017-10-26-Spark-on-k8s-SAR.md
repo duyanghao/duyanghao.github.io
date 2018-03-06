@@ -3486,7 +3486,7 @@ override def doRequestTotalExecutors(requestedTotal: Int): Future[Boolean] = Fut
 
 * 测试一：`executor`运行过程中挂掉
 
-k8s 1.5版本集群测试发现手动kill掉`executor 1`进程，则driver会发现并产生新的`executor`，并能正常运行完成（`spark.executor.instances=2`）：
+k8s 1.5版本集群测试发现：手动kill掉`executor 1`进程，driver会发现并产生新的`executor 3`，并能正常运行完成（`spark.executor.instances=2`）：
 
 ```bash
 # kubectl get pods -n=xxx -a -o wide|grep spark-debug-sar-test6
@@ -3498,9 +3498,9 @@ spark-debug-sar-test6-exec-3     0/1       Completed   0          3m        192.
 
 这种情况下`pod.getStatus.getPhase == "Failed"`且`action == Action.MODIFIED`且`pod.getMetadata.getDeletionTimestamp == null`
 
-* 测试二：`executor`产生过程中挂掉（还没有register itself）
+* 测试二：`executor`产生过程中挂掉（还没有register itself successfully）
 
-k8s 1.5版本集群测试发现`executor 3、4、5`还没有注册成功就失败了，则driver会发现并产生新的`executor`，并能正常运行完成（`spark.executor.instances=10`）：
+k8s 1.5版本集群测试发现：`executor 3、4、5`还没有注册成功就失败了，driver会发现并产生新的`executor`，并能正常运行完成（`spark.executor.instances=10`）：
 
 ```bash
 # kubectl get pods -n=xxx -a -o wide|grep spark-debug-sar-test8
@@ -3522,9 +3522,9 @@ spark-debug-sar-test8-exec-9    1/1       Completed     0          48s       192
 
 这种情况下`pod.getStatus.getPhase == "Failed"`且`action == Action.MODIFIED`且`pod.getMetadata.getDeletionTimestamp == null`
 
-* 测试三：手动`delete` executor
+* 测试三：`delete` executor
 
-手动`delete`掉`executor 1`,driver产生新的`executor 3`；再手动`delete`掉`executor 2`,driver产生新的`executor 4`，并能成功运行完成（`spark.executor.instances=2`）：
+手动`delete`掉`executor 1`，driver产生新的`executor 3`；再手动`delete`掉`executor 2`，driver产生新的`executor 4`，并能成功运行完成（`spark.executor.instances=2`）：
 
 ```bash
 # kubectl get pods -n=xxx -a -o wide|grep spark-debug-sar-test9
@@ -3546,14 +3546,14 @@ spark-debug-sar-test10-exec-1    0/1       ImagePullBackOff   0          46m    
 spark-debug-sar-test10-exec-2    0/1       ImagePullBackOff   0          46m       192.168.25.110   x.x.x.x
 ```
 
-这种情况后续补充优化处理……
+这种情况后续再优化处理……
 
 ## 结论
 
-优化后的方案可以满足基本sar需求，还需要优化如下：
+修正后的方案基本可以满足`Spark SAR`需求，还需要优化如下：
 
 * 1、添加超时机制，对于`executor container`一直不起来（因为某些外部的原因，例如：rbd挂载失败）的情况能够超时发现并处理
-* 2、k8s 1.8与1.5区别？
+* 2、k8s 1.5与1.8版本区别(升级版本带来的差异)？
 
 ## Refs
 
