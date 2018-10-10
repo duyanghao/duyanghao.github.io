@@ -11,7 +11,7 @@ This article gives a Summary of Tools usage during work(only for having a good v
 
 Now, i will introduce my IDE choice and basic usage for each of Language.   
 
-# c/c++ - [Insight3(3.50.0076)](http://www.sourceinsight.com/update.html)
+# c/c++ - [Source Insight(3.50.0076)](http://www.sourceinsight.com/update.html)
 
 ### create project
 
@@ -53,7 +53,7 @@ Now, i will introduce my IDE choice and basic usage for each of Language.
 * find(project scope) -> ctrl+shift+f
 * find pre -> F3
 * find next -> F4 
-* jump to definition -> ctrl+= | ctrl+mouse
+* jump to definition -> ctrl+= or ctrl+mouse
 * mark -> shift+F8
 
 # script(bash,perl) - [sublime_text](https://www.sublimetext.com/)
