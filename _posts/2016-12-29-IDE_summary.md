@@ -11,7 +11,7 @@ This article gives a Summary of Tools usage during work(only for having a good v
 
 Now, i will introduce my IDE choice and basic usage for each of Language.   
 
-# c/c++ - [Insight3](http://www.sourceinsight.com/update.html)
+# c/c++ - [Insight3(3.50.0076)](http://www.sourceinsight.com/update.html)
 
 ### create project
 
@@ -43,13 +43,18 @@ Now, i will introduce my IDE choice and basic usage for each of Language.
 
 ![](/public/img/Tool_summary/7.png)
 
+* 8.view
+
+![](/public/img/Tool_summary/si_view.png)
+
 ### keyboard shortcuts
 
 * find(file scope) -> ctrl+f
 * find(project scope) -> ctrl+shift+f
 * find pre -> F3
 * find next -> F4 
-* jump to definition -> ctrl+=
+* jump to definition -> ctrl+= | ctrl+mouse
+* mark -> shift+F8
 
 # script(bash,perl) - [sublime_text](https://www.sublimetext.com/)
 
@@ -241,3 +246,4 @@ File->Open…(directly open project directory)
 * 制作图像素材——[Photoshop](https://creative.adobe.com/products/download/photoshop?store_code=hk_en)
 * 画流程图——[亿图图示专家](http://www.edrawsoft.cn/)
 * 思维导图——[XMind](https://www.xmind.cn/)
+* 计算器——系统键+R -> calc
