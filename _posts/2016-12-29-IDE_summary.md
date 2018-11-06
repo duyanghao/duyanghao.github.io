@@ -127,8 +127,7 @@ if you are in the company,you should set the http and https proxy as below:
 
 文件-》首选项-》用户设置
 
->
-{
+> {
     "http.proxy": "http://proxy:port",
     "https.proxy": "http://proxy:port",
     "http.proxyStrictSSL": false
@@ -181,8 +180,7 @@ follow these steps to install vscode-go after install VSCode.
 
 文件-》首选项-》用户设置
 
->>
-{
+> {
     //go
     "go.buildOnSave": true,
     "go.lintOnSave": true,
@@ -198,52 +196,17 @@ follow these steps to install vscode-go after install VSCode.
     "go.formatTool": "goreturns",
     "go.formatFlags": [],
     "go.gocodeAutoBuild": false,
+    "go.goroot": "D://Go_dir",
     //editor
     "workbench.editor.enablePreview" : false
-}
-
-or maybe(windows 8)
-
->>
-{
-    "editor.tabSize": 4,
-    "editor.insertSpaces": true,
-    "editor.detectIndentation": false,
-    "editor.fontSize": 18,
-    "workbench.colorTheme": "One Dark Pro",
-    "workbench.iconTheme": "vscode-icons",
-    "http.proxy": "XXX",
-
-    "files.autoSave": "onFocusChange",
-    "go.buildOnSave": true,
-    "go.lintOnSave": true,
-    "go.vetOnSave": true,
-    "go.buildFlags": [],
-    "go.lintFlags": [],
-    "go.vetFlags": [],
-    "go.useCodeSnippetsOnFunctionSuggest": false,
-    "go.formatOnSave": false,
-    "go.formatTool": "goreturns",
-    "go.goroot": "D:/go",
-    "go.gopath": "D:/Go_project/Vs_code_project",
-    "workbench.editor.enablePreview": false,
 }
 
 ### open project
 
 * 1.文件-》首选项-》工作区设置
 
->>
-{
-    "go.goroot": "D://Go_dir",
+> {
     "go.gopath": "`your_project_GOPATH`;D://Go_project/Vs_code_project"
-}
-
-or maybe(windows 8)
-
->>
-{
-     "go.gopath": "`your_project_GOPATH`;D:/Go_project/Vs_code_project"
 }
 
 * 2.文件-》打开文件夹
