@@ -202,6 +202,33 @@ follow these steps to install vscode-go after install VSCode.
     "workbench.editor.enablePreview" : false
 }
 
+or maybe(windows 8)
+
+>>
+{
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "editor.fontSize": 18,
+    "workbench.colorTheme": "One Dark Pro",
+    "workbench.iconTheme": "vscode-icons",
+    "http.proxy": "XXX",
+
+    "files.autoSave": "onFocusChange",
+    "go.buildOnSave": true,
+    "go.lintOnSave": true,
+    "go.vetOnSave": true,
+    "go.buildFlags": [],
+    "go.lintFlags": [],
+    "go.vetFlags": [],
+    "go.useCodeSnippetsOnFunctionSuggest": false,
+    "go.formatOnSave": false,
+    "go.formatTool": "goreturns",
+    "go.goroot": "D:/go",
+    "go.gopath": "D:/Go_project/Vs_code_project",
+    "workbench.editor.enablePreview": false,
+}
+
 ### open project
 
 * 1.文件-》首选项-》工作区设置
@@ -212,6 +239,13 @@ follow these steps to install vscode-go after install VSCode.
     "go.gopath": "`your_project_GOPATH`;D://Go_project/Vs_code_project"
 }
 
+or maybe(windows 8)
+
+>>
+{
+     "go.gopath": "`your_project_GOPATH`;D:/Go_project/Vs_code_project"
+}
+
 * 2.文件-》打开文件夹
 
 ### keyboard shortcuts
@@ -219,6 +253,9 @@ follow these steps to install vscode-go after install VSCode.
 * find(file scope) -> ctrl+f
 * find(project scope) -> ctrl+shift+f
 * 选中按TAB右移，按SHIFT+TAB左移
+* 后退 -> alt + left arrow
+* 前进 -> alt + right arrow
+* Find next/previous -> F3 / Shift + F3
 
 # scala - [Intellij IDEA](https://www.jetbrains.com/idea/download/)
 
@@ -247,3 +284,7 @@ File->Open…(directly open project directory)
 * 画流程图——[亿图图示专家](http://www.edrawsoft.cn/)
 * 思维导图——[XMind](https://www.xmind.cn/)
 * 计算器——系统键+R -> calc
+
+# Refs
+
+* [VS Code 快捷键（中英文对照版）](https://segmentfault.com/a/1190000007688656)
