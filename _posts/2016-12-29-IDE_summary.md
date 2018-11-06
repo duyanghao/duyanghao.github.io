@@ -127,7 +127,8 @@ if you are in the company,you should set the http and https proxy as below:
 
 文件-》首选项-》用户设置
 
-> {
+>>
+{
     "http.proxy": "http://proxy:port",
     "https.proxy": "http://proxy:port",
     "http.proxyStrictSSL": false
@@ -180,7 +181,9 @@ follow these steps to install vscode-go after install VSCode.
 
 文件-》首选项-》用户设置
 
-> {
+>>
+```
+{
     //go
     "go.buildOnSave": true,
     "go.lintOnSave": true,
@@ -200,12 +203,14 @@ follow these steps to install vscode-go after install VSCode.
     //editor
     "workbench.editor.enablePreview" : false
 }
+```
 
 ### open project
 
 * 1.文件-》首选项-》工作区设置
 
-> {
+>>
+{
     "go.gopath": "`your_project_GOPATH`;D://Go_project/Vs_code_project"
 }
 
