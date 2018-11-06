@@ -127,12 +127,14 @@ if you are in the company,you should set the http and https proxy as below:
 
 文件-》首选项-》用户设置
 
->>
+>
+```
 {
     "http.proxy": "http://proxy:port",
     "https.proxy": "http://proxy:port",
     "http.proxyStrictSSL": false
 }
+```
 
 ### [vscode-go](https://github.com/Microsoft/vscode-go) Install
 
@@ -155,33 +157,36 @@ follow these steps to install vscode-go after install VSCode.
 
 5) install Tools as below:
 
->go get -u -v github.com/nsf/gocode
+>
+```
+go get -u -v github.com/nsf/gocode
 
->go get -u -v github.com/rogpeppe/godef
+go get -u -v github.com/rogpeppe/godef
 
->go get -u -v github.com/zmb3/gogetdoc
+go get -u -v github.com/zmb3/gogetdoc
 
->go get -u -v github.com/golang/lint/golint
+go get -u -v github.com/golang/lint/golint
 
->go get -u -v github.com/lukehoban/go-outline
+go get -u -v github.com/lukehoban/go-outline
 
->go get -u -v sourcegraph.com/sqs/goreturns
+go get -u -v sourcegraph.com/sqs/goreturns
 
->go get -u -v golang.org/x/tools/cmd/gorename
+go get -u -v golang.org/x/tools/cmd/gorename
 
->go get -u -v github.com/tpng/gopkgs
+go get -u -v github.com/tpng/gopkgs
 
->go get -u -v github.com/newhook/go-symbols
+go get -u -v github.com/newhook/go-symbols
 
->go get -u -v golang.org/x/tools/cmd/guru
+go get -u -v golang.org/x/tools/cmd/guru
 
->go get -u -v github.com/cweill/gotests/...
+go get -u -v github.com/cweill/gotests/...
+```
 
 ### vscode-go configuration
 
 文件-》首选项-》用户设置
 
->>
+>
 ```
 {
     //go
@@ -209,10 +214,12 @@ follow these steps to install vscode-go after install VSCode.
 
 * 1.文件-》首选项-》工作区设置
 
->>
+>
+```
 {
     "go.gopath": "`your_project_GOPATH`;D://Go_project/Vs_code_project"
 }
+```
 
 * 2.文件-》打开文件夹
 
