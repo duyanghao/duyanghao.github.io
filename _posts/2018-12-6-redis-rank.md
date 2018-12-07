@@ -15,9 +15,11 @@ excerpt: 本文介绍了redis zset排行榜应用……
 
 redis zset由于如下特性天生支持排行榜需求：
 
-* 1. zset是有序集合类型
+* zset是有序集合类型
 
-* 2. zset支持常用的添加，删除，范围读取操作
+* zset支持常用的添加，删除，范围读取操作
+
+* 有序集合的成员是唯一的,但分数(score)却可以重复
 
 下文将详细展开介绍：利用`redis zset`实现排行榜功能
 
@@ -32,7 +34,7 @@ redis zset由于如下特性天生支持排行榜需求：
 如果用户粉丝数目发生变动，则需要将该用户重新添加到`zset`中，假定用户id为user_id，粉丝量为score，则命令如下：
 
 ```bash
-zadd fans_rank user_id score
+ZADD fans_rank user_id score
 ```
 
 注意算法复杂度：
@@ -40,6 +42,14 @@ zadd fans_rank user_id score
 >> Time complexity: O(log(N)) for each item added, where N is the number of elements in the sorted set.
 
 * 2.zset维持topN操作
+
+由于要维持TOPN排行榜，所以最好的处理方法是每次`ZADD`后执行`ZREMRANGEBYRANK`，假定要维护TopN榜单，则命令如下：
+
+```bash
+ZREMRANGEBYRANK fans_rank 0 -(TopN+1)
+```
+
+注意这里范围是`0`——`-(TopN+1)`，因为`redis zset`是按照从小到大方式排序的，所以需要维持的榜单是倒数TopN，也即从最后一个元素开始，倒数推TopN个。
 
 * 3.zset删除member
 
@@ -50,3 +60,4 @@ zadd fans_rank user_id score
 * [ZREMRANGEBYRANK](http://redisdoc.com/sorted_set/zremrangebyrank.html)
 * [Redis 有序集合(sorted set)](http://www.runoob.com/redis/redis-sorted-sets.html)
 * [Redis keep only top 50 elements in a sorted set](https://stackoverflow.com/questions/17650240/redis-keep-only-top-50-elements-in-a-sorted-set)
+* [Redis data-types](https://redis.io/topics/data-types)
