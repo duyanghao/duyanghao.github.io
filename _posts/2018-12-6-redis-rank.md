@@ -50,7 +50,6 @@ ZREMRANGEBYRANK fans_rank 0 -(TopN+1)
 注意：
 
 * 这里范围是`0`——`-(TopN+1)`，因为`redis zset`是按照从小到大方式排序的，所以需要维持的榜单是倒数TopN，也即从最后一个元素开始，倒数推TopN个。
-
 * 时间复杂度：
 >> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements removed by the operation.
 
@@ -62,7 +61,25 @@ ZREMRANGEBYRANK fans_rank 0 -(TopN+1)
 ZREM fans_rank user_id
 ```
 
-* 4、zset范围读取
+注意算法复杂度：
+
+>> Time complexity: O(M*log(N)) with N being the number of elements in the sorted set and M the number of elements to be removed.
+
+* 4、[zset范围读取](https://redis.io/commands/zrevrange)
+
+最后是获取排行榜TopN数据，命令如下：
+
+```bash
+ZREVRANGE fans_rank 0 (TopN-1) withscores
+```
+
+注意：
+
+* 这里范围是`0`——`TopN-1`，原因是：`redis zset`下标从0开始，而`ZREVRANGE`是倒序取数据
+* `redis zset` `ZRANGE`与`ZREVRANGE`当元素`score`相同时会默认根据`member`字典序排序
+* `withscores`会将`member`与对应`score`一起返回
+* 算法复杂度：
+>> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements returned.
 
 ## Refs
 
