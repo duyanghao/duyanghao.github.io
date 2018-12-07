@@ -1,5 +1,6 @@
 ---
 layout: post
+comments: true
 title: redis zset实现排行榜
 date: 2018-12-7 16:33:31
 category: 技术
