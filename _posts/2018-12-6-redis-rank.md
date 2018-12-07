@@ -81,6 +81,15 @@ ZREVRANGE fans_rank 0 (TopN-1) withscores
 * 算法复杂度：
 >> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements returned.
 
+通过如上四个步骤就可以顺利完成排行榜核心逻辑开发
+
+### 其他
+
+这里给出`redis zset`与排行榜功能相关的其它几个常用命令：
+
+* 顺序取数据——[ZRANGE](https://redis.io/commands/zrevrange)
+* 计算长度——[ZCARD](https://redis.io/commands/zcard)
+
 ## Refs
 
 * [ZREMRANGEBYRANK](http://redisdoc.com/sorted_set/zremrangebyrank.html)
