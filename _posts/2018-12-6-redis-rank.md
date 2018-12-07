@@ -16,16 +16,14 @@ excerpt: 本文介绍了redis zset排行榜应用……
 redis zset由于如下特性天生支持排行榜需求：
 
 * zset是有序集合类型
-
 * zset支持常用的添加，删除，范围读取操作
-
 * 有序集合的成员是唯一的,但分数(score)却可以重复
 
 下文将详细展开介绍：利用`redis zset`实现排行榜功能
 
 ### redis zset实现排行榜功能
 
-现在假定有如下排行榜需求：实现一个粉丝TOP10排行榜。简单分析该需求，我们可以将用户id作为member，用户粉丝量作为score，并设置`redis key`为`fans_rank`形成`redis zset`。
+现在假定有如下排行榜需求：实现一个粉丝Top10排行榜。简单分析该需求，我们可以将用户id作为member，用户粉丝量作为score，并设置`redis key`为`fans_rank`形成`redis zset`。
 
 按照如下步骤你可以很容易地实现该功能：
 
@@ -41,17 +39,28 @@ ZADD fans_rank user_id score
 
 >> Time complexity: O(log(N)) for each item added, where N is the number of elements in the sorted set.
 
-* 2.zset维持topN操作
+* 2.[zset维持TopN操作](https://redis.io/commands/zremrangebyrank)
 
-由于要维持TOPN排行榜，所以最好的处理方法是每次`ZADD`后执行`ZREMRANGEBYRANK`，假定要维护TopN榜单，则命令如下：
+由于要维持TopN排行榜，所以最好的处理方法是每次`ZADD`后执行`ZREMRANGEBYRANK`，假定要维护TopN榜单，则命令如下：
 
 ```bash
 ZREMRANGEBYRANK fans_rank 0 -(TopN+1)
 ```
 
-注意这里范围是`0`——`-(TopN+1)`，因为`redis zset`是按照从小到大方式排序的，所以需要维持的榜单是倒数TopN，也即从最后一个元素开始，倒数推TopN个。
+注意：
 
-* 3.zset删除member
+* 这里范围是`0`——`-(TopN+1)`，因为`redis zset`是按照从小到大方式排序的，所以需要维持的榜单是倒数TopN，也即从最后一个元素开始，倒数推TopN个。
+
+* 时间复杂度：
+>> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements removed by the operation.
+
+* 3.[zset删除member](https://redis.io/commands/zrem)
+
+如果某个用户进行注销操作，或者被封号了，这个时候该用户应该从`redis zset`中被踢掉，如下：
+
+```bash
+ZREM fans_rank user_id
+```
 
 * 4、zset范围读取
 
