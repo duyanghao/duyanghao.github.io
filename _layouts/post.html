@@ -35,9 +35,9 @@ layout: default
 	<a {% if page.next %} href="{{ page.next.url }}" class="pageNav"{% endif %} {% unless page.next %} class="pageNavInvalid" {% endunless %} >下一篇</a>
 </span>
 </section>
+{% if page.comments %} • <a href="https://duyanghao.github.io{{ page.url }}#disqus_thread">0 Comments</a>{% endif %}
 {% include jiathis.md %}
 {% include httpsshare.md %}
-{% include comments.md %}
 {% include disqus.html %}
 {% include baidutongji.md %}
 {% include googleanalytics.md %}
