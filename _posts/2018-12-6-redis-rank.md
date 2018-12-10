@@ -38,7 +38,7 @@ ZADD fans_rank user_id score
 
 注意算法复杂度：
 
->> Time complexity: O(log(N)) for each item added, where N is the number of elements in the sorted set.
+> Time complexity: O(log(N)) for each item added, where N is the number of elements in the sorted set.
 
 * 2.[zset维持TopN操作](https://redis.io/commands/zremrangebyrank)
 
@@ -52,7 +52,7 @@ ZREMRANGEBYRANK fans_rank 0 -(TopN+1)
 
 * 这里范围是`0`——`-(TopN+1)`，因为`redis zset`是按照从小到大方式排序的，所以需要维持的榜单是倒数TopN，也即从最后一个元素开始，倒数推TopN个
 * 时间复杂度：
->> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements removed by the operation.
+> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements removed by the operation.
 
 * 3.[zset删除member](https://redis.io/commands/zrem)
 
@@ -64,7 +64,7 @@ ZREM fans_rank user_id
 
 注意算法复杂度：
 
->> Time complexity: O(M*log(N)) with N being the number of elements in the sorted set and M the number of elements to be removed.
+> Time complexity: O(M*log(N)) with N being the number of elements in the sorted set and M the number of elements to be removed.
 
 * 4、[zset范围读取](https://redis.io/commands/zrevrange)
 
@@ -80,7 +80,7 @@ ZREVRANGE fans_rank 0 (TopN-1) withscores
 * `redis zset` `ZRANGE`与`ZREVRANGE`当元素`score`相同时会默认根据`member`字典序排序
 * `withscores`会将`member`与对应`score`一起返回
 * 算法复杂度：
->> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements returned.
+> Time complexity: O(log(N)+M) with N being the number of elements in the sorted set and M the number of elements returned.
 
 通过如上四个步骤就可以顺利完成排行榜核心逻辑开发
 
