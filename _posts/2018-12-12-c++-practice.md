@@ -72,7 +72,7 @@ else
 }
 ```
 
-4. map查找某个元素是否存在
+* 4 map查找某个元素是否存在
 
 ```c++
 map<int, string> m;
