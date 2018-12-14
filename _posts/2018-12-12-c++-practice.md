@@ -91,7 +91,7 @@ else
 
 ```c++
 std::unordered_set<int> u_s;
-u_s.insert(xxx)
+u_s.insert(xxx);
 vector<int> v;
 v.insert(v.end(), u_s.begin(), u_s.end());
 ```
@@ -114,13 +114,13 @@ j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 
 > "If you want to generate a random integer between 1 and 10, you should always do it by using high-order bits, as in
 
-                     j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
+>                     j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 
-              and never by anything resembling
+>              and never by anything resembling
 
-                     j = 1 + (rand() % 10);
+>                     j = 1 + (rand() % 10);
 
-              (which uses lower-order bits)."
+>              (which uses lower-order bits)."
 
 ## Refs
 
