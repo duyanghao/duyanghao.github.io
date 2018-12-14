@@ -109,7 +109,6 @@ std::unordered_set<int> u_s(v.begin(), v.end());
 ```c++
 srand (time(NULL));
 j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
-...
 ```
 
 > If you want to generate a random integer between 1 and 10, you should always do it by using high-order bits, as in
