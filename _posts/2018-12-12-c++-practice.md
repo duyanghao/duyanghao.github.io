@@ -112,7 +112,7 @@ j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 ...
 ```
 
-> "If you want to generate a random integer between 1 and 10, you should always do it by using high-order bits, as in
+> If you want to generate a random integer between 1 and 10, you should always do it by using high-order bits, as in
 
 >                     j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 
@@ -120,12 +120,12 @@ j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 
 >                     j = 1 + (rand() % 10);
 
->              (which uses lower-order bits)."
+>              (which uses lower-order bits).
 
 * 8 遍历map
 
 ```c++
-for (std::map<int,string>::iterator it=m.begin(); it != m.end(); ++it)
+for (std::map<int, string>::iterator it=m.begin(); it != m.end(); ++it)
     std::cout << it->first << " => " << it->second << '\n';
 ```
 
