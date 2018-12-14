@@ -122,8 +122,39 @@ j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
 
 >              (which uses lower-order bits)."
 
+* 8 遍历map
+
+```c++
+for (std::map<int,string>::iterator it=m.begin(); it != m.end(); ++it)
+    std::cout << it->first << " => " << it->second << '\n';
+```
+
+* 9 `string`去除最后一个字符
+
+```c++
+    string str;
+    str = "123456";
+    cout << str << endl;
+
+    //方法一：使用substr()
+    str = str.substr(0, str.length() - 1);
+    cout << str << endl;
+
+    //方法二：使用erase()
+    str.erase(str.end() - 1);
+    cout << str << endl;
+```
+
+## c++编程思想
+
+* 尽量用函数，避免代码臃肿
+* 尽量用引用传参，避免开销
+* STL尽可能使用常用的容器：vector、map、set等，完全足够大多数业务场景——越简单的容器用起来越不容易出错
+
 ## Refs
 
 * [Efficiently moving contents of std::unordered_set to std::vector](https://stackoverflow.com/questions/42519867/efficiently-moving-contents-of-stdunordered-set-to-stdvector)
 * [C++中int、string等常见类型转换](https://www.cnblogs.com/gaobw/p/7070622.html)
 * [convert-vector-set](https://www.techiedelight.com/convert-vector-set-cpp/)
+* [How to get current time and date in C++?](https://stackoverflow.com/questions/997946/how-to-get-current-time-and-date-in-c)
+* [Yesterday's date using c++](https://www.daniweb.com/programming/software-development/threads/506043/yesterday-s-date-using-c)
