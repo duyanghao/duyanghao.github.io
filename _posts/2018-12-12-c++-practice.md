@@ -11,7 +11,7 @@ excerpt: c++业务开发常用技巧总结……
 
 本文列举出业务开发中常用的`c++`技巧，在本人用`c++`进行业务开发的过程中发现基本只需要使用这些特性就可以将`90%`的逻辑搞定……
 
-## 基本语法注意知识
+## 语法注意点
 
 1. `c++`中可以用0表示false，用非0表示true
 2. `c`打印`bool`，直接用`prinf %d`，如果为`false`则打印0；否则打印1
@@ -37,6 +37,38 @@ vector<int> v
 for (vector<int>::iterator it = v.begin(); it != v.end(); ++it)
 {
     *it ...
+}
+```
+
+2. vector遍历剔除
+
+```c++
+vector<int> v
+for (vector<string>::iterator it = v.begin(); it != v.end(); )
+{
+    if (xxx)
+    {
+        it = v.erase(it);
+    }
+    else
+    {
+        ++it;
+    }
+}
+```
+
+3. vector查找元素是否存在
+
+```c++
+vector<int> v
+vector<string>::iterator it = std::find(v.begin(), v.end(), xxx);
+if (it != v.end())
+{
+    //处理存在情况
+}
+else
+{
+    //处理不存在情况
 }
 ```
 
