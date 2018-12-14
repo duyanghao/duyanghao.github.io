@@ -20,11 +20,11 @@ excerpt: c++业务开发常用技巧总结……
 
 ## 常用技巧
 
-1. 遍历vector
+* 1 遍历vector
 
 第一种方式：用下标遍历：
 ```c++
-vector<int> v
+vector<int> v;
 for (size_t i = 0; i < v.size(); i++)
 {
     v[i] ...
@@ -33,18 +33,18 @@ for (size_t i = 0; i < v.size(); i++)
 
 第二种方式：用迭代器遍历：
 ```c++
-vector<int> v
+vector<int> v;
 for (vector<int>::iterator it = v.begin(); it != v.end(); ++it)
 {
     *it ...
 }
 ```
 
-2. vector遍历剔除
+* 2 vector遍历剔除
 
 ```c++
-vector<int> v
-for (vector<string>::iterator it = v.begin(); it != v.end(); )
+vector<int> v;
+for (vector<int>::iterator it = v.begin(); it != v.end(); )
 {
     if (xxx)
     {
@@ -57,12 +57,27 @@ for (vector<string>::iterator it = v.begin(); it != v.end(); )
 }
 ```
 
-3. vector查找元素是否存在
+* 3 vector查找元素是否存在
 
 ```c++
-vector<int> v
-vector<string>::iterator it = std::find(v.begin(), v.end(), xxx);
+vector<int> v;
+vector<int>::iterator it = std::find(v.begin(), v.end(), xxx);
 if (it != v.end())
+{
+    //处理存在情况
+}
+else
+{
+    //处理不存在情况
+}
+```
+
+4. map查找某个元素是否存在
+
+```c++
+map<int, string> m;
+map<int, string>::iterator it = m.find(xxx);
+if (it != m.end())
 {
     //处理存在情况
 }
