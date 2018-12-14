@@ -9,7 +9,7 @@ excerpt: c++业务开发常用技巧总结……
 
 ## 前言
 
-本文列举出业务开发中常用的`c++`技巧，在本人用`c++`进行业务开发的过程中发现基本只需要使用这些特性就可以将`90%`的逻辑搞定……
+本文列举出业务开发中常用的`c++`技巧和使用经验(不断补充)……
 
 ## 语法注意点
 
@@ -87,7 +87,43 @@ else
 }
 ```
 
-## 基本概念
+* 5 unordered_set转vector
+
+```c++
+std::unordered_set<int> u_s;
+u_s.insert(xxx)
+vector<int> v;
+v.insert(v.end(), u_s.begin(), u_s.end());
+```
+
+* 6 vector转unordered_set
+
+```c++
+vector<int> v;
+v.push_back(xxx);
+std::unordered_set<int> u_s(v.begin(), v.end());
+```
+
+* 7 产生`1`——`10`随机化数字
+
+```c++
+srand (time(NULL));
+j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
+...
+```
+
+> "If you want to generate a random integer between 1 and 10, you should always do it by using high-order bits, as in
+
+                     j = 1 + (int) (10.0 * (rand() / (RAND_MAX + 1.0)));
+
+              and never by anything resembling
+
+                     j = 1 + (rand() % 10);
+
+              (which uses lower-order bits)."
 
 ## Refs
 
+* [Efficiently moving contents of std::unordered_set to std::vector](https://stackoverflow.com/questions/42519867/efficiently-moving-contents-of-stdunordered-set-to-stdvector)
+* [C++中int、string等常见类型转换](https://www.cnblogs.com/gaobw/p/7070622.html)
+* [convert-vector-set](https://www.techiedelight.com/convert-vector-set-cpp/)
