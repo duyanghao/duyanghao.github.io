@@ -144,6 +144,18 @@ for (std::map<int, string>::iterator it=m.begin(); it != m.end(); ++it)
     cout << str << endl;
 ```
 
+* 10 vector插入首部
+
+```c++
+vector<int> MyVector;
+
+for (int i = 0; i < 10; i++)
+    MyVector.insert(MyVector.begin(),i); // Inserts the value i at the start of the array 10 times.
+
+for (vector<int>::iterator it=MyVector.begin(); it<MyVector.end(); it++)
+    cout << *it; //Outputs the values of MyVector in order 
+```
+
 ## c++编程思想
 
 * 尽量用函数，避免代码臃肿
@@ -157,3 +169,4 @@ for (std::map<int, string>::iterator it=m.begin(); it != m.end(); ++it)
 * [convert-vector-set](https://www.techiedelight.com/convert-vector-set-cpp/)
 * [How to get current time and date in C++?](https://stackoverflow.com/questions/997946/how-to-get-current-time-and-date-in-c)
 * [Yesterday's date using c++](https://www.daniweb.com/programming/software-development/threads/506043/yesterday-s-date-using-c)
+* [Insert things in the beginning of a vector](http://www.cplusplus.com/forum/beginner/60348/)
