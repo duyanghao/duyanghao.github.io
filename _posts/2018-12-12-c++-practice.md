@@ -162,6 +162,14 @@ for (vector<int>::iterator it=MyVector.begin(); it<MyVector.end(); it++)
 * 尽量用引用传参，避免开销
 * STL尽可能使用常用的容器：vector、map、set等，完全足够大多数业务场景——越简单的容器用起来越不容易出错
 
+## 业务开发&平台开发
+
+* 业务开发节奏快；平台开发相对时间充裕（加班少）
+* 业务开发对接'可见'的产品，需要对产品熟悉（有些时候，甚至比需求提出方更加熟悉）；平台开发一般是基础部门，可能大多数时候自己并不了解使用自己平台的业务
+* 业务开发对知识的要求是：全而杂（核心是把尽快把需求搞定，所以往往对某一个技术领域没有深专）；平台开发则相反，目标是成为某个领域的'专家'
+* 业务开发对接工程思维；平台开发对接专家思维
+* 业务开发需求变更快；平台开发则相对稳定
+
 ## Refs
 
 * [Efficiently moving contents of std::unordered_set to std::vector](https://stackoverflow.com/questions/42519867/efficiently-moving-contents-of-stdunordered-set-to-stdvector)
