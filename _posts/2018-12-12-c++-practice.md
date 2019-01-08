@@ -156,6 +156,26 @@ for (vector<int>::iterator it=MyVector.begin(); it<MyVector.end(); it++)
     cout << *it; //Outputs the values of MyVector in order 
 ```
 
+* 11 time获取
+
+```c++
+#include <stdio.h>
+#include <string>
+#include <cstdlib>
+#include <memory.h>
+using namespace std;
+
+char strtm[1024];
+time_t nowtime = time(0);
+struct tm sttm;
+memset(&sttm, 0, sizeof(sttm));
+localtime_r((time_t *)&nowtime, &sttm);
+snprintf(strtm, sizeof(strtm), "%04d-%02d-%02d %02d:%02d:%02d",
+        sttm.tm_year + 1900, sttm.tm_mon + 1, sttm.tm_mday,
+        sttm.tm_hour, sttm.tm_min, sttm.tm_sec);
+printf("%s\n", strtm);
+```
+
 ## c++编程思想
 
 * 尽量用函数，避免代码臃肿
@@ -183,3 +203,4 @@ for (vector<int>::iterator it=MyVector.begin(); it<MyVector.end(); it++)
 * [How to get current time and date in C++?](https://stackoverflow.com/questions/997946/how-to-get-current-time-and-date-in-c)
 * [Yesterday's date using c++](https://www.daniweb.com/programming/software-development/threads/506043/yesterday-s-date-using-c)
 * [Insert things in the beginning of a vector](http://www.cplusplus.com/forum/beginner/60348/)
+* [ctime](http://www.cplusplus.com/reference/ctime/tm/)
