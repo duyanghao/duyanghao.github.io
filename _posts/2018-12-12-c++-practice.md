@@ -196,6 +196,10 @@ printf("%s\n", strtm);
 * 业务开发成就感相对更高，小需求1天，大需求1周；平台开发可能一个需求就一年半载，还不出成果
 * 业务开发注重沟通，与产品，客户端，测试，包括合作部门各种交流沟通，很多时候会撕逼；平台开发相对而言环境更加纯粹，没有那么多撕逼烦心的事情，可以安心的做技术
 
+## 业务开发(APP开发)流程
+
+![](/public/img/product_development/development_process.png)
+
 ## Refs
 
 * [Efficiently moving contents of std::unordered_set to std::vector](https://stackoverflow.com/questions/42519867/efficiently-moving-contents-of-stdunordered-set-to-stdvector)
