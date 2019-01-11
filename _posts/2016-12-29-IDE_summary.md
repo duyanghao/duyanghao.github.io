@@ -249,6 +249,7 @@ File->Open…(directly open project directory)
 * 画流程图——[亿图图示专家](http://www.edrawsoft.cn/)
 * 思维导图——[XMind](https://www.xmind.cn/)
 * 计算器——系统键+R -> calc
+* 谷歌翻译插件——更多工具 -> 扩展程序 -> Google 翻译
 
 # Refs
 
