@@ -17,6 +17,7 @@ excerpt: c++业务开发常用技巧总结……
 2. `c`打印`bool`，直接用`prinf %d`，如果为`false`则打印0；否则打印1
 3. `c++` map类型可以直接使用没有key的value，value为default值
 4. `c++` string convert int使用`atoi`; int convert string使用`std:to_string()`（添加`-std=c++11`参数）
+5. 函数模板在头文件中声明和实现
 
 ## 常用技巧
 
