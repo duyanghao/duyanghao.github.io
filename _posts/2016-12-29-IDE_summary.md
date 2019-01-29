@@ -95,6 +95,10 @@ please install [python Language](https://www.python.org/downloads/) before insta
 
 ![](/public/img/Tool_summary/9.png)
 
+### font
+
+![](/public/img/Tool_summary/12.png)
+
 ### open project
 
 File->Open...(directly open project directory)
