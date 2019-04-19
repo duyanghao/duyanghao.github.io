@@ -254,6 +254,7 @@ File->Open…(directly open project directory)
 * 思维导图——[XMind](https://www.xmind.cn/)
 * 计算器——系统键+R -> calc
 * 谷歌翻译插件——更多工具 -> 扩展程序 -> Google 翻译
+* `golang`——`GoLand` IDE使用非常方便，但是要收费，可以破解
 
 # Refs
 
