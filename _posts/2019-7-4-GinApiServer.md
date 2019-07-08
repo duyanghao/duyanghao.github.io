@@ -75,8 +75,27 @@ make dockerfiles.build
 ## 特性
 
 * 1、支持configmap reload api
+
+```go
+// config reload
+r.Any("/-/reload", func(c *gin.Context) {
+        log.Info("===== Server Stop! Cause: Config Reload. =====")
+        os.Exit(1)
+})
+```
+
 * 2、支持ping-pong健康检查&版本获取
+
+```go
+// a ping api test
+r.GET("/ping", controller.Ping)
+
+// get GinApiServer version
+r.GET("/version", controller.Version)
+```
+
 * 3、支持dump-goroutine-stack-traces
+
 ```bash
 kill -SIGUSR1 41307
 
