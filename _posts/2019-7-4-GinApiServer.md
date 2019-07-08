@@ -77,7 +77,6 @@ make dockerfiles.build
 * 1、支持configmap reload api
 * 2、支持ping-pong健康检查&版本获取
 * 3、支持dump-goroutine-stack-traces
-
 ```bash
 kill -SIGUSR1 41307
 
