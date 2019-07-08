@@ -78,56 +78,56 @@ make dockerfiles.build
 * 2、支持ping-pong健康检查&版本获取
 * 3、支持dump-goroutine-stack-traces
 
-    ```bash
-    kill -SIGUSR1 41307
+```bash
+kill -SIGUSR1 41307
 
-    === BEGIN goroutine stack dump ===
-    goroutine 20 [running]:
-    github.com/duyanghao/GinApiServer/pkg/util.dumpStacks()
-            /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:23 +0x6d
-    github.com/duyanghao/GinApiServer/pkg/util.SetupSigusr1Trap.func1(0xc000332240)
-            /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:16 +0x34
-    created by github.com/duyanghao/GinApiServer/pkg/util.SetupSigusr1Trap
-            /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:14 +0xab
+=== BEGIN goroutine stack dump ===
+goroutine 20 [running]:
+github.com/duyanghao/GinApiServer/pkg/util.dumpStacks()
+        /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:23 +0x6d
+github.com/duyanghao/GinApiServer/pkg/util.SetupSigusr1Trap.func1(0xc000332240)
+        /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:16 +0x34
+created by github.com/duyanghao/GinApiServer/pkg/util.SetupSigusr1Trap
+        /root/go/src/github.com/duyanghao/GinApiServer/pkg/util/trap.go:14 +0xab
 
-    goroutine 1 [IO wait]:
-    internal/poll.runtime_pollWait(0x7fccf3b86f68, 0x72, 0x0)
-            /usr/local/go/src/runtime/netpoll.go:182 +0x56
-    internal/poll.(*pollDesc).wait(0xc000442618, 0x72, 0x0, 0x0, 0xbadadd)
-            /usr/local/go/src/internal/poll/fd_poll_runtime.go:87 +0x9b
-    internal/poll.(*pollDesc).waitRead(...)
-            /usr/local/go/src/internal/poll/fd_poll_runtime.go:92
-    internal/poll.(*FD).Accept(0xc000442600, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
-            /usr/local/go/src/internal/poll/fd_unix.go:384 +0x1ba
-    net.(*netFD).accept(0xc000442600, 0xb51080, 0x50, 0xc0000a77c0)
-            /usr/local/go/src/net/fd_unix.go:238 +0x42
-    net.(*TCPListener).accept(0xc00049e110, 0xc000046a80, 0x7fccf3be26d0, 0xc000000180)
-            /usr/local/go/src/net/tcpsock_posix.go:139 +0x32
-    net.(*TCPListener).AcceptTCP(0xc00049e110, 0x40d9b8, 0x30, 0xb51080)
-            /usr/local/go/src/net/tcpsock.go:247 +0x48
-    net/http.tcpKeepAliveListener.Accept(0xc00049e110, 0xb51080, 0xc0002d0e70, 0xadef20, 0x2294c70)
-            /usr/local/go/src/net/http/server.go:3264 +0x2f
-    net/http.(*Server).Serve(0xc0002d7d40, 0xcb8640, 0xc00049e110, 0x0, 0x0)
-            /usr/local/go/src/net/http/server.go:2859 +0x22d
-    net/http.(*Server).ListenAndServe(0xc0002d7d40, 0xc0002d7d40, 0xc000355ea8)
-            /usr/local/go/src/net/http/server.go:2797 +0xe4
-    net/http.ListenAndServe(...)
-            /usr/local/go/src/net/http/server.go:3037
-    github.com/gin-gonic/gin.(*Engine).Run(0xc000394000, 0xc000355f48, 0x1, 0x1, 0x0, 0x0)
-            /root/go/src/github.com/duyanghao/GinApiServer/vendor/github.com/gin-gonic/gin/gin.go:294 +0x140
-    main.main()
-            /root/go/src/github.com/duyanghao/GinApiServer/cmd/main.go:22 +0x2c4
+goroutine 1 [IO wait]:
+internal/poll.runtime_pollWait(0x7fccf3b86f68, 0x72, 0x0)
+        /usr/local/go/src/runtime/netpoll.go:182 +0x56
+internal/poll.(*pollDesc).wait(0xc000442618, 0x72, 0x0, 0x0, 0xbadadd)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:87 +0x9b
+internal/poll.(*pollDesc).waitRead(...)
+        /usr/local/go/src/internal/poll/fd_poll_runtime.go:92
+internal/poll.(*FD).Accept(0xc000442600, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
+        /usr/local/go/src/internal/poll/fd_unix.go:384 +0x1ba
+net.(*netFD).accept(0xc000442600, 0xb51080, 0x50, 0xc0000a77c0)
+        /usr/local/go/src/net/fd_unix.go:238 +0x42
+net.(*TCPListener).accept(0xc00049e110, 0xc000046a80, 0x7fccf3be26d0, 0xc000000180)
+        /usr/local/go/src/net/tcpsock_posix.go:139 +0x32
+net.(*TCPListener).AcceptTCP(0xc00049e110, 0x40d9b8, 0x30, 0xb51080)
+        /usr/local/go/src/net/tcpsock.go:247 +0x48
+net/http.tcpKeepAliveListener.Accept(0xc00049e110, 0xb51080, 0xc0002d0e70, 0xadef20, 0x2294c70)
+        /usr/local/go/src/net/http/server.go:3264 +0x2f
+net/http.(*Server).Serve(0xc0002d7d40, 0xcb8640, 0xc00049e110, 0x0, 0x0)
+        /usr/local/go/src/net/http/server.go:2859 +0x22d
+net/http.(*Server).ListenAndServe(0xc0002d7d40, 0xc0002d7d40, 0xc000355ea8)
+        /usr/local/go/src/net/http/server.go:2797 +0xe4
+net/http.ListenAndServe(...)
+        /usr/local/go/src/net/http/server.go:3037
+github.com/gin-gonic/gin.(*Engine).Run(0xc000394000, 0xc000355f48, 0x1, 0x1, 0x0, 0x0)
+        /root/go/src/github.com/duyanghao/GinApiServer/vendor/github.com/gin-gonic/gin/gin.go:294 +0x140
+main.main()
+        /root/go/src/github.com/duyanghao/GinApiServer/cmd/main.go:22 +0x2c4
 
-    goroutine 19 [syscall]:
-    os/signal.signal_recv(0xcb28a0)
-            /usr/local/go/src/runtime/sigqueue.go:139 +0x9c
-    os/signal.loop()
-            /usr/local/go/src/os/signal/signal_unix.go:23 +0x22
-    created by os/signal.init.0
-            /usr/local/go/src/os/signal/signal_unix.go:29 +0x41
+goroutine 19 [syscall]:
+os/signal.signal_recv(0xcb28a0)
+        /usr/local/go/src/runtime/sigqueue.go:139 +0x9c
+os/signal.loop()
+        /usr/local/go/src/os/signal/signal_unix.go:23 +0x22
+created by os/signal.init.0
+        /usr/local/go/src/os/signal/signal_unix.go:29 +0x41
 
-    === END goroutine stack dump ===
-    ```
+=== END goroutine stack dump ===
+```
 
 ## 参考
 
