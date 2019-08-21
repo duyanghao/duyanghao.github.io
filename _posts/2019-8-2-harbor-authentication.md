@@ -887,3 +887,4 @@ Connection: close
 ## Refs 
 
 * [token protocol](https://docs.docker.com/registry/spec/auth/token/)
+* [jeremyxu2010](https://jeremyxu2010.github.io/2018/09/harbor%E6%BA%90%E7%A0%81%E8%A7%A3%E8%AF%BB/)
