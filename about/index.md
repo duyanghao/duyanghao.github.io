@@ -10,9 +10,9 @@ comments: no
 
 {{ site.about }}
 
-有梦想的年轻人...
+You don't have to be faster than the bear, you just have to be faster than the guy next to you.
 
-关注 Linux kernel、Spark、Docker/Kubernetes、Networking、Distributed Storage...
+关注 Linux kernel、Spark、Docker/Distribution/Kubernetes、Harbor、Database...
 
 
 ---
@@ -26,19 +26,15 @@ comments: no
 
 ---
 
-### 联系方式：
+### 联系方式
 
 {% if site.qq %}
 ＱＱ：[{{ site.qq }}]
 {% endif %}
-网站：[{{ site.name }}]({{ site.url }})
-
 邮箱：[{{ site.email }}](mailto:{{ site.email }})
 
-GitHub：[http://github.com/{{ site.github }}](http://github.com/{{ site.github }})
+GitHub：[https://github.com/{{ site.github }}](http://github.com/{{ site.github }})
 
 ----
 
-[![新浪微博](http://service.t.sina.com.cn/widget/qmd/6049751054/02345c5a/1.png)]({{ site.weibo }})
-
-----
+![](/public/img/wechat/duyanghao.png)

@@ -6,5 +6,6 @@ layout: default
 {{ content }}
 </section>
 {% if page.comments %}
+{% include wechat.md %}
 {% include disqus.html %}
 {% endif %}
