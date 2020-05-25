@@ -191,7 +191,6 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
   ```
   
 * step2：安装[velero-volume-controller](https://github.com/duyanghao/velero-volume-controller)
-  ![](/public/img/kubernetes_bur/velero-volume-controller.png)
   ```bash
   # Generated image
   $ make dockerfiles.build
