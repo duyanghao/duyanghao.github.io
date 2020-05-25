@@ -52,7 +52,7 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 
 针对上述备份数据，我们可以制定如下几种不同的备份还原方案（注意是逐项演进的）
 
-## 一、ETCD+应用状态
+## <font color="#dd0000">ETCD+应用状态</font><br />
 
 方案要点如下：
 
@@ -146,15 +146,136 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 
 这种方案的优缺点如下：
 
-Pros： 
-Cons：
+* Pros
+  * 原理相对直接，简单
+* Cons
+  * 由于采用ETCD备份应用版本，保留了工作负载的母机node和pod ip等信息，只支持原地还原
+  * ETCD还原粒度较大，存在很多的不确定性
+  * 需要针对应用层分别制定备份方案，例如各种数据库使用不同的dump工具和命令。维护成本高
+  * 全量备份，不支持增量备份
 
-## 应用版本+应用状态
+## <font color="#dd0000">应用版本+应用状态</font><br />
 
+本方案主要使用社区最流行的备份还原工具[Velero](https://github.com/vmware-tanzu/velero)，要点如下：
 
+* 应用版本备份：只备份Kubernetes指定namespace下的资源，不全量备份
+* 应用状态备份：备份相应资源对应的状态数据
 
-## VC+应用状态
+这里我们介绍最通用的[Velero Restic Integration](https://velero.io/docs/v1.3.2/restic/)方案，该方案集成了[Restic](https://github.com/restic/restic)工具在文件系统层面对应用状态数据进行备份，可以达到屏蔽底层存储细节的目的
 
+![](/public/img/kubernetes_bur/velero-bur.png)
+
+备份流程如下：
+
+* step1：安装velero
+  ```bash
+  $ velero install \
+        --provider aws \
+        --plugins velero/velero-plugin-for-aws:v1.0.0 \
+        --bucket velero \
+        --secret-file ./credentials-velero \
+        --use-restic \
+        --backup-location-config region=minio,s3ForcePathStyle="true",s3Url=http://minio.velero.svc:9000 \
+        --snapshot-location-config region=minio
+  
+  [...truncate...]
+  Velero is installed! ⛵ Use 'kubectl logs deployment/velero -n velero' to view the status.
+  
+  $ kubectl get pods -nvelero
+  NAME                     READY   STATUS      RESTARTS   AGE
+  minio-d787f4bf7-ljqz9    1/1     Running     0          36s
+  minio-setup-6ztpp        0/1     Completed   2          36s
+  restic-xstrc             1/1     Running     0          11s
+  velero-fd75fbd6c-2j2lb   1/1     Running     0          11s
+  ```
+  
+* step2：安装[velero-volume-controller](https://github.com/duyanghao/velero-volume-controller)
+  ```bash
+  # Generated image
+  $ make dockerfiles.build
+  # Retag and push to your docker registry
+  $ docker tag duyanghao/velero-volume-controller:v2.0 xxx/duyanghao/velero-volume-controller:v2.0
+  $ docker push xxx/duyanghao/velero-volume-controller:v2.0
+  # Update the deployment 'Image' field with the built image name
+  $ sed -i 's|REPLACE_IMAGE|xxx/duyanghao/velero-volume-controller:v2.0|g' examples/deployment/velero-volume-controller.yaml
+  # Create ClusterRole and ClusterRoleBinding
+  $ kubectl apply -f examples/deployment/cluster-role.yaml
+  $ kubectl apply -f examples/deployment/cluster-role-binding.yaml
+  # Create ConfigMap
+  $ kubectl apply -f examples/deployment/configmap.yaml
+  # Create velero-volume-controller deployment
+  $ kubectl apply -f examples/deployment/velero-volume-controller.yaml
+  ```
+  
+* step3：创建velero restic backup
+  ```bash
+  $ velero backup create nginx-backup-with-pv --include-namespaces nginx-example
+  Backup request "nginx-backup-with-pv" submitted successfully.
+  
+  $ velero backup get 
+  NAME                   STATUS      CREATED                         EXPIRES   STORAGE LOCATION   SELECTOR
+  nginx-backup-with-pv   Completed   2020-03-20 09:46:36 +0800 CST   29d       default            <none>
+  ```  
+
+还原流程如下：
+
+* step1：清除资源
+  ```bash
+  $ kubectl delete namespace nginx-example
+  namespace "nginx-example" deleted
+  ```
+  
+* step2：创建velero restic restore
+  ```bash
+  $ velero restore create --from-backup nginx-backup-with-pv
+  Restore request "nginx-backup-with-pv-20200320094935" submitted successfully.
+  
+  $ velero restore get
+  NAME                                  BACKUP                 STATUS      WARNINGS   ERRORS   CREATED                         SELECTOR
+  nginx-backup-with-pv-20200320094935   nginx-backup-with-pv   Completed   0          0        2020-03-20 09:49:35 +0800 CST   <none>
+  ```
+ 
+由于该方案的最佳实践工具是Velero，所以如果你想了解更多这个工具，可以参考[这篇文章](https://duyanghao.github.io/velero/)
+
+该方案优缺点如下：
+
+* Pros
+  * 屏蔽底层存储，无需关心底层存储
+  * 支持增量备份
+  * 用户可以选择要备份的资源
+  * 支持跨集群备份还原(数据迁移)
+  * 使用简单方便，仅一条命令
+* Cons
+  * Velero Restic目前并不支持并发备份，第一次备份可能较慢
+  * 需要维护一个对象存储，保存备份数据
+  * Velero Restic目前不支持高可用
+  * 不够灵活。虽然可以选择备份的版本信息，但是对应应用的状态信息却是全部进行备份的；另外应用版本和状态是绑定关系，无法分离
+  
+## <font color="#dd0000">VC+应用状态</font><br />
+
+为了解决Velero备份不够灵活的问题。设计第三种备份方案，要点如下：
+
+* 应用版本备份：只备份Kubernetes指定(最小集合)应用版本
+* 应用状态备份：备份指定应用的最小状态集
+
+可以看出相比第二种方法，本方案在备份粒度上更加细化了，应用版本和状态信息全部都缩减到最小集，也即只备份足够还原出集群的最小数据集(数据量越多，不确定性越大)
+
+一般来说为了实现该方案，具体实施参考如下：
+
+* 利用git管理Kubernetes集群中应用的版本信息
+* 对各应用在上层定制备份还原方案，备份最小数据集
+
+该方案优缺点如下：
+
+* Pros
+  * 备份最小数据集
+  * 支持跨集群备份还原(数据迁移)
+  * 灵活性高，可以在应用上层定制备份还原方案；另外，应用的版本和状态信息分离，可以实现升级还原
+* Cons
+  * 高度定制备份还原方案，所以维护成本高
+  * 由于采用VC来备份应用版本信息，对版本管理有比较高的要求
+  * 全量备份
+  
 # 集群分类
 
 我们按照集群的作用可以将集群分类如下：
@@ -164,15 +285,14 @@ Cons：
 * 客户集群：客户实际部署应用的集群
   * 特点：无法管控客户部署的应用；应用数据量大
 
-针对这两种集群类型，我们分别设计备份还原方案
+针对这两种集群类型，对备份还原方案选型建议如下：
 
-# 客户集群备份还原方案
-
-由于我们无法管控客户集群中部署的应用类型，所以最好的
-
-# 管理集群备份还原方案
+* 管理集群：上述方案均可，但由于方案一限制较多，故建议优先选择方案二和方案三
+* 客户集群：由于不能管控该类集群上部署的应用类型。方案一和方案二都大概率需要定制应用上层备份还原方案，故建议方案二
 
 # 结论
+
+本文介绍了三种Kubernetes集群的备份还原方案，并列举了各方案的优缺点。最后根据集群类型给出了方案选型建议。总的来说：方案一限制太多，ETCD的备份和还原存在太多不确定性，所以不建议使用；方案二采用Velero开源工具，通用性强，适用于大多数集群的备份还原；方案三灵活性高，适合高度定制的集群
 
 # Refs
 
