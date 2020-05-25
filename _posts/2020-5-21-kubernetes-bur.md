@@ -162,7 +162,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 * 应用版本备份：只备份Kubernetes指定namespace下的资源
 * 应用状态备份：备份相应资源对应的状态数据
 
-这里我们介绍最通用的[Velero Restic Integration](https://velero.io/docs/v1.3.2/restic/)方案，该方案集成了[Restic](https://github.com/restic/restic)工具在文件系统层面对应用状态数据进行备份，可以达到屏蔽底层存储细节的目的
+这里我们介绍最通用的[Velero Restic Integration](https://velero.io/docs/v1.3.2/restic/)方案，该方案集成了[Restic](https://github.com/restic/restic)工具在文件系统层面对应用状态数据进行备份，可以达到屏蔽底层存储细节的目的：
 
 ![](/public/img/kubernetes_bur/velero-bur.png)
 
@@ -191,6 +191,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
   ```
   
 * step2：安装[velero-volume-controller](https://github.com/duyanghao/velero-volume-controller)
+  ![](/public/img/kubernetes_bur/velero-volume-controller.png)
   ```bash
   # Generated image
   $ make dockerfiles.build
