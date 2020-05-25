@@ -36,7 +36,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 为了解决这个问题，社区中也有一些项目产生，例如：[reshifter](https://github.com/mhausenblas/reshifter)，[kube-backup](https://github.com/pieterlange/kube-backup)以及[velero](https://github.com/vmware-tanzu/velero)。
 这其中最流行的备份还原工具是Velero，基于这个工具的研究可以参考[这篇文章](https://duyanghao.github.io/velero/)
 
-虽然社区和Google上会有一些关于Kubernetes备份还原的工具和方案，但是都杂而不全，本文就针对Kubernetes云原生备份还原这个专题进行一个全面而系统的方案介绍
+虽然社区和Google上会有一些关于Kubernetes备份还原的工具和方案，但是都杂而不全，本文就针对Kubernetes备份还原这个专题进行一个全面而系统的方案介绍
 
 # 备份什么？
 
@@ -159,7 +159,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 
 本方案主要使用社区最流行的备份还原工具[Velero](https://github.com/vmware-tanzu/velero)，要点如下：
 
-* 应用版本备份：只备份Kubernetes指定namespace下的资源，不全量备份
+* 应用版本备份：只备份Kubernetes指定namespace下的资源
 * 应用状态备份：备份相应资源对应的状态数据
 
 这里我们介绍最通用的[Velero Restic Integration](https://velero.io/docs/v1.3.2/restic/)方案，该方案集成了[Restic](https://github.com/restic/restic)工具在文件系统层面对应用状态数据进行备份，可以达到屏蔽底层存储细节的目的
@@ -259,12 +259,12 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 * 应用版本备份：只备份Kubernetes指定(最小集合)应用版本
 * 应用状态备份：备份指定应用的最小状态集
 
-可以看出相比第二种方法，本方案在备份粒度上更加细化了，应用版本和状态信息全部都缩减到最小集，也即只备份足够还原出集群的最小数据集(数据量越多，不确定性越大)
+可以看出相比第二种方案，本方案在备份粒度上更加细化了，应用版本和状态信息全部都缩减到最小集，也即只备份足够还原出集群的最小数据集(**数据量越多，不确定性越大**)
 
 一般来说为了实现该方案，具体实施参考如下：
 
 * 利用git管理Kubernetes集群中应用的版本信息
-* 对各应用在上层定制备份还原方案，备份最小数据集
+* 对各应用状态在上层定制备份还原方案，备份最小数据集
 
 该方案优缺点如下：
 
@@ -289,7 +289,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 针对这两种集群类型，对备份还原方案选型建议如下：
 
 * 管理集群：上述方案均可，但由于方案一限制较多，故建议优先选择方案二和方案三
-* 客户集群：由于不能管控该类集群上部署的应用类型。方案一和方案二都大概率需要定制应用上层备份还原方案，故建议方案二
+* 客户集群：由于不能管控该类集群上部署的应用类型。方案一和方案三都大概率需要定制应用上层备份还原方案，故建议方案二
 
 # 结论
 
