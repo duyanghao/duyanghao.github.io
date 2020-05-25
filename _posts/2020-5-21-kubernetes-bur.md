@@ -17,7 +17,7 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 
 # Overview
 
-对于在生产环境搭建的Kubernetes集群，我们可以利用[kubeadm](Creating Highly Available clusters with kubeadm)搭建高可用集群，一定程度实现容灾：
+对于在生产环境搭建的Kubernetes集群，我们可以利用[kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/)搭建高可用集群，一定程度实现容灾：
 
 ![](/public/img/kubernetes_bur/kubernetes-ha.png)
 
@@ -52,7 +52,7 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 
 针对上述备份数据，我们可以制定如下几种不同的备份还原方案（注意是逐项演进的）
 
-## ETCD+应用状态
+## 一、ETCD+应用状态
 
 方案要点如下：
 
@@ -62,7 +62,6 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 备份流程大致如下：
 
 * step1：备份ETCD
-
   ```bash
   # backup kubernetes pki
   $ cp -r /etc/kubernetes/pki backup/
@@ -109,7 +108,6 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
   ```
 
 * step2：应用层备份(eg: MariaDB)
-
   ```bash
   # backup
   $ mysqldump -uxxx -pxxx db_name > backup-file.sql
@@ -118,7 +116,6 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 还原流程大致如下：
 
 * step1：还原ETCD
-
   ```bash
   # restore kubernetes pki
   $ cp -r backup/pki /etc/kubernetes/
@@ -132,7 +129,6 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
   ```
   
 * step2：清空数据
-
   ```bash
   # restore-phase-1(drop db)
   $ mysqladmin -uxxx -pxxx -f drop db_name
@@ -143,13 +139,14 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
   ```
 
 * step3：还原数据
-
   ```bash
   # restore-phase-3(restore db)
   $ mysql -uxxx -pxxx db_name < backup-file.sql
   ```
 
 ## 应用版本+应用状态
+
+
 
 ## VC+应用状态
 
