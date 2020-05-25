@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Kubernetes备份还原方案
+title: Kubernetes备份还原概述
 date: 2020-5-21 19:10:31
 category: 技术
 tags: Kubernetes bur
