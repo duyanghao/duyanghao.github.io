@@ -19,7 +19,7 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
 
 对于在生产环境搭建的Kubernetes集群，我们可以利用[kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/)搭建高可用集群，一定程度实现容灾：
 
-![](/public/img/kubernetes_bur/kubernetes-ha.png)
+![](/public/img/kubernetes_bur/kubernetes-ha.svg)
 
 但是即便实现集群的高可用，我们依旧会需要备份还原功能，主要原因如下：
 
@@ -143,6 +143,11 @@ excerpt: ​本文介绍基于Kubernetes搭建的云原生平台备份还原方�
   # restore-phase-3(restore db)
   $ mysql -uxxx -pxxx db_name < backup-file.sql
   ```
+
+这种方案的优缺点如下：
+
+Pros： 
+Cons：
 
 ## 应用版本+应用状态
 
