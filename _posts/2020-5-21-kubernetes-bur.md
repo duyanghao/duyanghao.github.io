@@ -18,7 +18,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 
 # Overview
 
-对于在生产环境搭建的Kubernetes集群，我们可以利用[kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/)搭建高可用集群，一定程度实现容灾：
+对于在生产环境使用的Kubernetes，我们可以利用[kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/)搭建高可用集群，一定程度实现容灾：
 
 ![](/public/img/kubernetes_bur/kubernetes-ha.svg)
 
@@ -241,7 +241,7 @@ excerpt: 本文介绍了三种Kubernetes集群的备份还原方案，并列举�
 该方案优缺点如下：
 
 * Pros
-  * 屏蔽底层存储，无需关心底层存储
+  * 屏蔽底层存储，无需关心存储细节
   * 支持增量备份
   * 用户可以选择要备份的资源
   * 支持跨集群备份还原(数据迁移)
