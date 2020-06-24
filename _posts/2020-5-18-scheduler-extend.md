@@ -811,7 +811,7 @@ func (g *genericScheduler) prioritizeNodes(
 
 ## scheduler extender
 
-对于Kubernetes项目来说，它很喜欢开发者使用并向它提bug或者PR，但是不建议开发者直接修改Kubernetes核心代码，因为这样做会影响Kubernetes本身的代码质量以及稳定性。因此Kubernetes希望尽可能通过外围的方式来解决客户自定义的需求
+对于Kubernetes项目来说，它很乐意开发者使用并向它提bug或者PR(受欢迎)，但是不建议开发者为了实现业务需求直接修改Kubernetes核心代码，因为这样做会影响Kubernetes本身的代码质量以及稳定性。因此Kubernetes希望尽可能通过外围的方式来解决客户自定义的需求
 
 其实任何好的项目都应该这样思考：尽可能抽取核心代码，这部分代码不应该经常变动或者说只能由maintainer改动(提高代码质量，减小项目本身开发&运维成本)；将第三方客户需求尽可能提取到外围解决(满足客户自由)，例如：插件的形式(eg: CNI，CRI，CSI and scheduler framework etc)
 
@@ -1509,7 +1509,7 @@ func (h *HTTPExtender) Prioritize(pod *v1.Pod, nodes []*v1.Node) (*extenderv1.Ho
 }
 ```
 
-scheduler会在默认优选算法执行完成后，会并发(wg.Wait)执行extender优选算法(预选需要顺序执行，优选可以并发执行)，请求参数为extenderv1.ExtenderArgs(和预选一样)，返回extenderv1.HostPriorityList(k8s.io/kubernetes/pkg/scheduler/apis/extender/v1/types.go)，如下：
+scheduler会在默认优选算法执行完成后，并发(wg.Wait)执行extender优选算法(预选需要顺序执行，优选可以并发执行)，请求参数为extenderv1.ExtenderArgs(和预选一样)，返回extenderv1.HostPriorityList(k8s.io/kubernetes/pkg/scheduler/apis/extender/v1/types.go)，如下：
 
 ```go
 // HostPriority represents the priority of scheduling to a particular host, higher priority is better.
@@ -1553,7 +1553,7 @@ const (
 )
 ```
 
-这里给一个scheduler extender扩展的[demo project](https://github.com/everpeace/k8s-scheduler-extender-example)，代码简单&无意义，不分析，只用于参考
+最后，给一个scheduler extender扩展的[demo project](https://github.com/everpeace/k8s-scheduler-extender-example)，代码简单&无意义，不分析，只用于参考
 
 至此，scheduler扩展的三种方式原理和实践指引都已经介绍完毕，下一章我们开始介绍scheduler framework……
 
