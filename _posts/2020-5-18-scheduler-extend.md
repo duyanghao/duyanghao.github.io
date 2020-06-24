@@ -1557,8 +1557,12 @@ const (
 
 至此，scheduler扩展的三种方式原理和实践指引都已经介绍完毕，下一章我们开始介绍scheduler framework……
 
+欢迎查看[我的Kubernetes源码分析](https://github.com/duyanghao/kubernetes-reading-notes) :)
+
 ## Refs
 
 * [Scheduler extender](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/scheduling/scheduler_extender.md)
 * [The Kubernetes Scheduler](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-scheduling/scheduler.md)
 * [扩展 Kubernetes 之 Scheduler](https://cloud.tencent.com/developer/article/1580234)
+
+![](/public/img/duyanghao.png)
