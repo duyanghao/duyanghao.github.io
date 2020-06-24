@@ -823,51 +823,7 @@ scheduler extender适用于调度策略与非标准kube-scheduler管理资源相
 
 下面我们结合代码说明extender的使用原理：
 
-```
-For given pod:
-
-    +---------------------------------------------+
-    |               Schedulable nodes:            |
-    |                                             |
-    | +--------+    +--------+      +--------+    |
-    | | node 1 |    | node 2 |  ... | node 4 |    |
-    | +--------+    +--------+      +--------+    |
-    |                                             |
-    +-------------------+-------------------------+
-                        |
-                        |
-                        v
-    +-------------------+-------------------------+
-
-    Pred. filters: node 4 doesn't have enough resource
-
-    +-------------------+-------------------------+
-                        |
-                        |
-                        v
-    +-------------------+-------------------------+
-    |             remaining nodes:                |
-    |   +--------+                 +--------+     |
-    |   | node 1 |     ...         | node 3 |     |
-    |   +--------+                 +--------+     |
-    |                                             |
-    +-------------------+-------------------------+
-                        |
-                        | - - - > scheduler extenders filter(drop node3) 
-                        |
-                        v
-    +-------------------+-------------------------+
-
-    Priority function:    node 1: p=2
-                          node 2: p=5
-
-    +-------------------+-------------------------+
-                        |
-                        | - - - > scheduler extenders Prioritize(node 1: p=5; node 2: p=1) 
-                        |
-                        v
-            select max{node priority} = node 1
-```
+![](/public/img/scheduler/scheduler-extender.png)
 
 * 定义scheduler extender
 
