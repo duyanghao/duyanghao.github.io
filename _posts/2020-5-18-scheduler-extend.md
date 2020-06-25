@@ -7,6 +7,21 @@ tags: Kubernetes
 excerpt: ​This article introduces some Kubernetes scheduler extend methods
 ---
 
+## Contents
+
+- [Overview](##Overview)
+- [default-scheduler recoding](##default-scheduler recoding)
+- [scheduler extender](##scheduler extender)
+- [scheduler framework](##scheduler framework)
+  - [Scheduling Cycle & Binding Cycle](####Scheduling Cycle & Binding Cycle)
+  - [Extension points](####Extension points)
+  - [Plugin dev process](####Plugin dev process)
+  - []
+- [Conclusion](##Conclusion)
+- [Refs](##Refs)
+
+## Overview
+
 目前Kubernetes支持四种方式实现客户自定义的调度算法(预选&优选)，如下：
 
 * default-scheduler recoding: 直接在Kubernetes默认scheduler基础上进行添加，然后重新编译kube-scheduler
@@ -1615,6 +1630,16 @@ plugin配置按照作用分为两类：
 ```
 
 综上，给出了基于scheduler framework扩展scheduler的相关原理分析和操作指引。基于该框架实现的项目可以参考[coscheduling(aka gang scheduling)](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/pkg/coscheduling)
+
+## Conclusion
+
+本文介绍了扩展kube-scheduler的四种方式，其中default-scheduler recoding与standalone属于侵入式的方案，两者都需要对scheduler core进行修改并编译。相比而言，standalone属于重度二次定制；scheduler extender与scheduler framework属于非侵入式的方案，无需修改scheduler core。extender采用webhook的方式进行扩展，在性能和灵活性方面都很欠缺，framework通过对scheduler core进行提取和重构，在调度流程几乎每个关键点上都设置了插件扩展点，用户通过开发插件，达到非侵入scheduler core的目的，同时很大程度解决了extender在性能和灵活性上的短板
+
+最后关于扩展kube-scheduler建议如下：
+
+* scheduler framework可以解决绝大多数扩展问题，同时也是Kubernetes官方推荐的方式，优先采用该方案进行扩展
+* extender适用于比较简单的扩展场景，在Kubernetes版本不支持framework的情况下可以使用
+* 如果以上方法都无法满足对scheduler扩展的需求(几乎不可能)，则建议采用standalone方案进行二次定制，同时建议只部署一个scheduler
 
 欢迎查看[我的Kubernetes源码分析](https://github.com/duyanghao/kubernetes-reading-notes) :)
 
