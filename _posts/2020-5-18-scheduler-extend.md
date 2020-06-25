@@ -229,7 +229,7 @@ var CalculateNodeAffinityPriorityReduce = NormalizeReduce(framework.MaxNodeScore
 
 * 相关使用
 
-接下来我们看一下kube-scheduler是如何与上述这些操作结合起来的：
+接下来我们看一下kube-scheduler调度算法(预选&优选)是如何与上述这些操作结合起来的：
 
 ```go
 // Fit is determined by resource availability.
