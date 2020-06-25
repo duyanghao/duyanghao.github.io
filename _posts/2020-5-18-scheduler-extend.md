@@ -7,8 +7,6 @@ tags: Kubernetes
 excerpt: ​This article introduces some Kubernetes scheduler extend methods
 ---
 
-## Overview
-
 目前Kubernetes支持四种方式实现客户自定义的调度算法(预选&优选)，如下：
 
 * default-scheduler recoding: 直接在Kubernetes默认scheduler基础上进行添加，然后重新编译kube-scheduler
@@ -16,7 +14,7 @@ excerpt: ​This article introduces some Kubernetes scheduler extend methods
 * scheduler extender: 实现一个"scheduler extender"，kube-scheduler会调用它(http/https)作为默认调度算法(预选&优选&bind)的补充
 * scheduler framework: 实现scheduler framework plugins，重新编译kube-scheduler，类似于第一种方案，但是更加标准化，插件化
 
-本文介绍前面三种方法，对于scheduler framework，也就是目前Kubernetes推荐扩展的方式，单独分一章进行讲解
+下面分别展开介绍这几种方式的原理和开发指引
 
 ## default-scheduler recoding
 
@@ -1618,7 +1616,7 @@ plugin配置按照作用分为两类：
 }
 ```
 
-综上，给出了基于scheduler framework扩展scheduler的相关原理分析和操作指引。基于该框架实现的项目可以参考[coscheduling(aka gang scheduling)](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/pkg/coscheduling)
+综上，给出了基于scheduler framework扩展scheduler的相关原理分析和开发指引。基于该框架实现的项目可以参考[coscheduling(aka gang scheduling)](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/pkg/coscheduling)
 
 ## Conclusion
 
