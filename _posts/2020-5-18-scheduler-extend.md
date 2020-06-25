@@ -4,7 +4,7 @@ title: Kubernetes Scheduler Extensibility
 date: 2020-6-18 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: ​This article introduces some Kubernetes scheduler extend methods
+excerpt: ​本文介绍了扩展kube-scheduler的四种方式。其中default-scheduler recoding与standalone属于侵入式的方案，两者都需要对scheduler core进行修改并编译。相比而言，standalone属于重度二次定制；scheduler extender与scheduler framework属于非侵入式的方案，无需修改scheduler core。extender采用webhook的方式进行扩展，在性能和灵活性方面都很欠缺，framework通过对scheduler core进行提取和重构，在调度流程几乎每个关键路径上都设置了插件扩展点，用户通过开发插件，达到非侵入scheduler core的目的，同时很大程度解决了extender在性能和灵活性上的短板……
 ---
 
 目前Kubernetes支持四种方式实现客户自定义的调度算法(预选&优选)，如下：
