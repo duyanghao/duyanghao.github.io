@@ -7,19 +7,6 @@ tags: Kubernetes
 excerpt: ​This article introduces some Kubernetes scheduler extend methods
 ---
 
-## Contents
-
-- [Overview](##Overview)
-- [default-scheduler recoding](##default-scheduler recoding)
-- [scheduler extender](##scheduler extender)
-- [scheduler framework](##scheduler framework)
-  - [Scheduling Cycle & Binding Cycle](####Scheduling Cycle & Binding Cycle)
-  - [Extension points](####Extension points)
-  - [Plugin dev process](####Plugin dev process)
-  - []
-- [Conclusion](##Conclusion)
-- [Refs](##Refs)
-
 ## Overview
 
 目前Kubernetes支持四种方式实现客户自定义的调度算法(预选&优选)，如下：
