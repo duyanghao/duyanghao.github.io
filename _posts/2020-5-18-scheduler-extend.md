@@ -17,7 +17,7 @@ Scheduler是Kubernetes组件中功能&逻辑相对单一&简单的模块，它�
 
 ![](/public/img/scheduler/scheduler_process_details.png)
 
-scheduler内部预置了很多预选和优选算法(参考[scheduler_algorithm](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-scheduling/scheduler_algorithm.md))，比如预选：NoDiskConflict，PodFitsResources，MatchNodeSelector，CheckNodeMemoryPressure等；优选：LeastRequestedPriority，BalancedResourceAllocation，CalculateAntiAffinityPriority，NodeAffinityPriority等。但是在实际生产环境中我们常常会需要一些特殊的调度策略，比如批量调度(aka coscheduling or gang scheduling)，这是kubernetes默认调度策略所无法满足的，这个时候就需要我们对scheduler进行扩展来达到这个目的
+scheduler内部预置了很多预选和优选算法(参考[scheduler_algorithm](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-scheduling/scheduler_algorithm.md))，比如预选：NoDiskConflict，PodFitsResources，MatchNodeSelector，CheckNodeMemoryPressure等；优选：LeastRequestedPriority，BalancedResourceAllocation，CalculateAntiAffinityPriority，NodeAffinityPriority等。但是在实际生产环境中我们常常会需要一些特殊的调度策略，比如批量调度(aka [coscheduling or gang scheduling](https://github.com/kubernetes-sigs/scheduler-plugins/tree/master/pkg/coscheduling))，这是kubernetes默认调度策略所无法满足的，这个时候就需要我们对scheduler进行扩展来实现这个功能了
 
 ## scheduler扩展方案
  
