@@ -1642,8 +1642,6 @@ plugin配置按照作用分为两类：
 * extender适用于比较简单的扩展场景，在Kubernetes版本不支持framework的情况下可以使用
 * 如果以上方法都无法满足对scheduler扩展的需求(几乎不可能)，则建议采用standalone方案进行二次定制，同时建议只部署一个scheduler
 
-欢迎查看[我的Kubernetes源码分析](https://github.com/duyanghao/kubernetes-reading-notes) :)
-
 ## Refs
 
 * [Scheduler extender](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/scheduling/scheduler_extender.md)
