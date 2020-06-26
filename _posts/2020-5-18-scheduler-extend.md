@@ -13,7 +13,7 @@ Scheduler是Kubernetes组件中功能&逻辑相对单一&简单的模块，它�
 
 ![](/public/img/scheduler/kubernetes_scheduler_call.png)
 
-展开上述调用流程中的scheduler部分，内部细节调用(参考[Kubernetes Scheduler](https://github.com/duyanghao/kubernetes-reading-notes/blob/master/core/scheduler/README.md)如图所示：
+展开上述调用流程中的scheduler部分，内部细节调用(参考[Kubernetes Scheduler](https://github.com/duyanghao/kubernetes-reading-notes/blob/master/core/scheduler/README.md))如图所示：
 
 ![](/public/img/scheduler/scheduler_process_details.png)
 
