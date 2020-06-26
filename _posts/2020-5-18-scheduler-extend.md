@@ -7,6 +7,20 @@ tags: Kubernetes
 excerpt: ​本文介绍了扩展kube-scheduler的四种方式。其中default-scheduler recoding与standalone属于侵入式的方案，两者都需要对scheduler core进行修改并编译。相比而言，standalone属于重度二次定制；scheduler extender与scheduler framework属于非侵入式的方案，无需修改scheduler core。extender采用webhook的方式进行扩展，在性能和灵活性方面都很欠缺，framework通过对scheduler core进行提取和重构，在调度流程几乎每个关键路径上都设置了插件扩展点，用户通过开发插件，达到非侵入scheduler core的目的，同时很大程度解决了extender在性能和灵活性上的短板……
 ---
 
+## 前言
+
+Scheduler是Kubernetes组件中功能&逻辑相对单一&简单的模块，它主要的作用是：watch kube-apiserver，监听PodSpec.NodeName为空的pod，并利用预选和优选算法为该pod选择一个最佳的调度node节点，最终将pod与该node进行绑定，使pod调度在该节点上运行
+
+![](/public/img/scheduler/kubernetes_scheduler_call.png)
+
+展开上述调用流程中的scheduler部分，内部细节调用如图所示：
+
+![](/public/img/scheduler/scheduler_process_details.png)
+
+scheduler内部预置了很多预选和优选算法，比如预选：NoDiskConflict，PodFitsResources，MatchNodeSelector，CheckNodeMemoryPressure等；优选：LeastRequestedPriority，BalancedResourceAllocation，CalculateAntiAffinityPriority，NodeAffinityPriority等。但是在实际生产环境中我们常常会需要一些特殊的调度策略，比如批量调度(aka coscheduling or gang scheduling)，这是kubernetes默认调度策略所无法实现的，需要我们对scheduler进行扩展来达到这个目的
+
+## scheduler扩展方法
+ 
 目前Kubernetes支持四种方式实现客户自定义的调度算法(预选&优选)，如下：
 
 * default-scheduler recoding: 直接在Kubernetes默认scheduler基础上进行添加，然后重新编译kube-scheduler
