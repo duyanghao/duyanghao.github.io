@@ -147,6 +147,10 @@ created by os/signal.init.0
 === END goroutine stack dump ===
 ```
 
+## 3rd party Implements
+
+* [coredns-dynapi-adapter - coredns dynamic middleware apiserver adapter](https://github.com/duyanghao/coredns-dynapi-adapter)
+
 ## 参考
 
 * [dump-goroutine-stack-traces](https://colobu.com/2016/12/21/how-to-dump-goroutine-stack-traces/)
