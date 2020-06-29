@@ -14,7 +14,6 @@ excerpt: GinApiServer框架介绍……
 ## 特性
 
 * 1、支持configmap reload api
-
   ```go
   // config reload
   r.Any("/-/reload", func(c *gin.Context) {
@@ -24,7 +23,6 @@ excerpt: GinApiServer框架介绍……
   ```
 
 * 2、支持ping-pong健康检查&版本获取
-
   ```go
   // a ping api test
   r.GET("/ping", controller.Ping)
@@ -34,7 +32,6 @@ excerpt: GinApiServer框架介绍……
   ```
 
 * 3、支持dump-goroutine-stack-traces
-
   ```bash
   kill -SIGUSR1 41307
   
@@ -128,7 +125,6 @@ pkg/
 ## 使用
 
 * step1 - 替换项目名称
-
   实际使用中，通常需要将`GinApiServer`替换成业务需要的后台server名称，可以执行如下命令：
 
   ```bash
@@ -136,7 +132,6 @@ pkg/
   ```
   
 * step2 - 开发业务controller和service
- 
   框架中已经集成了一个示例(todo)：
   
   ```go
@@ -154,7 +149,6 @@ pkg/
   我们需要按照自身业务需求开发todo(替换成任意功能)的controller和service逻辑。另外你也可以参考todo添加其它功能对应的controller和service
    
 * step3 - 启动服务  
-  
   可以直接启动，如下：
 
   ```bash
