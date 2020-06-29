@@ -125,51 +125,54 @@ pkg/
 ## 使用
 
 * step1 - 替换项目名称
-  实际使用中，通常需要将`GinApiServer`替换成业务需要的后台server名称，可以执行如下命令：
 
-  ```bash
-  grep -rl GinApiServer . | xargs sed -i 's/GinApiServer/youapiserver/g' 
-  ```
+实际使用中，通常需要将`GinApiServer`替换成业务需要的后台server名称，可以执行如下命令：
+
+```bash
+grep -rl GinApiServer . | xargs sed -i 's/GinApiServer/youapiserver/g' 
+```
   
 * step2 - 开发业务controller和service
-  框架中已经集成了一个示例(todo)：
-  
-  ```go
-  // controller(pkg/controller/todo.go)
-  type ToDoController interface {
-  	GetToDo(c *gin.Context)
-  }
-  
-  // service(pkg/service/todo.go)
-  type ToDoService interface {
-  	Get()
-  }
-  ```
-  
-  我们需要按照自身业务需求开发todo(替换成任意功能)的controller和service逻辑。另外你也可以参考todo添加其它功能对应的controller和service
+
+框架中已经集成了一个示例(todo)：
+
+```go
+// controller(pkg/controller/todo.go)
+type ToDoController interface {
+GetToDo(c *gin.Context)
+}
+
+// service(pkg/service/todo.go)
+type ToDoService interface {
+Get()
+}
+```
+
+我们需要按照自身业务需求开发todo(替换成任意功能)的controller和service逻辑。另外你也可以参考todo添加其它功能对应的controller和service
    
 * step3 - 启动服务  
-  可以直接启动，如下：
 
-  ```bash
-  $ bash hack/start.sh
-  ```
-  
-  也可以在Kubernetes集群中启动，如下：
-  
-  ```bash
-  # generated image
-  $ make dockerfiles.build
-  # retag and push to your docker registry
-  $ docker tag duyanghao/GinApiServer:v0.1.0 xxx/duyanghao/GinApiServer:v0.1.0
-  $ docker push xxx/duyanghao/GinApiServer:v0.1.0
-  # Update the deployment to use the built image name
-  $ sed -i 's|REPLACE_IMAGE|xxx/duyanghao/GinApiServer:v0.1.0|g' hack/deploy/deployment.yaml
-  # create service 
-  $ kubectl apply -f hack/deploy/service.yaml
-  # create deployment
-  $ kubectl apply -f hack/deploy/deployment.yaml
-  ```
+可以直接启动，如下：
+
+```bash
+$ bash hack/start.sh
+```
+
+也可以在Kubernetes集群中启动，如下：
+
+```bash
+# generated image
+$ make dockerfiles.build
+# retag and push to your docker registry
+$ docker tag duyanghao/GinApiServer:v0.1.0 xxx/duyanghao/GinApiServer:v0.1.0
+$ docker push xxx/duyanghao/GinApiServer:v0.1.0
+# Update the deployment to use the built image name
+$ sed -i 's|REPLACE_IMAGE|xxx/duyanghao/GinApiServer:v0.1.0|g' hack/deploy/deployment.yaml
+# create service 
+$ kubectl apply -f hack/deploy/service.yaml
+# create deployment
+$ kubectl apply -f hack/deploy/deployment.yaml
+```
 
 ## 3rd party Implements
 
