@@ -119,9 +119,9 @@ spec:
 
 * stetefulset
 
-pod删除存在两个阶段，第一个阶段是controller-manager设置pod的spec.deletionTimestamp字段为非nil值，第二个阶段是kubelet完成实际的pod删除操作(volume detach，container删除等)
+pod删除存在两个阶段，第一个阶段是controller-manager设置pod的spec.deletionTimestamp字段为非nil值；第二个阶段是kubelet完成实际的pod删除操作(volume detach，container删除等)
 
-当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset形式的pod不会产生新的替换pod
+当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset形式的pod不会产生新的替换pod，并一直处于"Terminating"状态
 
 >> Like a Deployment, a StatefulSet manages Pods that are based on an identical container spec. Unlike a Deployment, a StatefulSet maintains a sticky identity for each of their Pods. These pods are created from the same spec, but are not interchangeable: each has a persistent identifier that it maintains across any rescheduling.
 
