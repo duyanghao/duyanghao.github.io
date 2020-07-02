@@ -11,7 +11,7 @@ excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题�
 
 在企业生产环境，Kubernetes高可用是一个必不可少的特性，其中最通用的场景就是如何在Kubernetes集群宕机一个节点的情况下保障服务依旧可用
 
-本文就针对这个场景下实现应用高可用遇到的各种问题进行一个总结
+本文就针对这个场景下在实现应用高可用过程中遇到的各种问题进行一个总结
 
 ## 整体方案
 
@@ -19,19 +19,19 @@ excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题�
 
 * control plane node
 
-  管理节点采用kubeadm搭建的3节点标准高可用方案([Stacked etcd topology](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/ha-topology/#stacked-etcd-topology))：
+管理节点采用kubeadm搭建的3节点标准高可用方案([Stacked etcd topology](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/ha-topology/#stacked-etcd-topology))：
 
-  ![](/public/img/kubernetes_ha/kubeadm-ha-stacked-etcd.png)
+![](/public/img/kubernetes_ha/kubeadm-ha-stacked-etcd.png)
 
-  该方案中，所有管理节点都部署kube-apiserver，kube-controller-manager，kube-scheduler，以及etcd等组件；kube-apiserver均与本地的etcd进行通信，etcd在三个节点间同步数据；而kube-controller-manager和kube-scheduler也只与本地的kube-apiserver进行通信
-  
-  kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接LB
-  
-  在这种架构中，如果其中任意一个master节点宕机了，可以认为管理集群不受影响，相关组件依旧正常运行
+该方案中，所有管理节点都部署kube-apiserver，kube-controller-manager，kube-scheduler，以及etcd等组件；kube-apiserver均与本地的etcd进行通信，etcd在三个节点间同步数据；而kube-controller-manager和kube-scheduler也只与本地的kube-apiserver进行通信
+
+kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接LB
+
+在这种架构中，如果其中任意一个master节点宕机了，可以认为管理集群不受影响，相关组件依旧正常运行
 
 * work node
 
-  工作节点上部署应用，应用按照[反亲和](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#more-practical-use-cases)部署多个副本，使副本调度在不同的work node上，这样如果其中一个副本所在的母机宕机了，理论上通过Kubernetes service可以把请求切换到另外副本上
+工作节点上部署应用，应用按照[反亲和](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#more-practical-use-cases)部署多个副本，使副本调度在不同的work node上，这样如果其中一个副本所在的母机宕机了，理论上通过Kubernetes service可以把请求切换到另外副本上
 
 ## 网络
 
@@ -45,7 +45,7 @@ excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题�
 
 这里答案是会有问题。因为service不会马上剔除掉宕机上对应的nginx pod，同时由于service常用的[iptables和ipvs代理模式](https://kubernetes.io/docs/concepts/services-networking/service/#proxy-mode-iptables)都没有实现`retry with another backend`()特性，所以在一段时间内访问会出现间歇性问题(如果请求轮询到挂掉的nginx pod上)，这里会存在一个访问失败间隔期
 
-![](/public/img/kubernetes_ha/kubernetes-iptables.png)
+![](/public/img/kubernetes_ha/kubernetes-iptables.svg)
 
 这个间隔期取决于service对应的endpoint什么时候踢掉宕机的pod。之后，kube-proxy会watch到endpoint变化，然后更新对应的iptables规则，使service访问后端列表恢复正常(也就是踢掉该pod)
 
