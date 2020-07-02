@@ -113,7 +113,7 @@ spec:
     timeAdded: "2020-07-02T03:50:53Z"
 ```
 
-由于pod对`node.kubernetes.io/unreachable:NoExecute`taint容忍时间为300s，因此node controller会在5mins之后驱逐该节点上的pod
+由于pod对`node.kubernetes.io/unreachable:NoExecute` taint容忍时间为300s，因此node controller会在5mins之后驱逐该节点上的pod
 
 这里面有比较特殊的情况，例如：statefulset，daemonset以及static pod。我们逐一说明：
 
