@@ -21,7 +21,7 @@ excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题�
 
 管理节点采用kubeadm搭建的3节点标准高可用方案([Stacked etcd topology](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/ha-topology/#stacked-etcd-topology))：
 
-![](/public/img/kubernetes_ha/kubeadm-ha-stacked-etcd.png)
+![](/public/img/kubernetes_ha/kubernetes-ha.svg)
 
 该方案中，所有管理节点都部署kube-apiserver，kube-controller-manager，kube-scheduler，以及etcd等组件；kube-apiserver均与本地的etcd进行通信，etcd在三个节点间同步数据；而kube-controller-manager和kube-scheduler也只与本地的kube-apiserver进行通信
 
