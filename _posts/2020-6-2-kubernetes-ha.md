@@ -73,7 +73,7 @@ node-controller会每隔node-monitor-period时间(默认5s)检查Lease object是
 
 ### pod驱逐
 
-pod驱逐可以使服务自动恢复副本数量。如上所述，node controller会在节点ConditionUnknown之后一段时间(默认5mins)驱逐该节点上的pod，这个时间由如下参数决定：
+pod驱逐可以使服务自动恢复副本数量。如上所述，node controller会在节点心跳超时之后一段时间(默认5mins)驱逐该节点上的pod，这个时间由如下参数决定：
 
 ```
 (kube-apiserver)default-not-ready-toleration-seconds：default 300
@@ -99,7 +99,7 @@ tolerations:
     tolerationSeconds: 300
 ```
 
-当节点ConditionUnknown之后，node controller会给该node添加如下taints：
+当节点心跳超时(ConditionUnknown)之后，node controller会给该node添加如下taints：
 
 ```yaml
 spec:
