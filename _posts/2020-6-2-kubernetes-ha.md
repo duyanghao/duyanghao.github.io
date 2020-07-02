@@ -121,7 +121,7 @@ spec:
 
 pod删除存在两个阶段，第一个阶段是controller-manager设置pod的spec.deletionTimestamp字段为非nil值；第二个阶段是kubelet完成实际的pod删除操作(volume detach，container删除等)
 
-当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset形式的pod不会产生新的替换pod，并一直处于"Terminating"状态
+当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset形式的pod不会产生新的替换pod，[并一直处于"Terminating"状态](https://github.com/kubernetes/kubernetes/issues/55713#issuecomment-518340883)
 
 >> Like a Deployment, a StatefulSet manages Pods that are based on an identical container spec. Unlike a Deployment, a StatefulSet maintains a sticky identity for each of their Pods. These pods are created from the same spec, but are not interchangeable: each has a persistent identifier that it maintains across any rescheduling.
 
@@ -181,7 +181,7 @@ etcd同步待研究……
 
 ### 应用存储
 
-这里考虑存储是部署在集群外的情况(通常情况)。如果一个母机宕机了，由于没有对存储集群产生破坏，因此不会影响其它母机上应用访问pv存储
+这里考虑存储是部署在集群外的情况(通常情况)。如果一个母机宕机了，由于没有对外部存储集群产生破坏，因此不会影响其它母机上应用访问pv存储
 
 而对于Kubernetes存储本身组件功能(in-tree, flexVolume, external-storage以及csi)的影响实际上可以归纳为对Kubernetes应用的影响，这里以csi为例子进行说明：
 
@@ -231,7 +231,7 @@ template:
 
 ### Stateful Application
 
-对于有状态的服务，可以按照高可用类型分类如下：
+对于有状态的服务，可以按照高可用的实现类型分类如下：
 
 * RWX Type
 
