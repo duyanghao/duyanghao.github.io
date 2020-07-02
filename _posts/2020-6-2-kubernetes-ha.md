@@ -127,7 +127,7 @@ pod删除存在两个阶段，第一个阶段是controller-manager设置pod的sp
 
 >> In normal operation of a StatefulSet, there is never a need to force delete a StatefulSet Pod. The StatefulSet controller is responsible for creating, scaling and deleting members of the StatefulSet. It tries to ensure that the specified number of Pods from ordinal 0 through N-1 are alive and ready. StatefulSet ensures that, at any time, there is at most one Pod with a given identity running in a cluster. This is referred to as at most one semantics provided by a StatefulSet.
 
-原因是：statefulset为了保障[at most one semantics](https://kubernetes.io/docs/tasks/run-application/force-delete-stateful-set-pod/#statefulset-considerations)，需要满足对于指定identity同时只有一个pod存在。在node shoudown后，虽然pod被驱逐了("Terminating")，但是由于controller无法判断这个statefulset pod是否还在运行(因为并没有彻底删除)，故不会产生替换容器，一定是要等到这个pod被完全删除干净(by kubelet)，才会产生替换容器(deployment不需要满足这个条件，所以在驱逐pod时，controller会马上产生替换pod)
+原因是statefulset为了保障[at most one semantics](https://kubernetes.io/docs/tasks/run-application/force-delete-stateful-set-pod/#statefulset-considerations)，需要满足对于指定identity同时只有一个pod存在。在node shoudown后，虽然pod被驱逐了("Terminating")，但是由于controller无法判断这个statefulset pod是否还在运行(因为并没有彻底删除)，故不会产生替换容器，一定是要等到这个pod被完全删除干净(by kubelet)，才会产生替换容器(deployment不需要满足这个条件，所以在驱逐pod时，controller会马上产生替换pod)
 
 * daemonset
 
