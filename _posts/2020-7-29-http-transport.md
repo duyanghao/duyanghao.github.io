@@ -3560,12 +3560,18 @@ http.Client
     - IdleConnTimeout：空闲连接(keep-alives)超时时间
     - h2transport：HTTP/2协议对应的transport
     - ForceAttemptHTTP2：当Dial, DialTLS, or DialContext func or TLSClientConfig提供时，默认情况下会禁止HTTP/2协议。当使用自定义的这些配置时，需要设置ForceAttemptHTTP2字段开启HTTP2
-    - DisableKeepAlives：禁止HTTP keep-alives，一个连接只用于一次请求(注意区分TCP keep-alives。HTTP keep-alives用于连接复用；TCP keep-alives用于连接保活)
-    - DialContext：指定底层TCP连接的创建函数
+    - DisableKeepAlives：禁止HTTP keep-alives，一个连接只用于一次请求(注意区分TCP keep-alives。HTTP keep-alives用于连接复用；TCP keep-alives用于连接保活) 
     - idleConn(map[connectMethodKey][]*persistConn)：空闲连接池
     - idleConnWait(map[connectMethodKey]wantConnQueue)：等待建立的连接池
     - connsPerHost(map[connectMethodKey]int)：表示每个host(connectMethodKey)的目前连接个数
     - connsPerHostWait(map[connectMethodKey]wantConnQueue)：表示每个host(connectMethodKey)等待建立的连接请求
+    - (net.Dialer)DialContext：指定底层TCP连接的创建函数
+      - Timeout：连接建立的超时时间，操作系统的超时时间一般为3 minutes
+      - Deadline：与Timeout作用类似，只不过限制了确定的超时时刻
+      - LocalAddr：本地地址，TCP四元组的原始IP地址
+      - DualStack(Deprecated)：enabled RFC 6555 Fast Fallback Feature
+      - FallbackDelay：IPv6连接建立的等待时间，如果超时，则会切换到IPv4(A negative value disables Fast Fallback support.)
+      - KeepAlive：设置了活跃连接的TCP keep-alive探针间隔，需要协议层以及操作系统支持(If zero, keep-alive probes are sent with a default value(currently 15 seconds))
 ```
     
 ### 调用关键流程
