@@ -3590,7 +3590,7 @@ http.Client.Do(req) => send(ireq *Request, rt RoundTripper, deadline time.Time)
   -> http.Transport.t.getConn(treq, cm) 获取连接(新创建的 or 复用空闲连接) 
     -> http.Transport.queueForIdleConn(w *wantConn) 获取空闲连接
     -> http.Transport.dialConnFor(w *wantConn) -> http.Transport.dialConn(ctx context.Context, cm connectMethod) 创建新连接
-      -> http.Transport.dial(ctx context.Context, network, addr string) -> http.Transport.DialContext
+      -> http.Transport.dial(ctx context.Context, network, addr string) -> http.Transport.DialContext(net.Dialer.DialContext)
       -> http.persistConn.readLoop() read http.Response(读取响应内容，并构建http.Response)
       -> http.persistConn.writeLoop() write http.Request(发送请求) 
   -> http.persistConn.roundTrip(treq) 发送请求，读取Response并返回
