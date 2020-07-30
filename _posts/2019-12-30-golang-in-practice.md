@@ -3,7 +3,7 @@ layout: post
 title: golang实战技巧
 date: 2019-12-30 19:10:31
 category: 技术
-tags: golang
+tags: Golang
 excerpt: 本文总结golang的实战技巧(不断补充)……
 ---
 

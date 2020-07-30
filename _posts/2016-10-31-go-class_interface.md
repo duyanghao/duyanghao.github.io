@@ -3,7 +3,7 @@ layout: post
 title: Go语言学习：类
 date: 2016-10-31 22:49:51
 category: 技术
-tags: Go
+tags: Golang
 excerpt: Go语言类概述
 ---
 
