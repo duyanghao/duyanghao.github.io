@@ -3548,10 +3548,9 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 }
 ```
 
-## 总结
-
 ### golang http transport结构体关键字段
 
+```
 http.Client
   - Timeout：http client请求生命周期超时设置(包括连接建立，发请求，重定向，以及Response body读取等所有阶段)
   - RoundTrip(http.Transport实现)
@@ -3567,11 +3566,11 @@ http.Client
     - idleConnWait(map[connectMethodKey]wantConnQueue)：等待建立的连接池
     - connsPerHost(map[connectMethodKey]int)：表示每个host(connectMethodKey)的目前连接个数
     - connsPerHostWait(map[connectMethodKey]wantConnQueue)：表示每个host(connectMethodKey)等待建立的连接请求
+```
     
 ### 调用关键流程
     
 * step1 - http.NewRequest(method, url string, body io.Reader) 创建请求
-
 * step2 - http.Client.Do(req *Request) 发送请求&接收应答
 
 ```
