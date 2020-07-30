@@ -1245,7 +1245,7 @@ if rsp.StatusCode != http.StatusOK {
 
 我们分析http.Client是如何使用http.Transport的：
 
-* 创建http.Request
+### 创建http.Request
 
 根据method，url，body创建http.Request：
 
@@ -1582,7 +1582,7 @@ type Request struct {
 }
 ```
 
-* client.Do(req)
+### client.Do(req)
 
 使用http.Client发送请求，如下：
 
@@ -1889,7 +1889,7 @@ func (c *Client) transport() RoundTripper {
 
 入参为http.Request，http.Transport以及deadline(http.Client.Timeout)。函数处理逻辑具体分为两个步骤，如下：
 
-1. setRequestCancel
+1.setRequestCancel
 
 设置请求超时时间为http.Client.Timeout：
 
@@ -1994,7 +1994,7 @@ type Request struct {
 
 setRequestCancel执行了前面两种方式
 
-2. resp, err = rt.RoundTrip(req)
+2.resp, err = rt.RoundTrip(req)
 
 在设置了超时timer后，执行具体的请求操作
 
@@ -2148,7 +2148,7 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 
 拆分步骤如下：
 
-1. 获取连接Transport.getConn
+**获取连接(Transport.getConn)**
 
 ```go
 // treq gets modified by roundTrip, so we need to recreate for each retry.
@@ -2905,7 +2905,7 @@ func (pconn *persistConn) addTLS(name string, trace *httptrace.ClientTrace) erro
 
 重点分析dialConn，该函数为connectMethod获取persistConn，步骤如下：
 
-1. 判断协议是https还是http，如果是https，则执行TLS握手过程(i.e. negotiate a TLS session)；否则直接执行Transport.dial操作创建TCP连接
+1.判断协议是https还是http，如果是https，则执行TLS握手过程(i.e. negotiate a TLS session)；否则直接执行Transport.dial操作创建TCP连接
 
 ```go
 var zeroDialer net.Dialer
@@ -2927,9 +2927,9 @@ func (t *Transport) dial(ctx context.Context, network, addr string) (net.Conn, e
 
 这里就是调用前面分析过的net.Dialer.DialContext函数了(前后对接起来了)，不再展开分析
 
-2. 执行代理设置
+2.执行代理设置
 
-3. 设置persistConn的读写buffer
+3.设置persistConn的读写buffer
 
 ```go
 pconn.br = bufio.NewReaderSize(pconn, t.readBufferSize())
@@ -3061,7 +3061,7 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 }
 ```
 
-在执行`pconn, err := t.getConn(treq, cm)`获取连接(新创建的 or 复用空闲连接)后，执行`resp, err = pconn.roundTrip(treq)`，如下：
+**在执行`pconn, err := t.getConn(treq, cm)`获取连接(新创建的 or 复用空闲连接)后，执行`resp, err = pconn.roundTrip(treq)`，如下：**
 
 ```go
 func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err error) {
@@ -3548,9 +3548,9 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 }
 ```
 
-总结如下：
+## 总结
 
-## golang http transport结构体关键字段和关系
+### golang http transport结构体关键字段
 
 http.Client
   - Timeout：http client请求生命周期超时设置(包括连接建立，发请求，重定向，以及Response body读取等所有阶段)
@@ -3568,7 +3568,7 @@ http.Client
     - connsPerHost(map[connectMethodKey]int)：表示每个host(connectMethodKey)的目前连接个数
     - connsPerHostWait(map[connectMethodKey]wantConnQueue)：表示每个host(connectMethodKey)等待建立的连接请求
     
-## 调用关键流程
+### 调用关键流程
     
 * step1 - http.NewRequest(method, url string, body io.Reader) 创建请求
 
