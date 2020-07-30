@@ -1245,7 +1245,7 @@ if rsp.StatusCode != http.StatusOK {
 
 我们分析http.Client是如何使用http.Transport的：
 
-### 创建http.Request
+### 一、创建http.Request
 
 根据method，url，body创建http.Request：
 
@@ -1582,7 +1582,7 @@ type Request struct {
 }
 ```
 
-### client.Do(req)
+### 二、client.Do(req)
 
 使用http.Client发送请求，如下：
 
