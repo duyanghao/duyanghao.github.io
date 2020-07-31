@@ -4,7 +4,7 @@ title: golang http transport源码分析
 date: 2020-7-29 19:10:31
 category: 技术
 tags: Golang
-excerpt: 本文通过源码的角度梳理golang http库使用，包括底层数据结构和大致调用流程
+excerpt: 本文从源码角度梳理golang http库的使用，包括底层数据结构和大致的调用流程
 ---
 
 ## 前言
