@@ -398,12 +398,11 @@ func SetTransportDefaults(t *http.Transport) *http.Transport {
 那么这里的现象就可以解释如下：
 
 * 由于Controller使用了HTTP/2协议，在10s的请求超时后并没有关闭tcp socket，而是继续使用
-* 同时由于每隔3s重试一次请求(获取分布式lock)，导致TCP keepalive无法生效(30s+30s*9=300s, 也即5mins)
+* 同时由于每隔3s重试一次请求(获取分布式lock)，导致TCP keepalive没办法触发(30s+30s*9=300s, 也即5mins)
   ```bash
   tcp_keepalive_time = 30s
   tcp_keepalive_intvl = 30s
-  $ cat /proc/sys/net/ipv4/tcp_keepalive_probes
-  9  
+  tcp_keepalive_probes = 9
   ```
 
 **但是上面的两点并没有解释为什么15分钟后tcp socket会消失，timeout现象消失**
@@ -545,11 +544,11 @@ $ TCP handshake
       |--->--->--->-------------- ACK -------------->--->--->---|
 ```
 
-后面日志正常，对应socket为：`192.168.1.204.51674 > 192.168.1.203.443`。其中`192.168.1.203.443`是其它非宕机上的AA
+后面日志正常，对应socket为：`192.168.1.204.51674 > 192.168.1.203.443`。其中`192.168.1.203.443`是其它非宕机母机上的AA
 
 结合上述日志和抓包看，从16:00:53开始宕机，Controller在16:00:58开始尝试获取分布式锁，到16:01:08(10s间隔)超时，于是关闭socket(192.168.1.204.50254 > 192.168.2.148.443)
 
-之后3s(16:01:11)开始第二轮获取，尝试创建TCP连接，这个时候由于没有[超过40s的service ep剔除时间](https://duyanghao.github.io/kubernetes-ha/)，192.168.2.148.443对应的DNAT链(KUBE-SEP-XXX)还存在iptables规则中，iptables轮询机制'随机'转化成了192.168.2.148.443
+之后3s(16:01:11)开始第二轮获取，尝试创建TCP连接，这个时候由于没有[超过40s的service ep剔除时间](https://duyanghao.github.io/kubernetes-ha/)，192.168.2.148.443对应的DNAT链(KUBE-SEP-XXX)还存在iptables规则中，iptables轮询机制将192.168.255.220.443(Kubernetes aa service)'随机'转化成了192.168.2.148.443
 
 但是由于192.168.2.148.443已经挂掉，所以TCP三次握手并没有成功，因此也看到了`Client.Timeout exceeded while awaiting headers`的错误(注意：**http.Client.Timeout包括TCP连接建立的时间，虽然设置为30s，但是这里http.Client.Timeout=10s会将其覆盖**)
 
