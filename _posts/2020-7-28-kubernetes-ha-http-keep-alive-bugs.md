@@ -554,7 +554,7 @@ $ TCP handshake
 
 之后3s(16:01:25)开始第三轮获取，原理类似，不再展开
 
-直到第四次尝试(16:01:39)获取，这个时候已经触发endpoint controller剔除逻辑，于是iptables会将service转化为其它成功母机上的pod(192.168.1.203.443)。访问也就正常了
+直到第四次尝试(16:01:39)获取，这个时候已经触发endpoint controller剔除逻辑，于是iptables会将service转化为其它正常母机上的pod(192.168.1.203.443)。访问也就正常了
 
 ```bash
 $ netstat -tnope 
