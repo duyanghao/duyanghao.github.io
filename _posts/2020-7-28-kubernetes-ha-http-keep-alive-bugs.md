@@ -962,7 +962,7 @@ $ echo 30 > /proc/sys/net/ipv4/tcp_keepalive_intvl
 $ echo 9 > /proc/sys/net/ipv4/tcp_keepalive_probes
 ```
 
-通过上述的TCP keepalive以及TCP ARQ配置，我们可以将无效连接断开时间缩短到4分钟以内，一定程度上解决了母机宕机导致的连接异常问题。不过最好的解决是应用层设置超时或者健康检查机制进行规避
+通过上述的TCP keepalive以及TCP ARQ配置，我们可以将无效连接断开时间缩短到4分钟以内，一定程度上解决了母机宕机导致的连接异常问题。不过最好的解决方案是在应用层设置超时或者健康检查机制及时关闭底层无效连接
 
 ## Refs
 
