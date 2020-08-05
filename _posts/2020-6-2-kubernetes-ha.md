@@ -67,9 +67,9 @@ node-controller会每隔node-monitor-period时间(默认5s)检查Lease object是
 - Currently nodeStatusUpdateRetry is constantly set to 5 in kubelet.go
 ```
 
-### service长链接
+### 连接复用(长连接)
 
-对于使用长连接访问服务的应用来说，可能还会有其它超时问题……
+对于使用长连接访问的应用来说，在没有设置合适请求timeout参数的情况下可能会出现15mins的超时问题，详情见[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)
 
 ### pod驱逐
 
