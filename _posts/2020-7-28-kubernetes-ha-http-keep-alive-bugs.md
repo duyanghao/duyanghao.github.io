@@ -17,13 +17,13 @@ excerpt: 本文详细描述了生产环境中Kubernetes Controller高可用诡�
 
 ![](/public/img/kubernetes-ha-http-keep-alives-bugs/controller-arch.png)
 
-可以看到controller利用反亲和特性在不同的母机上部署有两个副本，通过kubernetes service访问AA(aggregated APIServer)
+可以看到controller利用反亲和特性在不同的母机上部署有两个副本，通过kubernetes service访问AA(Aggregated APIServer)
 
-集群采用iptables的代理模式，假设目前两个母机的Controller经过iptables DNAT访问的都是母机10.0.0.3的AA；同时Controller采用[Leader Election](https://github.com/kubernetes/client-go/tree/master/examples/leader-election)机制实现高可用，母机10.0.0.3上的Controller是Leader，而母机1上的Controller是候选者
+集群采用iptables的代理模式，假设目前两个母机的Controller经过iptables DNAT访问的都是母机10.0.0.3的AA；同时Controller采用[Leader Election](https://github.com/kubernetes/client-go/tree/master/examples/leader-election)机制实现高可用，母机10.0.0.3上的Controller是Leader，而母机10.0.0.2上的Controller是候选者
 
-若此时母机10.0.0.3突然宕机，理论上母机1上的Controller会在分布式锁被释放后获取锁从而变成Leader，接管Controller任务，这也是Leader Election的原理
+若此时母机10.0.0.3突然宕机，理论上母机10.0.0.2上的Controller会在分布式锁被释放后获取锁从而变成Leader，接管Controller任务，这也是Leader Election的原理
 
-但是在手动关机母机10.0.0.3后(模拟宕机情景)，发现母机1上的Controller一直在报timeout错误，整个流程观察到到现象如下：
+但是在手动关机母机10.0.0.3后(模拟宕机情景)，发现母机10.0.0.2上的Controller一直在报timeout错误，整个流程观察到到现象如下：
 
 Controller和AA部署详情如下：
 
@@ -59,7 +59,7 @@ Proto Recv-Q Send-Q Local Address           Foreign Address         State       
 tcp        0      0 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED 0          6334873    16025/controller    keepalive (4.39/0/0)
 ```
 
-母机1上的Controller日志如下：
+母机10.0.0.2上的Controller日志如下：
 
 ```bash
 2020-08-03 12:06:32.407 info    lock is held by controller-75f5547689-hjcmd_23b81f76-884a-498a-8549-63371441bf18 and has not yet expired
@@ -69,9 +69,9 @@ tcp        0      0 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED
 ...
 ```
 
-母机1上的Controller Candidate每隔3s尝试获取分布式lock，由于已经被母机10.0.0.3上的Controller独占，所以会显示获取失败(正常逻辑)
+母机10.0.0.2上的Controller Candidate每隔3s尝试获取分布式lock，由于已经被母机10.0.0.3上的Controller独占，所以会显示获取失败(正常逻辑)
 
-另外，在母机1上抓包观察路由情况：
+另外，在母机10.0.0.2上抓包观察路由情况：
 
 ```bash
 $ tcpdump -iany -nnvvXSs 0|grep 192.168.1.108|grep 443
@@ -112,7 +112,7 @@ Proto Recv-Q Send-Q Local Address           Foreign Address         State       
 tcp        0   1263 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED 0          6334873    16025/controller    on (21.57/9/0)
 ```
 
-母机1上的Controller日志如下：
+母机10.0.0.2上的Controller日志如下：
 
 ```bash
 ...
@@ -127,7 +127,7 @@ tcp        0   1263 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED
 ...
 ```
 
-另外，在母机10.0.0.3宕机大约40s后，母机1上的iptables规则如下：
+另外，在母机10.0.0.3宕机大约40s后，母机10.0.0.2上的iptables规则如下：
 
 ```bash
 $ iptables-save |grep aa
@@ -169,7 +169,7 @@ tcp        0   5874 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED
 ...
 ```
 
-同时，母机1上的Controller一直在报timeout，如下：
+同时，母机10.0.0.2上的Controller一直在报timeout，如下：
 
 ```bash
 ...
