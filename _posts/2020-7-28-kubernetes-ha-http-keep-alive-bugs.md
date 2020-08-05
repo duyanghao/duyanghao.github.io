@@ -237,9 +237,7 @@ tcp        0      0 192.168.1.108:44272      192.168.255.220:443     ESTABLISHED
 ...
 ```
 
-## 分析
-
-### 分析1 - 禁用HTTP/2
+## 分析 - 禁用HTTP/2
 
 从上面观察到的现象，我们开始分析问题出来哪里。一般分析问题的流程是自上而下，这里也不例外，我们从应用层开始进行分析
 
@@ -533,7 +531,7 @@ spec:
 192.168.1.204.51328 > 192.168.2.148.443(TCP尝试三次握手Flags [S]，没有成功)
 192.168.1.204.51482 > 192.168.2.148.443(TCP尝试三次握手Flags [S]，没有成功)
 
-$ TCP handshake
+# TCP handshake
     _____                                                     _____
    |     |                                                   |     |
    |  A  |                                                   |  B  |
@@ -577,7 +575,7 @@ tcp        0      0 192.168.1.204:51674      192.168.255.220:443     ESTABLISHED
 
 而Kubernetes社区也对应存在着类似的[client-go issue](https://github.com/kubernetes/client-go/issues/374)
 
-### 分析2 - 禁用HTTP/2不生效？？？
+## 分析 - 禁用HTTP/2不生效？？？
 
 准备按照如上`禁用HTTP/2`的方法对集群中其它Controller进行测试，发现[cluster-coredns-controller](https://github.com/duyanghao/cluster-coredns-controller)在禁用HTTP/2之后依旧会出现15mins的不可用状态
 
@@ -781,7 +779,7 @@ tcp        0      0 192.168.0.122:54190      192.168.255.220:443     ESTABLISHED
 * 其中一个socket 5mins后超时关闭，这个5mins哪里触发的？(并没有设置Timeout)
 * 另外一个socket 15mins后超时关闭，这个15mins哪里来的？
 
-### 分析3 - TCP ARQ&keepalive
+## 分析 - TCP ARQ&keepalive
 
 从上面的分析可以看出来：似乎不同的应用上层有不同的Timeout设置(包括no timeout)，但是都会存在15mins的超时，看来从上层分析是看不出来问题了，必须追到底层
 
