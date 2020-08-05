@@ -583,7 +583,7 @@ tcp        0      0 192.168.1.204:51674      192.168.255.220:443     ESTABLISHED
 
 如下是cluster-coredns-controller架构图：
 
-![](images/cluster-coredns-controller.png)
+![](/public/img/kubernetes-ha-http-keep-alives-bugs/cluster-coredns-controller.png)
 
 如下是母机宕机前controller相关信息：
 
