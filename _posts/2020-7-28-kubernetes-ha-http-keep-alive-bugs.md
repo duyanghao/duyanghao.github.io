@@ -774,7 +774,7 @@ tcp        0      0 192.168.0.122:54190      192.168.255.220:443     ESTABLISHED
 
 对应的socket也被删除掉了，并新创建了一个新的socket：`192.168.0.122.54190 > 192.168.255.220.443`
 
-查cluster-coredns-controller代码，发现是http.Client.Timeout没有设置，加上之后，controller force rsync会存在问题，每隔http.Client.Timeout时间会出现request Timeout(没有宕机情况下)，同时关闭底层的tcp socket
+查cluster-coredns-controller代码，发现是http.Client.Timeout没有设置，加上之后，controller force rsync会存在问题，每隔http.Client.Timeout时间会出现request Timeout(没有宕机情况下)，同时关闭底层的tcp socket(也即需要调整timeout参数)
 
 分析到这里就会有如下疑问：
 
@@ -886,33 +886,18 @@ time: 2020-08-04 15:26:49.477844198 +0800 CST m=+25.009360665, start to get ...
 15:27:02.379682 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431250144 ecr 2760906], length 127
 15:27:15.275684 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431263040 ecr 2760906], length 127
 15:27:41.067690 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431288832 ecr 2760906], length 127
-15:27:46.075674 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:27:46.075743 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 15:28:32.651690 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431340416 ecr 2760906], length 127
-15:28:37.659672 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:28:37.659729 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 15:30:15.691692 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431443456 ecr 2760906], length 127
-15:30:20.699673 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:30:20.699742 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
+
 15:32:16.011697 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431563776 ecr 2760906], length 127
-15:32:21.019669 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:32:21.019738 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 
 15:34:16.331690 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431684096 ecr 2760906], length 127
-15:34:21.339681 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:34:21.339741 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 
 15:36:16.651678 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431804416 ecr 2760906], length 127
-15:36:21.659670 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:36:21.659733 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 
 15:38:16.971688 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 431924736 ecr 2760906], length 127
-15:38:21.979672 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:38:21.979740 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 
 15:40:17.291684 IP 10.0.0.126.42174 > 10.0.0.3.sun-sr-https: Flags [P.], seq 381:508, ack 1090, win 356, options [nop,nop,TS val 432045056 ecr 2760906], length 127
-15:40:22.299665 ARP, Request who-has 10.0.0.3 tell 10.0.0.126, length 28
-15:40:22.299722 ARP, Reply 10.0.0.3 is-at fe:ee:c6:38:ee:a8 (oui Unknown), length 28
 ```
 
 socket如下：
@@ -944,7 +929,7 @@ TCP使用滑动窗口和ARQ机制保障可靠传输：TCP每发送一个报文�
 
 在参考了[RFC 6298](https://www.rfc-editor.org/pdfrfc/rfc6298.txt.pdf)后，了解到RTO按照双倍递增的算法进行计算。而Linux对RTO的设置为：RTO的最小值设为200ms（RFC建议1秒），最大值设置为120秒（RFC强制60秒以上）
 
-再观察上面的抓包可以看出：从`15:26:49.678680`开始按照200ms间隔双倍递增，依次为15:26:49.879674(+0.2s)，15:26:50.282678(+0.4s)，一直到最后15:40:17.291684(+2mins)
+再观察上面的抓包可以看出：从15:26:49.678680开始按照200ms间隔双倍递增，依次为15:26:49.879674(+0.2s)，15:26:50.282678(+0.4s)，一直到最后15:40:17.291684(+2mins)
 
 tcp共计重试了15次(200ms为第一次)，总共重试时间为：924.6s，也即15mins 25s左右。可以跟上面httptest以及Controller恢复访问的时间对上，这也解释了15mins的来历
 
