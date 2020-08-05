@@ -46,13 +46,6 @@ a10f0dcddddb ...
 $ docker top a10f0dcddddb
 UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD
 root                16025               16007               0                   Aug01               ?                   00:03:18            controller xxx
-$ netstat -n
-Active Internet connections (w/o servers)
-Proto Recv-Q Send-Q Local Address           Foreign Address         State      
-tcp        0      0 192.168.1.108:45220      192.168.255.220:443     ESTABLISHED
-Active UNIX domain sockets (w/o servers)
-Proto RefCnt Flags       Type       State         I-Node   Path
-unix  2      [ ]         DGRAM                    17435961
 $ netstat -tnope 
 Active Internet connections (w/o servers)
 Proto Recv-Q Send-Q Local Address           Foreign Address         State       User       Inode      PID/Program name     Timer
