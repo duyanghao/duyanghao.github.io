@@ -933,6 +933,8 @@ TCP使用滑动窗口和ARQ机制保障可靠传输：TCP每发送一个报文�
 
 tcp共计重试了15次(200ms为第一次)，总共重试时间为：924.6s，也即15mins 25s左右。可以跟上面httptest以及Controller恢复访问的时间对上，这也解释了15mins的来历
 
+最后验证发现：通过调整TCP ARQ重试次数 或者 设置http.Client.Timeout，发现httptest均会在短时间内关闭连接，服务重新建立连接
+
 ## 解决
 
 通过上面的分析，可以知道是TCP的ARQ机制导致了Controller在母机宕机后15mins内一直超时重试，超时重试失败后，tcp socket关闭，应用重新创建连接
@@ -951,7 +953,7 @@ $ 0.2+0.4+0.8+1.6+3.2+6.4+12.8+25.6+51.2+102.4 = 222.6s
 $ echo 10 > /proc/sys/net/ipv4/tcp_retries2
 ```
 
-另外对于推送类的服务，比如Watch，在母机宕机后，可以通过tcp keepalive机制来断开无效连接(这也是上面测试cluster-coredns-controller时其中一个连接5分钟(30+30*9=300s)断开的原因)：
+另外对于推送类的服务，比如Watch，在母机宕机后，可以通过tcp keepalive机制来关闭无效连接(这也是上面测试cluster-coredns-controller时其中一个连接5分钟(30+30*9=300s)断开的原因)：
 
 ```bash
 $ 30 + 30*9 = 300s
