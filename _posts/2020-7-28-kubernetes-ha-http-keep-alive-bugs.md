@@ -933,7 +933,7 @@ TCP使用滑动窗口和ARQ机制保障可靠传输：TCP每发送一个报文�
 
 tcp共计重试了15次(200ms为第一次)，总共重试时间为：924.6s，也即15mins 25s左右。可以跟上面httptest以及Controller恢复访问的时间对上，这也解释了15mins的来历
 
-最后验证发现：通过调整TCP ARQ重试次数 或者 设置http.Client.Timeout，发现httptest均会在短时间内关闭连接，服务重新建立连接
+**最后验证发现：通过调整TCP ARQ重试次数 或者 设置http.Client.Timeout，发现httptest均会在短时间内关闭连接，服务重新建立连接**
 
 ## 解决
 
