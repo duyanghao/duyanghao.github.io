@@ -947,10 +947,10 @@ $ echo 9 > /proc/sys/net/ipv4/tcp_retries2
 另外对于推送类的服务，比如Watch，在母机宕机后，可以通过tcp keepalive机制来关闭无效连接(这也是上面测试cluster-coredns-controller时其中一个连接5分钟(30+30*9=300s)断开的原因)：
 
 ```bash
-# 30 + 30*9 = 300s
+# 30 + 30*5 = 180s
 $ echo 30 >  /proc/sys/net/ipv4/tcp_keepalive_time
 $ echo 30 > /proc/sys/net/ipv4/tcp_keepalive_intvl
-$ echo 9 > /proc/sys/net/ipv4/tcp_keepalive_probes
+$ echo 5 > /proc/sys/net/ipv4/tcp_keepalive_probes
 ```
 
 通过上述的TCP keepalive以及TCP ARQ配置，我们可以将无效连接断开时间缩短到4分钟以内，一定程度上解决了母机宕机导致的连接异常问题。不过最好的解决方案是在应用层设置超时或者健康检查机制及时关闭底层无效连接
