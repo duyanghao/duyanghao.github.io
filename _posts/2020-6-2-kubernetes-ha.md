@@ -189,7 +189,7 @@ Events:
   Warning  FailedMount         62s   kubelet, 10.0.0.1        Unable to mount volumes for pod "nginx-7b4d5d9fd-bmc8g_default(bb5501ca-9fea-11ea-9730-5254002f7cc9)": timeout expired waiting for volumes to attach or mount for pod "default"/"nginx-7b4d5d9fd-nqgfz". list of unmounted volumes=[nginx-data]. list of unattached volumes=[root-certificate default-token-q2vft nginx-data]
 ```
 
-这是因为RWO(ReadWriteOnce -- the volume can be mounted as read-write by a single node)的volume正常情况下在Kubernetes集群中只能被一个母机attach，由于宕机母机无法执行volume detach操作，其它母机上的pod如果使用相同的volume会被挂住，最终导致容器创建一直阻塞并报错：
+这是因为只支持RWO(ReadWriteOnce -- the volume can be mounted as read-write by a single node)的volume正常情况下在Kubernetes集群中只能被一个母机attach，由于宕机母机无法执行volume detach操作，其它母机上的pod如果使用相同的volume会被挂住，最终导致容器创建一直阻塞并报错：
 
 ```bash
 Multi-Attach error for volume "pvc-7f68c087-9e56-11ea-a2ef-5254002f7cc9" Volume is already used by pod(s) nginx-7b4d5d9fd-nqgfz
@@ -219,7 +219,7 @@ I0811 04:06:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 --attach-detach-reconcile-max-wait-unmount-duration duration   maximum amount of time the attach detach controller will wait for a volume to be safely unmounted from its node. Once this time has expired, the controller will assume the node or kubelet are unresponsive and will detach the volume anyway. (default 6m0s)
 ```
 
-通过配置`attach-detach-reconcile-max-wait-unmount-duration`配置，可以缩短替换pod正常运行的时间
+通过配置`attach-detach-reconcile-max-wait-unmount-duration`，可以缩短替换pod成功运行的时间
 
 另外，注意`force detaching`逻辑只会在pod被`force delete`的时候触发，正常delete不会触发该逻辑
 
