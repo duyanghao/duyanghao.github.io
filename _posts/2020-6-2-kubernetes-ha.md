@@ -227,11 +227,11 @@ I0811 04:06:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 对于存储，可以分为Kubernetes系统存储和应用存储，系统存储专指etcd；而应用存储一般来说只考虑persistent volume
 
-### 系统存储
+### 系统存储 - etcd
 
 etcd同步待研究……
 
-### 应用存储
+### 应用存储 - persistent volume
 
 这里考虑存储是部署在集群外的情况(通常情况)。如果一个母机宕机了，由于没有对外部存储集群产生破坏，因此不会影响其它母机上应用访问pv存储
 
