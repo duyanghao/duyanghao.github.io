@@ -1,10 +1,10 @@
 ---
 layout: post
-title: Kubernetes高可用概述
+title: Kubernetes高可用 - 你所应该知道的
 date: 2020-7-1 19:10:31
 category: 技术
 tags: Kubernetes high-availability
-excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题进行一个全面而系统的总结
+excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题进行一个全面而系统的梳理和总结
 ---
 
 ## 前言
