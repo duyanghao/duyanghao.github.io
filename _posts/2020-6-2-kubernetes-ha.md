@@ -4,14 +4,14 @@ title: Kubernetes高可用 - 你所应该知道的
 date: 2020-7-1 19:10:31
 category: 技术
 tags: Kubernetes high-availability
-excerpt: 本文对Kubernetes集群以及服务高可用过程中遇到的问题进行一个全面而系统的梳理和总结
+excerpt: 本文先介绍了Kubernetes集群高可用的整体架构，之后基于该架构从网络，存储，以及应用层面分析了当节点宕机时可能会出现的问题以及对应的解决方案，希望对Kubernetes高可用实践有所助益
 ---
 
 ## 前言
 
 在企业生产环境，Kubernetes高可用是一个必不可少的特性，其中最通用的场景就是如何在Kubernetes集群宕机一个节点的情况下保障服务依旧可用
 
-本文就针对这个场景下在实现应用高可用过程中遇到的各种问题进行一个梳理和总结
+本文就针对这个场景下在实现集群和应用高可用过程中遇到的各种问题进行一个梳理和总结
 
 ## 整体方案
 
@@ -336,7 +336,7 @@ template:
 
 还有更加复杂的高可用方案，例如etcd的[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)：
 
-![](/public/img/etcd-state-machine.png)
+![](/public/img/kubernetes_ha/etcd-state-machine.png)
 
 * Distributed Lock Type
 
