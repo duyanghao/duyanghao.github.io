@@ -43,7 +43,7 @@ kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接L
 
 集群中还部署了依赖nginx服务的应用A，如果某个时刻work node1宕机了，此时应用A访问nginx service会有问题吗？
 
-这里答案是会有问题。因为service不会马上剔除掉宕机上对应的nginx pod，同时由于service常用的[iptables和ipvs代理模式](https://kubernetes.io/docs/concepts/services-networking/service/#proxy-mode-iptables)都没有实现[retry with another backend](https://kubernetes.io/docs/concepts/services-networking/service/#proxy-mode-iptables)特性，所以在一段时间内访问会出现间歇性问题(如果请求轮询到挂掉的nginx pod上)，也就是说会存在一个访问失败间隔期
+这里答案是会有问题。因为service不会马上剔除掉宕机上对应的nginx pod，同时由于service常用的[iptables代理模式](https://kubernetes.io/docs/concepts/services-networking/service/#proxy-mode-iptables)没有实现[retry with another backend](https://kubernetes.io/docs/concepts/services-networking/service/#proxy-mode-iptables)特性，所以在一段时间内访问会出现间歇性问题(如果请求轮询到挂掉的nginx pod上)，也就是说会存在一个访问失败间隔期(ipvs模式具备健康检查能力，能够自动从ipvs规则中及时剔除故障的pod，具备更高的可用性)
 
 ![](/public/img/kubernetes_ha/kubernetes-iptables.svg)
 
