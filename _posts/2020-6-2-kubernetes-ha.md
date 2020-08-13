@@ -229,7 +229,9 @@ I0811 04:06:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 ### 系统存储 - etcd
 
-etcd同步待研究……
+etcd使用Raft一致性算法(leader selection + log replication + safety)中的leader selection来实现节点宕机下的高可用问题，如下：
+
+![](/public/img/kubernetes_ha/leader-election.png)
 
 ### 应用存储 - persistent volume
 
@@ -307,6 +309,8 @@ template:
 
 ## Refs
 
+* [Raft 一致性算法论文译文](https://www.infoq.cn/article/raft-paper/)
+* [In Search of an Understandable Consensus Algorithm](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)
 * [add node shutdown KEP](https://github.com/kubernetes/enhancements/pull/1116/files)
 * [Recommended Mechanism for Deploying CSI Drivers on Kubernetes](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/storage/container-storage-interface.md#recommended-mechanism-for-deploying-csi-drivers-on-kubernetes)
 * [Container Storage Interface (CSI)](https://github.com/container-storage-interface/spec/blob/master/spec.md)
