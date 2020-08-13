@@ -144,11 +144,11 @@ spec:
 
 这里面有比较特殊的情况，例如：statefulset，daemonset以及static pod。我们逐一说明：
 
-* stetefulset
+* statefulset
 
 pod删除存在两个阶段，第一个阶段是controller-manager设置pod的spec.deletionTimestamp字段为非nil值；第二个阶段是kubelet完成实际的pod删除操作(volume detach，container删除等)
 
-当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset形式的pod不会产生新的替换pod，[并一直处于"Terminating"状态](https://github.com/kubernetes/kubernetes/issues/55713#issuecomment-518340883)
+当node宕机后，显然kubelet无法完成第二阶段的操作，因此controller-manager认为pod并没有被删除掉，在这种情况下statefulset工作负载形式的pod不会产生新的替换pod，[并一直处于"Terminating"状态](https://github.com/kubernetes/kubernetes/issues/55713#issuecomment-518340883)
 
 >> Like a Deployment, a StatefulSet manages Pods that are based on an identical container spec. Unlike a Deployment, a StatefulSet maintains a sticky identity for each of their Pods. These pods are created from the same spec, but are not interchangeable: each has a persistent identifier that it maintains across any rescheduling.
 
