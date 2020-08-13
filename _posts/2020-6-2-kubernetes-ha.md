@@ -272,7 +272,7 @@ etcd使用[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/att
 
 ![](/public/img/kubernetes_ha/kubernetes-csi-recommend-deploy.png)
 
-后续在分析完应用层面的高可用方案后，我们再来看宕机对csi组件的影响
+通过实现对上述StatefulSet/Deployment工作负载类型应用(CSI Driver+Identity Controller以及external-attacher+external-provisioner)的高可用即可
 
 ## 应用
 
