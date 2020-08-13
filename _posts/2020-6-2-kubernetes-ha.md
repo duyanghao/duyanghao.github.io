@@ -69,7 +69,7 @@ node-controller会每隔node-monitor-period时间(默认5s)检查Lease object是
 
 ### 连接复用(长连接)
 
-对于使用长连接访问的应用来说，在没有设置合适请求timeout参数的情况下可能会出现15mins的超时问题，详情见[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)
+对于使用长连接访问的应用来说(默认使用都是tcp长连接，无论HTTP/2还是HTTP/1)，在没有设置合适请求timeout参数的情况下可能会出现15mins的超时问题，详情见[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)。解决方案如下：
 
 > 通过上面的分析，可以知道是TCP的ARQ机制导致了Controller在母机宕机后15mins内一直超时重试，超时重试失败后，tcp socket关闭，应用重新创建连接
 
