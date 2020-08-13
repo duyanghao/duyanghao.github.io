@@ -320,7 +320,7 @@ template:
 
 * RWX Type
 
-对于本身实现了基于存储多读写构建高可用的应用来说，我们可以直接利用反亲和+多副本进行部署(一般部署为deployment类型)，后接同一个存储(支持ReadWriteMany，例如：pv or 对象存储)，实现类似无状态服务的高可用模式
+对于本身基于多副本实现高可用的应用来说，我们可以直接利用反亲和+多副本进行部署(一般部署为deployment类型)，后接同一个存储(支持ReadWriteMany，例如：Cephfs or Ceph RGW)，实现类似无状态服务的高可用模式
 
 其中，docker distribution，helm chartmuseum以及harbor jobservice等都属于这种类型
 
@@ -334,9 +334,19 @@ template:
 
 ![](/public/img/kubernetes_ha/redis-ha.png)
 
+还有更加复杂的高可用方案，例如etcd的[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)：
+
+![](/public/img/etcd-state-machine.png)
+
+* Distributed Lock Type
+
+Kubernetes Controller就是利用分布式锁实现高可用
+
+这里归纳了一些应用常用的实现高可用的方案。当然了，各个应用可以定制适合自身的高可用方案，不可能完全一样
+
 ## Conclusion
 
-……
+本文先介绍了Kubernetes集群高可用的整体架构，之后基于该架构从网络，存储，以及应用层面分析了当节点宕机时可能会出现的问题以及对应的解决方案，希望对Kubernetes高可用实践有所助益
 
 ## Refs
 
