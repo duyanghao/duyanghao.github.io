@@ -268,7 +268,7 @@ etcd使用[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/att
 
 这里考虑存储是部署在集群外的情况(通常情况)。如果一个母机宕机了，由于没有对外部存储集群产生破坏，因此不会影响其它母机上应用访问pv存储
 
-而对于Kubernetes存储本身组件功能(in-tree, flexVolume, external-storage以及csi)的影响实际上可以归纳为对Kubernetes应用的影响，这里以csi为例子进行说明：
+而对于Kubernetes存储本身组件功能(in-tree, flexVolume, external-storage以及csi)的影响实际上可以归纳为对存储插件应用的影响，这里以csi为例子进行说明：
 
 ![](/public/img/kubernetes_ha/kubernetes-csi-recommend-deploy.png)
 
