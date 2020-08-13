@@ -71,6 +71,33 @@ node-controller会每隔node-monitor-period时间(默认5s)检查Lease object是
 
 对于使用长连接访问的应用来说，在没有设置合适请求timeout参数的情况下可能会出现15mins的超时问题，详情见[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)
 
+> 通过上面的分析，可以知道是TCP的ARQ机制导致了Controller在母机宕机后15mins内一直超时重试，超时重试失败后，tcp socket关闭，应用重新创建连接
+
+> 这个问题本质上不是Kubernetes的问题，而是应用在复用tcp socket(长连接)时没有考虑设置超时，导致了母机宕机后，tcp socket没有及时关闭，服务依旧使用失效连接导致异常
+
+> 要解决这个问题，可以从两方面考虑：
+
+> * 应用层使用超时设置或者健康检查机制，从上层保障连接的健康状态 - 作用于该应用
+> * 底层调整TCP ARQ设置(/proc/sys/net/ipv4/tcp_retries2)，缩小超时重试周期，作用于整个集群
+
+> 由于应用层的超时或者健康检查机制无法使用统一的方案，这里只介绍如何采用系统配置的方式规避无效连接，如下：
+
+> ```bash
+> # 0.2+0.4+0.8+1.6+3.2+6.4+12.8+25.6+51.2+102.4 = 222.6s
+> $ echo 9 > /proc/sys/net/ipv4/tcp_retries2
+> ```
+
+> 另外对于推送类的服务，比如Watch，在母机宕机后，可以通过tcp keepalive机制来关闭无效连接(这也是上面测试cluster-coredns-controller时其中一个连接5分钟(30+30*9=300s)断开的原因)：
+
+> ```bash
+> # 30 + 30*5 = 180s
+> $ echo 30 >  /proc/sys/net/ipv4/tcp_keepalive_time
+> $ echo 30 > /proc/sys/net/ipv4/tcp_keepalive_intvl
+> $ echo 5 > /proc/sys/net/ipv4/tcp_keepalive_probes
+> ```
+
+> 通过上述的TCP keepalive以及TCP ARQ配置，我们可以将无效连接断开时间缩短到4分钟以内，一定程度上解决了母机宕机导致的连接异常问题。不过最好的解决方案是在应用层设置超时或者健康检查机制及时关闭底层无效连接
+
 ### pod驱逐 - 应用相关
 
 pod驱逐可以使服务自动恢复副本数量。如上所述，node controller会在节点心跳超时之后一段时间(默认5mins)驱逐该节点上的pod，这个时间由如下参数决定：
@@ -229,7 +256,7 @@ I0811 04:06:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 ### 系统存储 - etcd
 
-etcd使用Raft一致性算法(leader selection + log replication + safety)中的leader selection来实现节点宕机下的高可用问题，如下：
+etcd使用[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)(leader selection + log replication + safety)中的leader selection来实现节点宕机下的高可用问题，如下：
 
 ![](/public/img/kubernetes_ha/leader-election.png)
 
