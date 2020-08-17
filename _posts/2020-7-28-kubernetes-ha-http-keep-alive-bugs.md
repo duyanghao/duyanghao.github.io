@@ -954,6 +954,22 @@ $ echo 30 > /proc/sys/net/ipv4/tcp_keepalive_intvl
 $ echo 5 > /proc/sys/net/ipv4/tcp_keepalive_probes
 ```
 
+注意：在Kubernetes环境中，容器不会直接继承母机tcp keepalive的配置(可以直接继承母机tcp超时重试的配置)，因此必须通过一定方式进行适配。这里介绍其中一种方式，添加initContainers使配置生效：
+
+```yaml
+- name: init-sysctl
+  image: busybox
+  command:
+  - /bin/sh
+  - -c
+  - |
+    sysctl -w net.ipv4.tcp_keepalive_time=30
+    sysctl -w net.ipv4.tcp_keepalive_intvl=30
+    sysctl -w net.ipv4.tcp_keepalive_probes=5
+  securityContext:
+    privileged: true
+```
+
 通过上述的TCP keepalive以及TCP ARQ配置，我们可以将无效连接断开时间缩短到4分钟以内，一定程度上解决了母机宕机导致的连接异常问题。不过最好的解决方案是在应用层设置超时或者健康检查机制及时关闭底层无效连接
 
 ## Refs
