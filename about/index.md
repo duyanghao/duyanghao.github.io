@@ -12,7 +12,7 @@ comments: no
 
 You don't have to be faster than the bear, you just have to be faster than the guy next to you.
 
-关注 Linux kernel、Spark、Docker/Distribution/Kubernetes/PaaS、Harbor、Database...
+关注 Linux kernel、Spark、Container Runtime/Docker/Distribution/Kubernetes/PaaS、Harbor、Database...
 
 
 ---
