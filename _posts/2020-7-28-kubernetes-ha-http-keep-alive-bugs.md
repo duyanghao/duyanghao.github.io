@@ -565,9 +565,11 @@ tcp        0      0 192.168.1.204:51674      192.168.255.220:443     ESTABLISHED
    over the connection to check its health. Unhealthy connection is closed
    and removed from the connection pool.
 
-目前最新版本的golang 1.4并没有合并该PR，下一个release(1.5)应该会有所合并
+目前最新版本的golang 1.15已经合并该PR
 
 而Kubernetes社区也对应存在着类似的[client-go issue](https://github.com/kubernetes/client-go/issues/374)
+
+为了解决上述HTTP/2无法及时移除异常连接的问题，我分别给[golang/net(add http2 health check parameters for ConfigureTransport)](https://github.com/golang/net/pull/84)和[k8s.io/apimachinery(add http2 health check for SetTransportDefaults)](https://github.com/kubernetes/kubernetes/pull/94844)提交了PR，目前等待Merged
 
 ## 分析 - 禁用HTTP/2不生效？？？
 
@@ -766,12 +768,15 @@ tcp        0      0 192.168.0.122:54190      192.168.255.220:443     ESTABLISHED
 
 对应的socket也被删除掉了，并新创建了一个新的socket：`192.168.0.122.54190 > 192.168.255.220.443`
 
-查cluster-coredns-controller代码，发现是http.Client.Timeout没有设置，加上之后，controller force rsync会存在问题，每隔http.Client.Timeout时间会出现request Timeout(没有宕机情况下)，同时关闭底层的tcp socket(也即需要调整timeout参数)
+查cluster-coredns-controller代码，发现是http.Client.Timeout没有设置，加上之后，controller watch force rsync会存在问题，每隔http.Client.Timeout时间会出现Watch request Timeout(没有宕机情况下)，同时关闭底层的tcp socket，并重新建立Watch连接
+
+对于某些应用，例如一般的Controller会Watch Kubernetes API，如果给Watch设置Timeout，则会出现上述Watch request Timeout的问题。也即某些推送类(Watch)应用无法通过禁用HTTP/2同时设置超时解决该问题(注意区分cluster-coredns-controller与上述controller的区别，这里，cluster-coredns-controller并没有使用选举机制，所以现象不同)
 
 分析到这里就会有如下疑问：
 
 * 其中一个socket 5mins后超时关闭，这个5mins哪里触发的？(并没有设置Timeout)
 * 另外一个socket 15mins后超时关闭，这个15mins哪里来的？
+* 如何解决Watch类应用(Controller)的超时问题
 
 ## 分析 - TCP ARQ&keepalive
 
@@ -935,7 +940,7 @@ tcp共计重试了15次(200ms为第一次)，总共重试时间为：924.6s，�
 
 要解决这个问题，可以从两方面考虑：
 
-* 应用层使用超时设置或者健康检查机制，从上层保障连接的健康状态 - 作用于该应用
+* 应用层使用超时设置或者健康检查机制(例如http2的[健康检查机制](https://github.com/golang/net/commit/0ba52f642ac2f9371a88bfdde41f4b4e195a37c0))，从上层保障连接的健康状态 - 作用于该应用
 * 底层调整TCP ARQ设置(/proc/sys/net/ipv4/tcp_retries2)，缩小超时重试周期，作用于整个集群
 
 由于应用层的超时或者健康检查机制无法使用统一的方案，这里只介绍如何采用系统配置的方式规避无效连接，如下：

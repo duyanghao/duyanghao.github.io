@@ -250,6 +250,63 @@ func (k *kindSorter) Less(i, j int) bool {
 }
 ```
 
+### Golang可变参数(Refes to [grpc/grpc-go](https://github.com/grpc/grpc-go/blob/master/dialoptions.go))
+
+```go
+// dialOptions configure a Dial call. dialOptions are set by the DialOption
+// values passed to Dial.
+type dialOptions struct {
+	unaryInt  UnaryClientInterceptor
+	streamInt StreamClientInterceptor
+    ...
+}
+
+// DialOption configures how we set up the connection.
+type DialOption interface {
+	apply(*dialOptions)
+}
+
+// funcDialOption wraps a function that modifies dialOptions into an
+// implementation of the DialOption interface.
+type funcDialOption struct {
+	f func(*dialOptions)
+}
+
+func (fdo *funcDialOption) apply(do *dialOptions) {
+	fdo.f(do)
+}
+
+func newFuncDialOption(f func(*dialOptions)) *funcDialOption {
+	return &funcDialOption{
+		f: f,
+	}
+}
+
+// WithWriteBufferSize determines how much data can be batched before doing a
+// write on the wire. The corresponding memory allocation for this buffer will
+// be twice the size to keep syscalls low. The default value for this buffer is
+// 32KB.
+//
+// Zero will disable the write buffer such that each write will be on underlying
+// connection. Note: A Send call may not directly translate to a write.
+func WithWriteBufferSize(s int) DialOption {
+	return newFuncDialOption(func(o *dialOptions) {
+		o.copts.WriteBufferSize = s
+	})
+}
+
+// WithReadBufferSize lets you set the size of read buffer, this determines how
+// much data can be read at most for each read syscall.
+//
+// The default value for this buffer is 32KB. Zero will disable read buffer for
+// a connection so data framer can access the underlying conn directly.
+func WithReadBufferSize(s int) DialOption {
+	return newFuncDialOption(func(o *dialOptions) {
+		o.copts.ReadBufferSize = s
+	})
+}
+```
+
 ## Refs
 
 * [singleton-pattern-in-go](http://marcio.io/2015/07/singleton-pattern-in-go/)
