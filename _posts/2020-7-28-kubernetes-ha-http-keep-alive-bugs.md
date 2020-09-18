@@ -988,5 +988,12 @@ $ echo 5 > /proc/sys/net/ipv4/tcp_keepalive_probes
 * [Using TCP keepalive with Go](https://felixge.de/2014/08/26/tcp-keepalive-with-golang.html)
 * [TCP keepalive overview](https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/overview.html)
 * [Using TCP keepalive under Linux](https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/usingkeepalive.html)
+* [记一次kubernetes集群异常: kubelet连接apiserver超时](https://www.cnblogs.com/gaorong/p/10925480.html)
+* [x/net/http2: make Transport occasionally send PING frames to server](https://github.com/golang/go/issues/31643)
+* [kubelet: fix fail to close kubelet->API connections on heartbeat failure](https://github.com/kubernetes/kubernetes/pull/78016)
+* [x/net/http2: make Transport occasionally send PING frames to server](https://github.com/golang/go/issues/31643)
+* [net/http2: perform connection health check](https://github.com/caesarxuchao/net/commit/bce9e9724fdd2226d4731a36d71725b8bbfb6472)
+* [add http2 health check parameters for ConfigureTransport](https://github.com/golang/net/pull/84)
+* [add http2 health check for SetTransportDefaults](https://github.com/kubernetes/kubernetes/pull/94844)
 
 ![](/public/img/duyanghao.png)
