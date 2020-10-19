@@ -89,7 +89,7 @@ Kubernetes集群中几乎所有使用client-go的应用([kubelet](https://github
 
 从代码角度来看，我们可以通过对应用层使用超时设置或者健康检查机制，从上层保障连接的健康状态 - 作用于该应用
 
-举例来说，对于HTTP/1的应用设置请求超时；而对于HTTP/2的应用，为了解决HTTP/2无法及时移除异常连接的问题，我分别给[golang/net](https://github.com/golang/net/pull/84)以及[k8s.io/apimachinery](https://github.com/kubernetes/kubernetes/pull/94844)提交了PR，目前均等待Merged中
+举例来说，对于HTTP/1的应用设置请求超时；而对于HTTP/2的应用，为了解决HTTP/2无法及时移除异常连接的问题，我分别给[golang/net](https://github.com/golang/net/pull/84)以及[k8s.io/apimachinery](https://github.com/kubernetes/kubernetes/pull/94844)提交了PR，用于设置HTTP/2健康检查，目前均等待Merged中
 
 * 工程角度
 
@@ -124,21 +124,184 @@ $ /sbin/sysctl -p
 
 这里利用了Kubernetes服务拓扑感知规则[“kubernetes.io/hostname”，“*”]：优先使用同一节点上的端点，如果该节点上没有可用端点，则回退到任何可用端点上
 
-通过如上的规则，我们将client和server进行捆绑安装，同一个母机上的client永远只访问本地的server，如下：
+通过如上的规则，我们将client和server进行捆绑安装，同一个母机上的client永远只访问本地的server(除非本地server挂掉)，如下：
 
 ![](/public/img/share_review/service_topology.png)
 
 这样即便存在母机宕机，对其它母机上的服务也没有任何影响
 
+上述提出的三种解决方案可以结合起来一起使用，使得整个集群在母机宕机情况下网络异常时间控制在一个比较短的时间。当然了，如果使用的是外部LB而非Kubernetes默认的service，则可以利用外接LB自身的高可用&负载均衡机制进行规避。
+
 ### 母机宕机下的存储影响
+
+对于存储，我们将Kubernetes集群存储分为系统存储和应用存储，系统存储专指etcd；而应用存储一般来说只考虑persistent volume。接下来依次进行介绍：
+
+* 母机宕机下的存储影响 - 系统存储
+
+Kubernetes系统存储专指etcd，而etcd使用[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)(leader selection + log replication + safety)中的leader selection来实现节点宕机下的高可用问题，如下：
+
+![](/public/img/kubernetes_ha/leader-election.png)
+
+* 母机宕机下的存储影响 - 应用存储
+
+这里考虑存储是部署在集群外的情况(通常情况)。如果一个母机宕机了，由于没有对外部存储集群产生破坏，因此不会影响其它母机上应用访问pv存储
+
+而对于Kubernetes存储本身组件功能(in-tree, flexVolume, external-storage以及csi)的影响实际上可以归纳为对存储插件应用的影响，这里以csi为例子进行说明：
+
+![](/public/img/kubernetes_ha/kubernetes-csi-recommend-deploy.png)
+
+通过实现对上述StatefulSet/Deployment工作负载类型应用(CSI Driver+Identity Controller以及external-attacher+external-provisioner)的高可用即可
 
 ### 母机宕机下的应用高可用
 
+这里我们将Kubernetes集群上的应用分类为：Stateless Application(无状态应用)以及Stateful Application(有状态应用)，下面分别介绍这两种类别应用的高可用方案
+
+#### Stateful Application
+
+对于无状态的服务(通常部署为deployment工作负载)，我们可以直接通过设置反亲和+多副本来实现高可用，例如nginx服务：
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+name: web-server
+spec:
+selector:
+  matchLabels:
+    app: web-store
+replicas: 3
+template:
+  metadata:
+    labels:
+      app: web-store
+  spec:
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - web-store
+          topologyKey: "kubernetes.io/hostname"
+    containers:
+    - name: web-app
+      image: nginx:1.16-alpine
+```
+
+如果其中一个pod所在母机宕机了，则在endpoint controller踢掉该pod backend后，服务访问正常
+
+这类服务通常依赖于其它有状态服务，例如：WebServer，APIServer等
+
+#### Stateful Application
+
+对于有状态的服务，可以按照高可用的实现类型分类如下：
+
+* RWX Type
+
+对于本身基于多副本实现高可用的应用来说，我们可以直接利用反亲和+多副本进行部署(一般部署为deployment类型)，后接同一个存储(支持ReadWriteMany，例如：CephFS or Ceph RGW)，实现类似无状态服务的高可用模式
+
+其中，docker distribution，helm chartmuseum以及harbor jobservice等都属于这种类型
+
+* Special Type
+
+对于特殊类型的应用，例如database，它们一般有自己定制的高可用方案，例如常用的主从模式
+
+这类应用通常以statefulset的形式进行部署，每个副本对接一个pv，在母机宕机的情况下，由应用本身实现高可用(例如：master选举-主备切换)
+
+其中，redis，postgres，以及各类db都基本是这种模式，如下是redis一主两从三哨兵的高可用方案：
+
+![](/public/img/kubernetes_ha/redis-ha.png)
+
+还有更加复杂的高可用方案，例如etcd的[Raft一致性算法](https://ramcloud.atlassian.net/wiki/download/attachments/6586375/raft.pdf)：
+
+![](/public/img/kubernetes_ha/etcd-state-machine.png)
+
+* Distributed Lock Type
+
+Kubernetes Controller就是利用分布式锁实现的高可用
+
+这里归纳了一些应用常用的实现高可用的方案。当然了，各个应用可以定制适合自身的高可用方案，不可能完全一样
+
 ### 母机宕机下的Pod驱逐
+
+#### 应用相关
+
+pod驱逐可以使服务自动恢复副本数量。node controller会在节点心跳超时之后一段时间(默认5mins)驱逐该节点上的pod，这个时间由如下参数决定：
+
+```
+- (kube-apiserver)default-not-ready-toleration-seconds：default 300 
+- (kube-apiserver)default-unreachable-toleration-seconds：default 300
+```
+
+![](/public/img/kubernetes_ha/toleration.png)
+
+这里面有比较特殊的情况，例如：statefulset，daemonset以及static pod。我们逐一说明：
+
+* statefulset为了保障at most one semantics，需要满足对于指定identity同时只有一个pod存在。在node shutdown后，虽然pod被驱逐了(“Terminating”)，但是由于controller无法判断这个statefulset pod是否还在运行(因为并没有彻底删除)，故不会产生替换容器，一定是要等到这个pod被完全删除干净(by kubelet)，才会产生替换容器(deployment不需要满足这个条件，所以在驱逐pod时，controller会马上产生替换pod，而不需要等待kubelet删除pod)
+* 默认情况下daemonset pod会被设置多个tolerations，使其可以容忍节点几乎所有异常的状态，所以不会出现驱逐的情况
+* static pod类型类似daemonset会设置tolerations容忍节点异常状态
+
+#### 存储相关
+
+当pod使用的volume只支持RWO读写模式时，如果pod所在母机宕机了，并且随后在其它母机上产生了替换副本，则该替换副本的创建会阻塞，如下所示：
+
+```bash
+$ kubectl get pods -o wide
+nginx-7b4d5d9fd-bmc8g       0/1     ContainerCreating   0          0s    <none>         10.0.0.1   <none>           <none>
+nginx-7b4d5d9fd-nqgfz       1/1     Terminating         0          19m   192.28.1.165   10.0.0.2   <none>           <none>
+$ kubectl describe pods/nginx-7b4d5d9fd-bmc8g
+[...truncate...]
+Events:
+  Type     Reason              Age   From                     Message
+  ----     ------              ----  ----                     -------
+  Normal   Scheduled           3m5s  default-scheduler        Successfully assigned default/nginx-7b4d5d9fd-bmc8g to 10.0.0.1
+  Warning  FailedAttachVolume  3m5s  attachdetach-controller  Multi-Attach error for volume "pvc-7f68c087-9e56-11ea-a2ef-5254002f7cc9" Volume is already used by pod(s) nginx-7b4d5d9fd-nqgfz
+  Warning  FailedMount         62s   kubelet, 10.0.0.1        Unable to mount volumes for pod "nginx-7b4d5d9fd-bmc8g_default(bb5501ca-9fea-11ea-9730-5254002f7cc9)": timeout expired waiting for volumes to attach or mount for pod "default"/"nginx-7b4d5d9fd-nqgfz". list of unmounted volumes=[nginx-data]. list of unattached volumes=[root-certificate default-token-q2vft nginx-data]
+```
+
+这是因为只支持RWO(ReadWriteOnce -- the volume can be mounted as read-write by a single node)的volume正常情况下在Kubernetes集群中只能被一个母机attach，由于宕机母机无法执行volume detach操作，其它母机上的pod如果使用相同的volume会被挂住，最终导致容器创建一直阻塞并报错：
+
+```bash
+Multi-Attach error for volume "pvc-7f68c087-9e56-11ea-a2ef-5254002f7cc9" Volume is already used by pod(s) nginx-7b4d5d9fd-nqgfz
+```
+
+解决办法是采用支持RWX(ReadWriteMany -- the volume can be mounted as read-write by many nodes)读写模式的volume。另外如果必须采用只支持RWO模式的volume，则可以执行如下命令强制删除pod，如下：
+
+```bash
+$ kubectl delete pods/nginx-7b4d5d9fd-nqgfz --force --grace-period=0
+```
+
+之后，对于新创建的pod，attachDetachController会在6mins(代码写死)后强制detach volume，并正常attach，如下：
+
+```bash
+W0811 04:01:25.024422       1 reconciler.go:328] Multi-Attach error for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" (UniqueName: "kubernetes.io/rbd/k8s:kubernetes-dynamic-pvc-f35fc6fa-d8a6-11ea-bd98-aeb6842de1e3") from node "10.0.0.3" Volume is already exclusively attached to node 10.0.0.2 and can't be attached to another
+I0811 04:01:25.024480       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod", Namespace:"default", Name:"default-nginx-6584f7ddb7-jx9s2", UID:"5322240f-db87-11ea-b832-7a866c097df1", APIVersion:"v1", ResourceVersion:"28275287", FieldPath:""}): type: 'Warning' reason: 'FailedAttachVolume' Multi-Attach error for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" Volume is already exclusively attached to one node and can't be attached to another
+W0811 04:07:25.047767       1 reconciler.go:232] attacherDetacher.DetachVolume started for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" (UniqueName: "kubernetes.io/rbd/k8s:kubernetes-dynamic-pvc-f35fc6fa-d8a6-11ea-bd98-aeb6842de1e3") on node "10.0.0.2" This volume is not safe to detach, but maxWaitForUnmountDuration 6m0s expired, force detaching
+I0811 04:07:25.047860       1 operation_generator.go:500] DetachVolume.Detach succeeded for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" (UniqueName: "kubernetes.io/rbd/k8s:kubernetes-dynamic-pvc-f35fc6fa-d8a6-11ea-bd98-aeb6842de1e3") on node "10.0.0.2"
+I0811 04:07:25.148094       1 reconciler.go:288] attacherDetacher.AttachVolume started for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" (UniqueName: "kubernetes.io/rbd/k8s:kubernetes-dynamic-pvc-f35fc6fa-d8a6-11ea-bd98-aeb6842de1e3") from node "10.0.0.3"
+I0811 04:07:25.148180       1 operation_generator.go:377] AttachVolume.Attach succeeded for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1" (UniqueName: "kubernetes.io/rbd/k8s:kubernetes-dynamic-pvc-f35fc6fa-d8a6-11ea-bd98-aeb6842de1e3") from node "10.0.0.3"
+I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod", Namespace:"default", Name:"default-nginx-6584f7ddb7-jx9s2", UID:"5322240f-db87-11ea-b832-7a866c097df1", APIVersion:"v1", ResourceVersion:"28275287", FieldPath:""}): type: 'Normal' reason: 'SuccessfulAttachVolume' AttachVolume.Attach succeeded for volume "pvc-e97c6ce6-d8a6-11ea-b832-7a866c097df1"
+```
+
+而默认的6mins对于生产环境来说太长了，而且Kubernetes并没有提供参数进行配置，因此我向官方提了一个[PR](https://github.com/kubernetes/kubernetes/pull/93776)用于解决这个问题，如下：
+
+```bash
+--attach-detach-reconcile-max-wait-unmount-duration duration   maximum amount of time the attach detach controller will wait for a volume to be safely unmounted from its node. Once this time has expired, the controller will assume the node or kubelet are unresponsive and will detach the volume anyway. (default 6m0s)
+```
+
+通过配置`attach-detach-reconcile-max-wait-unmount-duration`，可以缩短替换pod成功运行的时间
+
+另外，注意`force detaching`逻辑只会在pod被`force delete`的时候触发，正常delete不会触发该逻辑
 
 ### 高可用总结
 
+实际生产环境需要综合上述因素全面考虑，将整体服务的恢复时间控制在一个可以接受的范围内
+
 ## Kubernetes备份还原实战
+
+
 
 ## 总结
 
