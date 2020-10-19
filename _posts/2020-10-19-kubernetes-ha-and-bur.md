@@ -9,7 +9,7 @@ excerpt: 本文为我在腾讯云十年乘风破浪主题直播分享中的回�
 
 ## 前言
 
-大家好，我叫杜杨浩，今天很高兴在这里给大家分享一下Kubernetes集群高可用&备份还原方案。无论是高可用还是备份还原都是生产环境所必须具备的特性，本次分享将依次介绍我在实现这些特性过程中遇到的问题，以及相应的思考和解决方案。
+大家好，我叫杜杨浩，很高兴今天在这里给大家分享一下Kubernetes集群高可用&备份还原方案。无论是高可用还是备份还原都是生产环境所必须具备的特性，本次分享将依次介绍我在实现这些特性过程中遇到的问题，以及相应的思考和解决方案。
 
 ## Kubernetes高可用实战
 
@@ -41,7 +41,7 @@ kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接L
 
 ![](/public/img/share_review/service_proxy.png)
 
-这两种代理模式都采用了linux kernel netfilter hook function。区别在于iptables代理模式使用的是iptables的DNAT规则实现service的负载均衡；而IPVS底层使用了hash数据结构，通过调用netlink接口创建IPVS规则实现负载均衡。与iptables相比，IPVS并且具备更低的网络延时，更高的规则同步效率以及更丰富的负载均衡选项
+这两种代理模式都采用了linux kernel netfilter hook function。区别在于iptables代理模式使用的是iptables的DNAT规则实现service的负载均衡；而IPVS底层使用了hash数据结构，通过调用netlink接口创建IPVS规则实现负载均衡。与iptables相比，IPVS模式具备更低的网络延时，更高的规则同步效率以及更丰富的负载均衡选项
 
 我们知道Kubernetes是通过节点心跳来保证节点健康状态的，每个node在kube-node-lease namespace下会对应一个Lease object，kubelet每隔node-status-update-frequency时间(默认10s)会更新对应node的Lease object，超过一定时间没有更新，node-controller会将节点标记为ConditionUnknown状态，并将该母机上的pod从相应service的后端列表中给剔除掉
 
@@ -63,7 +63,7 @@ Amount of time which we allow running Node to be unresponsive before marking it 
 
 #### 问题2: TCP长连接超时
 
-接下来我们探讨一下母机宕机下的另外一个问题：TCP长连接超时。之前我写过一篇文章详细描述这个问题，感兴趣的读者可以深入看看[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)
+接下来我们探讨一下母机宕机下的另外一个网络问题：TCP长连接超时。之前我写过一篇文章详细描述这个问题，感兴趣的读者可以深入看看[Kubernetes Controller高可用诡异的15mins超时](https://duyanghao.github.io/kubernetes-ha-http-keep-alive-bugs/)
 
 ![](/public/img/share_review/controller-tcp-timeout.png)
 
@@ -71,10 +71,10 @@ Amount of time which we allow running Node to be unresponsive before marking it 
 
 但是观察到的现象是Node1上的Controller会一直尝试获取锁，并且超时，整个过程持续15mins左右。
 
-对于这个问题的原因可以归纳如下：
+这个问题的原因可以归纳如下：
 
 * 母机宕机后，无法及时发送RST包给请求对端
-* HTTP/2在请求超时后并不会关闭底层TCP连接，而是会继续复用(HTTP/1在请求超时后关闭TCP连接)。TCP ARQ机制导致了上述的15mins超时
+* HTTP/2在请求超时后并不会关闭底层TCP连接，而是会继续复用(HTTP/1在请求超时后会关闭TCP连接)。TCP ARQ机制导致了上述的15mins超时现象
 * 本质是应用没有对TCP Socket设置超时&健康检查
 
 Kubernetes集群中几乎所有使用client-go的应用([kubelet](https://github.com/kubernetes/kubernetes/pull/63492)除外)都会出现上述15mins超时问题。虽然可以简单采用禁用HTTP/2切换HTTP/1同时设置请求超时的方法进行规避，但却无法解决推送类服务(Watch)的超时问题(如果设置了超时，正常情况下Watch会超时)
@@ -89,7 +89,7 @@ Kubernetes集群中几乎所有使用client-go的应用([kubelet](https://github
 
 从代码角度来看，我们可以通过对应用层使用超时设置或者健康检查机制，从上层保障连接的健康状态 - 作用于该应用
 
-举例来说，对于HTTP/1的应用设置请求超时；而对于HTTP/2的应用，为了解决HTTP/2无法及时移除异常连接的问题，我分别给[golang/net](https://github.com/golang/net/pull/84)以及[k8s.io/apimachinery](https://github.com/kubernetes/kubernetes/pull/94844)提交了PR，用于设置HTTP/2健康检查，目前均等待Merged中
+举例来说，对于HTTP/1的应用需要设置请求超时；而对于HTTP/2的应用，为了解决HTTP/2无法及时移除异常连接的问题，我分别给[golang/net](https://github.com/golang/net/pull/84)以及[k8s.io/apimachinery](https://github.com/kubernetes/kubernetes/pull/94844)提交了PR，用于设置HTTP/2的健康检查，目前均等待Merged中
 
 * 工程角度
 
@@ -120,7 +120,7 @@ $ /sbin/sysctl -p
     privileged: true
 ```
 
-另一方面，我们可以采用调整服务部署架构规避该问题。这里介绍其中一种方案 - Kubernetes服务拓扑感知：
+另一方面，我们可以采用调整服务部署架构的方式规避该问题。这里介绍其中一种方案 - Kubernetes服务拓扑感知：
 
 这里利用了Kubernetes服务拓扑感知规则[“kubernetes.io/hostname”，“*”]：优先使用同一节点上的端点，如果该节点上没有可用端点，则回退到任何可用端点上
 
@@ -130,11 +130,11 @@ $ /sbin/sysctl -p
 
 这样即便存在母机宕机，对其它母机上的服务也没有任何影响
 
-上述提出的三种解决方案可以结合起来一起使用，使得整个集群在母机宕机情况下网络异常时间控制在一个比较短的时间。当然了，如果使用的是外部LB而非Kubernetes默认的service，则可以利用外接LB自身的高可用&负载均衡机制进行规避。
+上述提出的三种解决方案可以结合起来一起使用，使得整个集群在母机宕机情况下网络异常时间控制在一个比较短的时间内。当然了，如果使用的是外部LB而非Kubernetes默认提供的service类型，则可以利用外接LB自身的高可用&负载均衡机制进行规避。
 
 ### 母机宕机下的存储影响
 
-对于存储，我们将Kubernetes集群存储分为系统存储和应用存储，系统存储专指etcd；而应用存储一般来说只考虑persistent volume。接下来依次进行介绍：
+对于存储，我们将Kubernetes集群存储分为系统存储和应用存储，系统存储专指etcd；而应用存储一般来说只考虑persistent volume。接下来将依次进行介绍：
 
 * 母机宕机下的存储影响 - 系统存储
 
@@ -226,7 +226,7 @@ Kubernetes Controller就是利用分布式锁实现的高可用
 
 ### 母机宕机下的Pod驱逐
 
-#### 应用相关
+#### 母机宕机下的Pod驱逐 - 应用相关
 
 pod驱逐可以使服务自动恢复副本数量。node controller会在节点心跳超时之后一段时间(默认5mins)驱逐该节点上的pod，这个时间由如下参数决定：
 
@@ -235,7 +235,7 @@ pod驱逐可以使服务自动恢复副本数量。node controller会在节点�
 - (kube-apiserver)default-unreachable-toleration-seconds：default 300
 ```
 
-![](/public/img/share-review/toleration.png)
+![](/public/img/share_review/toleration.png)
 
 这里面有比较特殊的情况，例如：statefulset，daemonset以及static pod。我们逐一说明：
 
@@ -243,7 +243,7 @@ pod驱逐可以使服务自动恢复副本数量。node controller会在节点�
 * 默认情况下daemonset pod会被设置多个tolerations，使其可以容忍节点几乎所有异常的状态，所以不会出现驱逐的情况
 * static pod类型类似daemonset会设置tolerations容忍节点异常状态
 
-#### 存储相关
+#### 母机宕机下的Pod驱逐 - 存储相关
 
 当pod使用的volume只支持RWO读写模式时，如果pod所在母机宕机了，并且随后在其它母机上产生了替换副本，则该替换副本的创建会阻塞，如下所示：
 
@@ -301,9 +301,9 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 ## Kubernetes备份还原实战
 
-高可用可以一定程度上实现容灾，但是即便实现集群的高可用，我们依旧会需要备份还原功能，主要原因如下：
+高可用可以在一定程度上实现容灾，但是即便实现集群的高可用，我们依旧会需要备份还原功能，主要原因如下：
 
-* 误删除：运维人员不小心删除了某个namespace，某个pv
+* 误删除：运维人员不小心删除了某个namespace或者pv
 * 服务器死机：因为物理原因服务器损坏，或者需要重装系统
 * 集群迁移：需要将一个集群的数据迁移到另一个集群，用于测试或者其它目的
 
@@ -323,11 +323,11 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 ### 备份方案
 
-搞清楚了需要备份的东西后，接下来我将依次介绍Kubernetes集群备份还原三种方案：
+在理清楚了需要备份的东西后，接下来我将依次介绍Kubernetes集群备份还原的三种方案：
 
 #### 基于etcd的备份还原方案
 
-![](/public/img/share-review/etcd-backup.png)
+![](/public/img/share_review/etcd-backup.png)
 
 方案要点如下：
 
@@ -345,7 +345,7 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 #### 基于Velero的备份还原方案(aka Heptio Ark)
 
-![](/public/img/share-review/velero.png)
+![](/public/img/share_review/velero.png)
 
 本方案采用社区最流行的云原生备份还原工具[Velero](https://github.com/vmware-tanzu/velero)。用户通过velero客户端创建备份还原任务，velero controller会监听对应的CRDs，并执行相应的备份和还原操作，将pod以及volume的数据上传到storage provider中，或者从storage provider下载
 
@@ -372,9 +372,9 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
   * 运维成本高
   * 不够灵活
 
-对于Velero restic integration，v1.5版本之前不支持批量备份Pod，必须手动给所有Pod设置annotation，我给官方提交了一个[PR](https://github.com/duyanghao/velero-volume-controller)用于解决这个问题：
+对于Velero restic integration，由于v1.5版本之前不支持批量备份Pod，必须手动给所有Pod设置annotation，于是我给官方提交了一个[PR](https://github.com/duyanghao/velero-volume-controller)用于解决这个问题：
 
-![](/public/img/share-review/velero-volume-controller.png)
+![](/public/img/share_review/velero-volume-controller.png)
 
 虽然v1.5版本之后支持了[Opt-out approach](https://velero.io/docs/v1.5/restic/)做全量pod volume的备份操作，但是velero-volume-controller支持的细粒度范围控制我认为在短时间内依旧有用
 
@@ -382,8 +382,8 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 虽然Velero具备完善且强大的云原生备份还原功能，但是在某些场景下依然表现不够，比如：
 
-* 跨集群备份还原升级，从一个低版本的集群备份的数据需要还原到一个更高版本的集群中
-* velero都是对整个volume进行备份，某些情况下只需要对部分数据备份
+* 跨集群备份还原升级，从一个低版本集群备份的数据需要还原到一个更高版本的集群中
+* velero都是对整个volume进行备份，某些情况下只需要对volume的部分数据备份
 * 需要额外提供storage provider，加上自身组件和架构的复杂性，运维成本比较高
 
 因此，这里设计了第三种备份还原方案 - 基于应用层的备份还原方案：
@@ -393,15 +393,15 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 该方案要点如下：
 
 * 应用版本备份：通过版本控制(eg: git)完成集群应用版本的备份
-* 应用状态备份：通过应用的导出和导入接口完成应用最小数据集的备份和还原
+* 应用状态备份：通过应用的导出和导入接口完成集群应用最小数据集的备份和还原
 
-在这种方案中，要求各应用如需备份，则要满足如下规范：接口需要在版本管理上实现向后兼容(Backwards compatibility)，也即：后续版本应该是可以兼容前面版本的，使用前一个版本的导出数据可以导入到下一个版本
+在这种方案中，要求各应用如需备份，则要满足如下规范：应用需要提供导入导出接口，且接口需要在版本管理上实现向后兼容(Backwards compatibility)，也即：后续版本应该是可以兼容前面版本的，使用前一个版本的导出数据可以导入到下一个版本的集群中
 
-该方案设计的参考了如下准则：
+该方案的设计参考了如下准则：
 
 * 将困难留给自己，将方便留给使用者(Golang&K8s声明式API)
 * 专业的事交给专业的人负责
-* 备份的数据越小，不确定性越小
+* 备份的数据越小，不确定性越小，成功率越高
   
 优缺点如下：
 
