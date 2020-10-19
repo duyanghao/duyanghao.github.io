@@ -235,7 +235,7 @@ pod驱逐可以使服务自动恢复副本数量。node controller会在节点�
 - (kube-apiserver)default-unreachable-toleration-seconds：default 300
 ```
 
-![](/public/img/kubernetes_ha/toleration.png)
+![](/public/img/share-review/toleration.png)
 
 这里面有比较特殊的情况，例如：statefulset，daemonset以及static pod。我们逐一说明：
 
@@ -327,7 +327,7 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 #### 基于etcd的备份还原方案
 
-![](/public/img/kubernetes_ha/etcd-backup.png)
+![](/public/img/share-review/etcd-backup.png)
 
 方案要点如下：
 
@@ -345,7 +345,7 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 #### 基于Velero的备份还原方案(aka Heptio Ark)
 
-![](/public/img/kubernetes_ha/velero.png)
+![](/public/img/share-review/velero.png)
 
 本方案采用社区最流行的云原生备份还原工具[Velero](https://github.com/vmware-tanzu/velero)。用户通过velero客户端创建备份还原任务，velero controller会监听对应的CRDs，并执行相应的备份和还原操作，将pod以及volume的数据上传到storage provider中，或者从storage provider下载
 
@@ -374,7 +374,7 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 对于Velero restic integration，v1.5版本之前不支持批量备份Pod，必须手动给所有Pod设置annotation，我给官方提交了一个[PR](https://github.com/duyanghao/velero-volume-controller)用于解决这个问题：
 
-![](/public/img/kubernetes_ha/velero-volume-controller.png)
+![](/public/img/share-review/velero-volume-controller.png)
 
 虽然v1.5版本之后支持了[Opt-out approach](https://velero.io/docs/v1.5/restic/)做全量pod volume的备份操作，但是velero-volume-controller支持的细粒度范围控制我认为在短时间内依旧有用
 
