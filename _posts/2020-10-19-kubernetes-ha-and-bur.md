@@ -374,7 +374,7 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 对于Velero restic integration，由于v1.5版本之前不支持批量备份Pod，必须手动给所有Pod设置annotation，于是我给官方提交了一个[PR](https://github.com/duyanghao/velero-volume-controller)用于解决这个问题：
 
-![](/public/img/share_review/velero-volume-controller.png)
+![](/public/img/velero/velero-volume-controller.png) 
 
 虽然v1.5版本之后支持了[Opt-out approach](https://velero.io/docs/v1.5/restic/)做全量pod volume的备份操作，但是velero-volume-controller支持的细粒度范围控制我认为在短时间内依旧有用
 
