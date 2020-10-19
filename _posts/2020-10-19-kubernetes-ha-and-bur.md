@@ -301,9 +301,141 @@ I0811 04:07:25.148266       1 event.go:209] Event(v1.ObjectReference{Kind:"Pod",
 
 ## Kubernetes备份还原实战
 
+高可用可以一定程度上实现容灾，但是即便实现集群的高可用，我们依旧会需要备份还原功能，主要原因如下：
 
+* 误删除：运维人员不小心删除了某个namespace，某个pv
+* 服务器死机：因为物理原因服务器损坏，或者需要重装系统
+* 集群迁移：需要将一个集群的数据迁移到另一个集群，用于测试或者其它目的
 
-## 总结
+而对于Kubernetes的备份和还原，社区有一个16年创建的[issue](https://github.com/kubernetes/kubernetes/issues/24229)，从这个issue中我们可以看出Kubernetes官方并不打算提供Kubernetes备份还原方案以及工具，主要原因有两点：
+
+* 官方认为Kubernetes只提供平台，管理和运行应用(类似于操作系统)。不负责应用层面的备份还原
+* 基于Kubernetes集群的应用各不相同，无法(or 不太好)抽象统一备份方案
+
+因此我们必须自己实现该特性。首先我们先梳理一下集群需要备份的东西，如下：
+
+* 应用版本信息(Application Version)
+  * 应用对应的工作负载，例如：deploymenet，statefulset以及daemonset等等
+  * 应用需要使用的配置，例如：configmap，secret等等
+* 应用状态信息(Application State)
+  * 应用可以分为有状态应用和无状态应用
+  * 有状态应用需要备份状态数据，例如：database
+
+### 备份方案
+
+搞清楚了需要备份的东西后，接下来我将依次介绍Kubernetes集群备份还原三种方案：
+
+#### 基于etcd的备份还原方案
+
+![](/public/img/kubernetes_ha/etcd-backup.png)
+
+方案要点如下：
+
+* 应用版本备份：Kubernetes集群的所有应用版本信息都存放于etcd中，我们可以直接备份etcd来达到备份版本的目的
+* 应用状态备份：可以从应用层或者文件系统层备份应用状态，例如MariaDB采用mysqldump，MongoDB采用mongodump等
+
+优缺点如下：
+
+* Pros
+  * 原理简单直观
+  * etcd备份还原支持完善
+* Cons
+  * 备份etcd，包含集群属性。不支持跨集群还原
+  * etcd包含整个K8s集群元数据，潜在问题多(备份的数据越多，不确定性越大)
+
+#### 基于Velero的备份还原方案(aka Heptio Ark)
+
+![](/public/img/kubernetes_ha/velero.png)
+
+本方案采用社区最流行的云原生备份还原工具[Velero](https://github.com/vmware-tanzu/velero)。用户通过velero客户端创建备份还原任务，velero controller会监听对应的CRDs，并执行相应的备份和还原操作，将pod以及volume的数据上传到storage provider中，或者从storage provider下载
+
+方案要点如下：
+
+* 应用版本备份：直接备份Kubernetes工作负载以及配置(剔除节点等相关信息，还原时重新创建)
+* 应用状态备份：使用volume快照功能或者基于restic实现文件系统级别的备份和还原
+  
+这种方案优缺点如下：
+
+* Pros
+  * 云原生
+  * 跨集群备份还原
+  * 支持定期&可选范围备份
+  * 支持volumesnapshotter plugin&velero restic integration两种方式，支持几乎所有云原生场景。完善的插件机制
+  * 基于restic支持增量备份
+  * 兼容K8s CSI快照功能(under development)
+* Cons
+  * Velero restic大文件增量扫描时间长
+  * Velero restic不支持高可用
+  * Velero restic备份并发度&效率低
+  * Velero restore前需要先手动清除相应资源
+  * 无法支持跨集群版本升级
+  * 运维成本高
+  * 不够灵活
+
+对于Velero restic integration，v1.5版本之前不支持批量备份Pod，必须手动给所有Pod设置annotation，我给官方提交了一个[PR](https://github.com/duyanghao/velero-volume-controller)用于解决这个问题：
+
+![](/public/img/kubernetes_ha/velero-volume-controller.png)
+
+虽然v1.5版本之后支持了[Opt-out approach](https://velero.io/docs/v1.5/restic/)做全量pod volume的备份操作，但是velero-volume-controller支持的细粒度范围控制我认为在短时间内依旧有用
+
+#### 基于应用层的备份还原方案
+
+虽然Velero具备完善且强大的云原生备份还原功能，但是在某些场景下依然表现不够，比如：
+
+* 跨集群备份还原升级，从一个低版本的集群备份的数据需要还原到一个更高版本的集群中
+* velero都是对整个volume进行备份，某些情况下只需要对部分数据备份
+* 需要额外提供storage provider，加上自身组件和架构的复杂性，运维成本比较高
+
+因此，这里设计了第三种备份还原方案 - 基于应用层的备份还原方案：
+
+![](/public/img/share_review/application-bur.png)
+
+该方案要点如下：
+
+* 应用版本备份：通过版本控制(eg: git)完成集群应用版本的备份
+* 应用状态备份：通过应用的导出和导入接口完成应用最小数据集的备份和还原
+
+在这种方案中，要求各应用如需备份，则要满足如下规范：接口需要在版本管理上实现向后兼容(Backwards compatibility)，也即：后续版本应该是可以兼容前面版本的，使用前一个版本的导出数据可以导入到下一个版本
+
+该方案设计的参考了如下准则：
+
+* 将困难留给自己，将方便留给使用者(Golang&K8s声明式API)
+* 专业的事交给专业的人负责
+* 备份的数据越小，不确定性越小
+  
+优缺点如下：
+
+* Pros
+  * 备份最小数据集
+  * 支持跨集群版本升级
+  * 轻量，足够简单且无需storage providers
+  * 接口规范，运维成本低
+  * 灵活度高
+
+* Cons
+  * 定制备份还原接口，开发成本高
+  * 仅适用于管理集群
+  * 几乎全量备份
+
+### 实战总结
+
+我们按照集群的作用可以将集群分类如下：
+
+* 管理集群：负责管理客户集群，主要部署自研的管理组件
+  * 特点：组件可能经常升级，内部可以管控部署组件；应用数据量小
+* 业务集群：客户实际部署应用的集群
+  * 特点：无法管控客户部署的应用；应用数据量大
+
+针对这两种集群类型，对备份还原方案选型建议如下：
+
+* 管理集群：由于数据量小且组件可管控，建议优先选择基于应用层的备份还原方案
+* 客户集群：由于无法管控集群上部署的应用且数据量可能比较大。建议选择基于Velero的备份还原方案
+
+## 结束语
+
+对于Kubernetes高可用，本次分享先介绍了Kubernetes集群高可用的整体架构，之后基于该架构从网络，存储，以及应用层面分析了当节点宕机时可能会出现的问题以及对应的思考和解决方案，希望对Kubernetes高可用实践有所助益；另外，介绍了三种Kubernetes备份还原方案，其中基于应用层的备份还原方案和基于Velero的备份还原方案分别适用于管理集群和客户集群。
+
+最后，希望本次的分享对大家有所帮助，也希望未来多多交流。
 
 ## 参考
 
