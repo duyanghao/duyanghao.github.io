@@ -45,7 +45,7 @@ kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接L
 
 我们知道Kubernetes是通过节点心跳来保证节点健康状态的，每个node在kube-node-lease namespace下会对应一个Lease object，kubelet每隔node-status-update-frequency时间(默认10s)会更新对应node的Lease object，超过一定时间没有更新，node-controller会将节点标记为ConditionUnknown状态，并将该母机上的pod从相应service的后端列表中给剔除掉
 
-也就是说在node-monitor-grace-period(默认40s)时间内，iptables代理模式下的k8s service对应的ep不会剔除宕机母机上的pod，访问会出现间歇性问题(iptables轮询机制)；而IPVS模式具备健康检查能力，能够自动从IPVS规则中及时剔除故障的pod，具备更高的可用性
+也就是说在node-monitor-grace-period(默认40s)时间内，iptables&IPVS代理模式下的k8s service对应的ep不会剔除宕机母机上的pod，访问会出现间歇性问题(负载均衡轮询机制)；
 
 #### 解决方案
 
@@ -58,8 +58,6 @@ kube-apiserver前面顶一个LB；work节点kubelet以及kube-proxy组件对接L
 Amount of time which we allow running Node to be unresponsive before marking it unhealthy. Must be N times more than kubelet's nodeStatusUpdateFrequency, where N means number of retries allowed for kubelet to post node status. 
 - Currently nodeStatusUpdateRetry is constantly set to 5 in kubelet.go
 ```
-
-另外，可以将service代理模式从iptables切换成IPVS，同时给service设置健康检查机制及时剔除异常pod backend
 
 #### 问题2: TCP长连接超时
 
