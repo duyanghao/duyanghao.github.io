@@ -19,13 +19,74 @@ excerpt: 本文描述了sample-container-runtime初始版本的核心实现细�
 
 这里为了研究容器技术，我在参考了阿里云三位同学编写的《自己动手写Docker》这本书后，基于[mydocker](https://github.com/xianlubird/mydocker/tree/code-6.5)项目开始编写自己的容器运行态，希望能更加贴近容器本质，并计划补充mydocker没有涉及的OCI，CRI等部分以及一些高级命令
 
-## namespace隔离
+下面我将依次介绍[sample-container-runtime](https://github.com/duyanghao/sample-container-runtime)实现过程中的一些核心细节
+
+## 联合文件系统(UnionFS)
+
+在深入介绍namespace以及cgroups之前，我们先介绍联合文件系统。联合文件系统(UnionFS)用于将不同文件系统的文件和目录联合挂载到同一个文件系统。它使用branch把不同文件系统的文件和目录进行覆盖，形成一个单一一致的文件系统(对于同一路径，上层覆盖下层)视图，这些branch具备不同的读写权限，read-only or read-write；同时利用了写时拷贝(copy on write)技术将对只读层的写操作复制到了读写层。Cow是一种对可修改资源实现高效复制的资源管理技术，当一个资源是重复的且没有发生任何修改时，并不需要创建新的资源，该资源可被多个实例共享；只有当第一次写操作发生时，才会创建新的资源。通过CoW，可以显著减少未修改资源复制带来的消耗，但另一方面也增加了资源修改时的开销
+
+AUFS重写了早期的UnionFS，并引入了一些新的功能，增加了可靠性和性能，同时也是Docker选用的第一个storage driver。sample-container-runtime采用AUFS作为联合文件系统实现，将容器镜像的多层内容呈现为统一的rootfs(根文件系统)
+
+AUFS具备如下特性：
+
+* 上层覆盖下层
+* 新增文件存放在可写层
+* 写时拷贝(CoW)
+* 通过whiteout标识删除文件
+
+![](/public/img/sample-container-runtime/aufs.png)
+
+这里，我们将容器使用的镜像分为三个目录(参考Docker)，如下：
+
+* 只读目录存放容器基础镜像，不可修改(/var/lib/sample-container-runtime)
+* 读写目录存放容器运行时修改的内容(/var/lib/sample-container-runtime/writeLayer/containerXXX)
+* 挂载目录存放容器aufs联合挂载点(/var/lib/sample-container-runtime/mnt/containerXXX)
+
+```bash
+$ make build
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti --name container1 -v /root/tmp/from1:/to1 busybox sh
+# on node
+$ mount|grep aufs
+none on /var/lib/sample-container-runtime/mnt/container1 type aufs (rw,relatime,si=b7a28d49e64d71ad)
+$ cat /sys/fs/aufs/si_b7a28d49e64d71ad/*
+/var/lib/sample-container-runtime/writeLayer/container1=rw
+/var/lib/sample-container-runtime/busybox=ro
+64
+65
+/var/lib/sample-container-runtime/writeLayer/container1/.aufs.xino
+```
 
 
+## [namespace隔离](https://lwn.net/Articles/531114/)
+
+namespace提供了一种内核级别资源隔离的方法：
+
+>> The purpose of each namespace is to wrap a particular global system resource in an abstraction that makes it appear to the processes within the namespace that they have their own isolated instance of the global resource. 
+
+Linux目前提供了6种namespace类型，每种namespace用途各不相同：
+
+* Mount namespaces (CLONE_NEWNS, Linux 2.4.19) isolate the set of filesystem mount points seen by a group of processes
+* UTS namespaces (CLONE_NEWUTS, Linux 2.6.19) isolate two system identifiers—nodename and domainname—returned by the uname() system call
+* IPC namespaces (CLONE_NEWIPC, Linux 2.6.19) isolate certain interprocess communication (IPC) resources, namely, System V IPC objects and (since Linux 2.6.30) POSIX message queues.
+* PID namespaces (CLONE_NEWPID, Linux 2.6.24) isolate the process ID number space. In other words, processes in different PID namespaces can have the same PID. 
+* Network namespaces (CLONE_NEWNET, started in Linux 2.4.19 2.6.24 and largely completed by about Linux 2.6.29) provide isolation of the system resources associated with networking. Thus, each network namespace has its own network devices, IP addresses, IP routing tables, /proc/net directory, port numbers, and so on.
+* User namespaces (CLONE_NEWUSER, started in Linux 2.6.23 and completed in Linux 3.8) isolate the user and group ID number spaces. In other words, a process's user and group IDs can be different inside and outside a user namespace.
+
+下面我将依次介绍各个namespace的应用实现：
+
+### UTS namespaces
+
+### IPC namespaces
+
+### PID namespaces
+
+### User namespaces
+
+### Mount namespaces
+
+### Network namespaces
 
 ## cgroups控制
-
-## aufs
 
 ## 容器进阶
 
