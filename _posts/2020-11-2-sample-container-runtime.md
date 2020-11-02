@@ -188,9 +188,88 @@ Linux目前提供了6种namespace类型，每种namespace用途各不相同：
 * Network namespaces (CLONE_NEWNET, started in Linux 2.4.19 2.6.24 and largely completed by about Linux 2.6.29) provide isolation of the system resources associated with networking. Thus, each network namespace has its own network devices, IP addresses, IP routing tables, /proc/net directory, port numbers, and so on.
 * User namespaces (CLONE_NEWUSER, started in Linux 2.6.23 and completed in Linux 3.8) isolate the user and group ID number spaces. In other words, a process's user and group IDs can be different inside and outside a user namespace.
 
-下面我将依次介绍各个namespace的应用实现：
+下面我将依次介绍各个namespace的应用实现(由易到难)：
 
 ### UTS namespaces
+
+UTS namespace实现了nodename以及domainname的隔离，它允许我们给容器设置与母机不同的nodename以及domainname。通过给Cloneflags设置CLONE_NEWUTS来实现隔离，并在容器内部使用syscall.Sethostname()函数设置hostname，如下：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+	if tty {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		dirURL := fmt.Sprintf(DefaultInfoLocation, containerName)
+		if err := os.MkdirAll(dirURL, 0622); err != nil {
+			log.Errorf("NewParentProcess mkdir %s error %v", dirURL, err)
+			return nil, nil
+		}
+		stdLogFilePath := dirURL + ContainerLogFile
+		stdLogFile, err := os.Create(stdLogFilePath)
+		if err != nil {
+			log.Errorf("NewParentProcess create file %s error %v", stdLogFilePath, err)
+			return nil, nil
+		}
+		cmd.Stdout = stdLogFile
+	}
+
+	cmd.ExtraFiles = []*os.File{readPipe}
+	cmd.Env = append(os.Environ(), envSlice...)
+	NewWorkSpace(volume, imageName, containerName)
+	cmd.Dir = fmt.Sprintf(MntUrl, containerName)
+	return cmd, writePipe
+}
+
+...
+var InitCommand = cli.Command{
+	Name:  "init",
+	Usage: "Init container process run user's process in container. Do not call it outside",
+	Action: func(context *cli.Context) error {
+		log.Infof("init come on")
+		err := container.RunContainerInitProcess()
+		return err
+	},
+}
+
+func RunContainerInitProcess() error {
+	cmdArray := readUserCommand()
+	if cmdArray == nil || len(cmdArray) == 0 {
+		return fmt.Errorf("Run container get user command error, cmdArray is nil")
+	}
+
+	setUpMount()
+
+	path, err := exec.LookPath(cmdArray[0])
+	if err != nil {
+		log.Errorf("Exec loop path error %v", err)
+		return err
+	}
+	log.Infof("Find path %s", path)
+	if err := syscall.Exec(path, cmdArray[0:], os.Environ()); err != nil {
+		log.Errorf(err.Error())
+	}
+	return nil
+}
+```
 
 ### IPC namespaces
 
