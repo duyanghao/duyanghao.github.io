@@ -38,7 +38,7 @@ AUFS具备如下特性：
 
 这里，我们将容器使用的镜像分为三个目录(参考Docker)，如下：
 
-* 只读目录存放容器基础镜像，不可修改(/var/lib/sample-container-runtime)
+* 只读目录存放容器基础镜像，不可修改(/var/lib/sample-container-runtime/imageXXX)
 * 读写目录存放容器运行时修改的内容(/var/lib/sample-container-runtime/writeLayer/containerXXX)
 * 挂载目录存放容器aufs联合挂载点(/var/lib/sample-container-runtime/mnt/containerXXX)
 
@@ -54,8 +54,124 @@ $ cat /sys/fs/aufs/si_b7a28d49e64d71ad/*
 64
 65
 /var/lib/sample-container-runtime/writeLayer/container1/.aufs.xino
+# container1
+/ # mount
+none on / type aufs (rw,relatime,si=b7a28d49e87289ad)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /dev type tmpfs (rw,nosuid,mode=755)
+/ # echo "hello, world" > tmpfile
+/ # ls
+bin      dev      etc      home     proc     root     sys      tmp      tmpfile  usr      var
+# switch to node
+$ ls -al /var/lib/sample-container-runtime/writeLayer/container1/
+drwxr-xr-x 5 root root 4096 Nov  2 19:52 .
+drwxr-xr-x 5 root root 4096 Nov  2 19:52 ..
+-r--r--r-- 1 root root    0 Nov  2 19:52 .wh..wh.aufs
+drwx------ 2 root root 4096 Nov  2 19:52 .wh..wh.orph
+drwx------ 2 root root 4096 Nov  2 19:52 .wh..wh.plnk
+drwx------ 2 root root 4096 Nov  2 19:52 root
+-rw-r--r-- 1 root root   13 Nov  2 19:52 tmpfile
+# container1
+/ # echo "testline" >> tmp/work_dir_onion/install_exec.sh
+# switch to node
+$ ls -al /var/lib/sample-container-runtime/writeLayer/container1/
+total 36
+drwxr-xr-x 8 root root 4096 Nov  2 20:18 .
+drwxr-xr-x 5 root root 4096 Nov  2 19:52 ..
+-r--r--r-- 1 root root    0 Nov  2 19:52 .wh..wh.aufs
+drwx------ 2 root root 4096 Nov  2 19:52 .wh..wh.orph
+drwx------ 2 root root 4096 Nov  2 19:52 .wh..wh.plnk
+drwxr-xr-x 2 root root 4096 Nov  2 20:03 bin
+drwx------ 2 root root 4096 Nov  2 19:52 root
+drwxrwxrwt 3 root root 4096 Nov  2 20:18 tmp
+-rw-r--r-- 1 root root   13 Nov  2 19:52 tmpfile
+drwxr-xr-x 3 root root 4096 Nov  2 20:01 usr
+# ls -al /var/lib/sample-container-runtime/writeLayer/container1/
+tmp
+`-- work_dir_onion
+    `-- install_exec.sh
 ```
 
+从运行可以看到添加文件到aufs mnt，文件实际添加到可写层；另外，修改可读层的文件会复制该文件到可写层，同时只读层该文件并没有修改
+
+这里我们看一下实现：
+
+```go
+// Create a AUFS filesystem as container root workspace
+func NewWorkSpace(volume, imageName, containerName string) {
+	CreateReadOnlyLayer(imageName)
+	CreateWriteLayer(containerName)
+	CreateMountPoint(containerName, imageName)
+	if volume != "" {
+		volumeURLs := strings.Split(volume, ":")
+		length := len(volumeURLs)
+		if length == 2 && volumeURLs[0] != "" && volumeURLs[1] != "" {
+			MountVolume(volumeURLs, containerName)
+			log.Infof("NewWorkSpace volume urls %q", volumeURLs)
+		} else {
+			log.Infof("Volume parameter input is not correct.")
+		}
+	}
+}
+
+// Decompression tar image
+func CreateReadOnlyLayer(imageName string) error {
+	unTarFolderUrl := RootUrl + "/" + imageName + "/"
+	imageUrl := RootUrl + "/" + imageName + ".tar"
+	exist, err := PathExists(unTarFolderUrl)
+	if err != nil {
+		log.Infof("Fail to judge whether dir %s exists. %v", unTarFolderUrl, err)
+		return err
+	}
+	if !exist {
+		if err := os.MkdirAll(unTarFolderUrl, 0622); err != nil {
+			log.Errorf("Mkdir %s error %v", unTarFolderUrl, err)
+			return err
+		}
+
+		if _, err := exec.Command("tar", "-xvf", imageUrl, "-C", unTarFolderUrl).CombinedOutput(); err != nil {
+			log.Errorf("Untar dir %s error %v", unTarFolderUrl, err)
+			return err
+		}
+	}
+	return nil
+}
+
+// Create read-write layer
+func CreateWriteLayer(containerName string) {
+	writeURL := fmt.Sprintf(WriteLayerUrl, containerName)
+	if err := os.MkdirAll(writeURL, 0777); err != nil {
+		log.Infof("Mkdir write layer dir %s error. %v", writeURL, err)
+	}
+}
+
+// Create aufs mount point
+func CreateMountPoint(containerName, imageName string) error {
+	mntUrl := fmt.Sprintf(MntUrl, containerName)
+	if err := os.MkdirAll(mntUrl, 0777); err != nil {
+		log.Errorf("Mkdir mountpoint dir %s error. %v", mntUrl, err)
+		return err
+	}
+	tmpWriteLayer := fmt.Sprintf(WriteLayerUrl, containerName)
+	tmpImageLocation := RootUrl + "/" + imageName
+	mntURL := fmt.Sprintf(MntUrl, containerName)
+	dirs := "dirs=" + tmpWriteLayer + ":" + tmpImageLocation
+	_, err := exec.Command("mount", "-t", "aufs", "-o", dirs, "none", mntURL).CombinedOutput()
+	if err != nil {
+		log.Errorf("Run command for creating mount point failed %v", err)
+		return err
+	}
+	return nil
+}
+```
+
+核心命令如下：
+
+```bash
+mount -t aufs -o dirs=/var/lib/sample-container-runtime/writeLayer/container1:/var/lib/sample-container-runtime/busybox none . /var/lib/sample-container-runtime/mnt/container1
+```
+
+上述的aufs联合挂载点作为容器rootfs，这里利用了mount namespace，会在接下来的namespace章节-Mount namespaces介绍
 
 ## [namespace隔离](https://lwn.net/Articles/531114/)
 
