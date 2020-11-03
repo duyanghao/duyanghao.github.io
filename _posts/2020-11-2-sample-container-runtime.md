@@ -490,9 +490,32 @@ Mount namespace用于隔离进程文件系统的挂载点视图，在不同names
 * ensures current working directory is set to new root(os.Chdir("/"))
 * umounts and removes the old root
 
-核心代码如下：
+另外，需要给Cloneflags设置syscall.CLONE_NEWNS实现mnt namespace隔离。核心代码如下：
 
 ```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+  
+	...
+	return cmd, writePipe
+}
+
+...
 func RunContainerInitProcess() error {
     ...
 	setUpMount()
@@ -551,7 +574,7 @@ func pivotRoot(root string) error {
 }
 ```
 
-通过上述步骤，我们可以成功做到将联合文件系统挂载成为容器的rootfs，如下：
+通过上述步骤，我们可以成功做到将容器的rootfs设置为aufs联合文件系统，如下：
 
 ```bash
 # inside of container
@@ -570,7 +593,74 @@ $ cat /sys/fs/aufs/si_b7a28d49e33081ad/*
 
 ### PID namespaces
 
+PID namespace用于隔离进程的PID，它会导致容器进程只能看到属于该namespace空间下的进程，同时不同PID namespace下的进程可以拥有相同的PID。当我们通过上述mnt namespace将联合文件系统作为容器的根文件系统后，由于没有/proc目录，我们通过ps命令看到的会是空返回(linux通过/proc目录存储操作系统所有进程的信息)。因此我们必须在运行容器指定进程前设置proc文件系统
 
+具体来说我们需要给Cloneflags设置syscall.CLONE_NEWPID实现PID namespace隔离，同时在容器中设置proc文件系统，核心代码如下：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+  ...
+	return cmd, writePipe
+}
+
+/**
+Init 挂载点
+*/
+func setUpMount() {
+	pwd, err := os.Getwd()
+	if err != nil {
+		log.Errorf("Get current location error %v", err)
+		return
+	}
+	log.Infof("Current location is %s", pwd)
+	pivotRoot(pwd)
+
+	// mount proc
+	defaultMountFlags := syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV
+	syscall.Mount("proc", "/proc", "proc", uintptr(defaultMountFlags), "")
+
+	syscall.Mount("tmpfs", "/dev", "tmpfs", syscall.MS_NOSUID|syscall.MS_STRICTATIME, "mode=755")
+}
+```
+
+运行容器如下：
+
+```bash
+JJMhAjPfRh # ps -ef
+PID   USER     TIME  COMMAND
+    1 root      0:00 sh
+   11 root      0:00 ps -ef
+JJMhAjPfRh # mount
+none on / type aufs (rw,relatime,si=b7a28d49e33081ad)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+```
+
+可以看到这里多了proc文件系统，同时ps命令可以正常输出，且显示为容器进程PID namespace可以看到的进程(PID=1为容器进程)
+
+另外在容器外，我们可以发现该进程实际对应PID为`19879`，如下：
+
+```bash
+xxx     14180 14177  0 Nov02 pts/0    00:00:00 -bash
+xxx     19872 14180  0 12:45 pts/0    00:00:00 ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti --name container1 busybox sh
+xxx     19879 19872  0 12:45 pts/0    00:00:00 sh
+```
 
 ### Network namespaces
 
