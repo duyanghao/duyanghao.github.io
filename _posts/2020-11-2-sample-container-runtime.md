@@ -476,26 +476,18 @@ Mount namespace用于隔离进程文件系统的挂载点视图，在不同names
 通常来说我们需要在容器中按照如下步骤进行挂载：
 
 * remounts current root filesystem with MS_PRIVATE
-
 * Bind mount newRoot to itself - this is a slight hack needed to satisfy the pivot_root requirement that newRoot and putold must not be on the same filesystem as the current root
-
 * creates temporary directory, where the old root will be stored
-
 * [pivots root (swaps the mount at `/` with another (the `rootfs-dir` in this case).](https://lwn.net/Articles/689856/)
-
   pivot_root() changes the root directory and the current working directory of each process or thread in the same mount namespace to new_root if they point to the old root directory. (See also NOTES.) On the other hand, pivot_root() does not change the caller's current working directory (unless it is on the old root directory), and thus it should be followed by a chdir("/") call.
-
   The following restrictions apply:
-
   - new_root and put_old must be directories.
   - new_root and put_old must not be on the same mount as the current root.
   - put_old must be at or underneath new_root; that is, adding some nonnegative number of "/.." prefixes to the pathname pointed to by put_old must yield the same directory as new_root.
   - new_root must be a path to a mount point, but can't be "/". A path that is not already a mount point can be converted into one by bind mounting the path onto itself.
   - The propagation type of the parent mount of new_root and the parent mount of the current root directory must not be MS_SHARED; similarly, if put_old is an existing mount point, its propagation type must not be MS_SHARED. These restrictions ensure that pivot_root() never propagates any changes to another mount namespace.
   - The current root directory must be a mount point.
-
 * ensures current working directory is set to new root(os.Chdir("/"))
-
 * umounts and removes the old root
 
 核心代码如下：
