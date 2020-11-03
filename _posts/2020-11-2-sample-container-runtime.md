@@ -392,13 +392,88 @@ ipc:[4026531839]
 
 可以看到母机和容器中的IPC资源不同了，两者处于不同的ipc namespace
 
+## [USER namespaces](https://medium.com/@teddyking/namespaces-in-go-user-a54ef9476f2a)
+
+USER namespace用于隔离用户ID以及组ID资源，它允许我们设置进程在容器和母机中的用户和组ID映射，也就是说一个进程在容器中可以具有root最高权限，但是在母机上该进程实际上并不具备root用户权限，而只是一个普通用户
+
+![](/public/img/sample-container-runtime/user_namespace.png)
+
+每个进程通过如下文件路径存储映射关系(inside a USER namespace to a corresponding set of user IDs and group IDs outside the namespace)：
+
+* /proc/PID/uid_map：uid的映射文件
+* /proc/PID/gid_map：gid的映射文件
+
+这里，我们通过给[syscall.SysProcAttr](https://golang.org/pkg/syscall/#SysProcAttr)分别设置UidMappings(uid映射)以及GidMappings(gid映射)来实现容器进程USER namespace隔离：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUSER,
+		UidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      os.Getuid(),
+				Size:        1,
+			},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      os.Getgid(),
+				Size:        1,
+			},
+		},
+	}
+
+	if tty {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		dirURL := fmt.Sprintf(DefaultInfoLocation, containerName)
+		if err := os.MkdirAll(dirURL, 0622); err != nil {
+			log.Errorf("NewParentProcess mkdir %s error %v", dirURL, err)
+			return nil, nil
+		}
+		stdLogFilePath := dirURL + ContainerLogFile
+		stdLogFile, err := os.Create(stdLogFilePath)
+		if err != nil {
+			log.Errorf("NewParentProcess create file %s error %v", stdLogFilePath, err)
+			return nil, nil
+		}
+		cmd.Stdout = stdLogFile
+	}
+
+	cmd.ExtraFiles = []*os.File{readPipe}
+	cmd.Env = append(os.Environ(), envSlice...)
+	NewWorkSpace(volume, imageName, containerName)
+	cmd.Dir = fmt.Sprintf(MntUrl, containerName)
+	return cmd, writePipe
+}
+```
+
+这里将容器init进程(1号进程)的uid和gid分别设置为母机当前的用户ID和组ID
+
+## Mount namespaces
+
+
+
 ### PID namespaces
 
 
-
-### User namespaces
-
-### Mount namespaces
 
 ### Network namespaces
 
@@ -408,7 +483,7 @@ ipc:[4026531839]
 
 ## 容器网络
 
-## Roadmap
+## RoadMap
 
 ## Conclusion
 
