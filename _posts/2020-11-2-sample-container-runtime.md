@@ -1164,7 +1164,22 @@ func logContainer(containerName string) {
 }
 ```
 
+执行如下：
+
+```bash
+# ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -name container4 busybox top  
+{"level":"info","msg":"createTty false","time":"2020-11-03T18:01:39+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-03T18:01:39+08:00"}
+# ./build/pkg/cmd/sample-container-runtime/sample-container-runtime logs container4
+Mem: 264484K used, 237248K free, 1256K shrd, 19616K buff, 115258K cached
+CPU:  0.0% usr  0.0% sys  0.0% nic 99.8% idle  0.0% io  0.0% irq  0.0% sirq
+Load average: 0.05 0.05 0.01 1/303 9
+  PID  PPID USER     STAT   VSZ %VSZ CPU %CPU COMMAND
+```
+
 ### sample-container-runtime exec
+
+
 
 ### sample-container-runtime stop
 
