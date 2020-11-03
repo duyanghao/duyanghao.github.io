@@ -1630,9 +1630,212 @@ empty
 
 ### sample-container-runtime commit
 
+commit命令用于将容器打包成镜像，实现如下：
 
+```go
+var CommitCommand = cli.Command{
+	Name:  "commit",
+	Usage: "commit a container into image",
+	Action: func(context *cli.Context) error {
+		if len(context.Args()) < 2 {
+			return fmt.Errorf("Missing container name and image name")
+		}
+		containerName := context.Args().Get(0)
+		imageName := context.Args().Get(1)
+		commitContainer(containerName, imageName)
+		return nil
+	},
+}
+
+func commitContainer(containerName, imageName string) {
+	mntURL := fmt.Sprintf(container.MntUrl, containerName)
+	mntURL += "/"
+
+	imageTar := container.RootUrl + "/" + imageName + ".tar"
+
+	if _, err := exec.Command("tar", "-czf", imageTar, "-C", mntURL, ".").CombinedOutput(); err != nil {
+		log.Errorf("Tar folder %s error %v", mntURL, err)
+	}
+}
+```
+
+可以看到实现非常简单，就是将容器对应的aufs文件系统(/var/lib/sample-container-runtime/mnt/containerName)进行打包，命名为指定imageName.tar，并放置在/var/lib/sample-container-runtime目录，如下：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+2845654752   container4   5571        running     top         2020-11-03 18:01:39
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime commit container4 test
+$ ls /var/lib/sample-container-runtime/
+busybox  busybox.tar  mnt  test.tar  writeLayer
+```
 
 ### sample-container-runtime env
+
+env命令用于实现容器指定环境变量运行，实现也很简单，如下：
+
+```go
+var RunCommand = cli.Command{
+	Name:  "run",
+	Usage: `Create a container with namespace and cgroups limit ie: sample-container-runtime run -ti [image] [command]`,
+	Flags: []cli.Flag{
+		cli.BoolFlag{
+			Name:  "ti",
+			Usage: "enable tty",
+		},
+		cli.BoolFlag{
+			Name:  "d",
+			Usage: "detach container",
+		},
+		cli.StringFlag{
+			Name:  "m",
+			Usage: "memory limit",
+		},
+		cli.StringFlag{
+			Name:  "cpushare",
+			Usage: "cpushare limit",
+		},
+		cli.StringFlag{
+			Name:  "cpuset",
+			Usage: "cpuset limit",
+		},
+		cli.StringFlag{
+			Name:  "name",
+			Usage: "container name",
+		},
+		cli.StringFlag{
+			Name:  "v",
+			Usage: "volume",
+		},
+		cli.StringSliceFlag{
+			Name:  "e",
+			Usage: "set environment",
+		},
+		cli.StringFlag{
+			Name:  "net",
+			Usage: "container network",
+		},
+		cli.StringSliceFlag{
+			Name:  "p",
+			Usage: "port mapping",
+		},
+	},
+	Action: func(context *cli.Context) error {
+		...
+		envSlice := context.StringSlice("e")
+		portmapping := context.StringSlice("p")
+
+		Run(createTty, cmdArray, resConf, containerName, volume, imageName, envSlice, network, portmapping)
+		return nil
+	},
+}
+
+...
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+	if tty {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		dirURL := fmt.Sprintf(DefaultInfoLocation, containerName)
+		if err := os.MkdirAll(dirURL, 0622); err != nil {
+			log.Errorf("NewParentProcess mkdir %s error %v", dirURL, err)
+			return nil, nil
+		}
+		stdLogFilePath := dirURL + ContainerLogFile
+		stdLogFile, err := os.Create(stdLogFilePath)
+		if err != nil {
+			log.Errorf("NewParentProcess create file %s error %v", stdLogFilePath, err)
+			return nil, nil
+		}
+		cmd.Stdout = stdLogFile
+	}
+
+	cmd.ExtraFiles = []*os.File{readPipe}
+	cmd.Env = append(os.Environ(), envSlice...)
+	NewWorkSpace(volume, imageName, containerName)
+	cmd.Dir = fmt.Sprintf(MntUrl, containerName)
+	return cmd, writePipe
+}
+```
+
+通过解析`-e`参数获取容器环境变量，并由`cmd.Env = append(os.Environ(), envSlice...)`实现环境变量的传递
+
+而对于exec命令来说，由于sample-container-runtime exec是单独的进程，会继承母机的环境变量，这样就会导致exec执行的shell命令会缺失容器添加的环境变量。为了解决这个问题，这里通过读取容器PID的`/proc/PID/environ`文件，并添加到cmd.Env中进行补充：
+
+```go
+func ExecContainer(containerName string, comArray []string) {
+	pid, err := GetContainerPidByName(containerName)
+	if err != nil {
+		log.Errorf("Exec container getContainerPidByName %s error %v", containerName, err)
+		return
+	}
+
+	cmdStr := strings.Join(comArray, " ")
+	log.Infof("container pid %s", pid)
+	log.Infof("command %s", cmdStr)
+
+	cmd := exec.Command("/proc/self/exe", "exec")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	os.Setenv(ENV_EXEC_PID, pid)
+	os.Setenv(ENV_EXEC_CMD, cmdStr)
+	containerEnvs := getEnvsByPid(pid)
+	cmd.Env = append(os.Environ(), containerEnvs...)
+
+	if err := cmd.Run(); err != nil {
+		log.Errorf("Exec container %s error %v", containerName, err)
+	}
+}
+
+func getEnvsByPid(pid string) []string {
+	path := fmt.Sprintf("/proc/%s/environ", pid)
+	contentBytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Errorf("Read file %s error %v", path, err)
+		return nil
+	}
+	//env split by \u0000
+	envs := strings.Split(string(contentBytes), "\u0000")
+	return envs
+}
+```
+
+如下是运行结果：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -m 100m -cpuset 1 -cpushare 512 -name container6 -e bird=l23 -e luck=bird busybox top
+{"level":"info","msg":"createTty false","time":"2020-11-03T21:15:27+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-03T21:15:27+08:00"}
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+1024448633   container6   4560        running     top         2020-11-03 21:15:27
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime exec container6 sh
+{"level":"info","msg":"container pid 4560","time":"2020-11-03T21:16:18+08:00"}
+{"level":"info","msg":"command sh","time":"2020-11-03T21:16:18+08:00"}
+CHSeESDLAp # env|grep bird
+luck=bird
+bird=l23
+```
 
 ## 容器网络
 
