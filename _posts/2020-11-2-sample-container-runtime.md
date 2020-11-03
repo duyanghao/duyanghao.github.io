@@ -664,6 +664,40 @@ xxx     19879 19872  0 12:45 pts/0    00:00:00 sh
 
 ### Network namespaces
 
+network namespace用于隔离进程网络资源，每个network namespace都有属于它自己的网络设备，IP地址，IP路由表，端口信息，以及/proc/net目录等。通过network namespace可以使每个容器拥有自己独立的(虚拟的)网络设备，而且容器内的应用可以绑定到自己的端口，并且不会产生冲突。通过一定的网络方法就可以实现容器与容器，容器与宿主机，以及容器与容器跨主机通信，而容器网络将会在后续章节进行介绍，这里不展开
+
+下面我们将展示network namespace隔离的最直观现象，如下：
+
+```bash
+JJMhAjPfRh # ifconfig
+```
+
+可以看到容器中执行ifconfig命令显示为空，表明容器中没有任何网络设备；而宿主机是存在网络设备的，从这一点可以看出网络命令空间确实隔离了，而实现这一现象的操作只需要给Cloneflags设置syscall.CLONE_NEWNET即可：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+  ...
+	return cmd, writePipe
+}
+```
+
 ## cgroups控制
 
 ## 容器进阶
