@@ -194,7 +194,7 @@ Linux目前提供了6种namespace类型，每种namespace用途各不相同：
 
 ### UTS namespaces
 
-UTS namespace实现了hostname以及domain name的隔离，它允许我们给容器设置与母机不同的hostname以及domainname。通过给Cloneflags设置CLONE_NEWUTS来实现隔离，并在容器内部使用syscall.Sethostname()函数设置hostname，如下：
+UTS namespace实现了进程hostname以及domain name的隔离，它允许我们给容器设置与母机不同的hostname以及domainname。通过给Cloneflags设置CLONE_NEWUTS来实现隔离，并在容器内部使用syscall.Sethostname()函数设置hostname，如下：
 
 ```go
 func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
@@ -300,7 +300,7 @@ VM-xxx-centos
 
 ### IPC namespaces
 
-IPC用于隔离某些IPC(进程间通信)资源，具体来说就是：System V IPC objects and (since Linux 2.6.30) POSIX message queues。其中System V IPC objects又包括：Shared Memory(共享内存), Semaphore(信号量) and Message Queues(消息队列)
+IPC用于隔离进程某些IPC(进程间通信)资源，具体来说就是：System V IPC objects and (since Linux 2.6.30) POSIX message queues。其中System V IPC objects又包括：Shared Memory(共享内存), Semaphore(信号量) and Message Queues(消息队列)
 
 这里我们通过给Cloneflags设置CLONE_NEWIPC来实现隔离，如下：
 
@@ -394,7 +394,7 @@ ipc:[4026531839]
 
 ## [USER namespaces](https://medium.com/@teddyking/namespaces-in-go-user-a54ef9476f2a)
 
-USER namespace用于隔离用户ID以及组ID资源，它允许我们设置进程在容器和母机中的用户和组ID映射，也就是说一个进程在容器中可以具有root最高权限，但是在母机上该进程实际上并不具备root用户权限，而只是一个普通用户
+USER namespace用于隔离进程用户ID以及组ID资源，它允许我们设置进程在容器和母机中的用户和组ID映射，也就是说一个进程在容器中可以具有root最高权限，但是在母机上该进程实际上并不具备root用户权限，而只具备普通用户权限
 
 ![](/public/img/sample-container-runtime/user_namespace.png)
 
@@ -465,11 +465,116 @@ func NewParentProcess(tty bool, containerName, volume, imageName string, envSlic
 }
 ```
 
-这里将容器init进程(1号进程)的uid和gid分别设置为母机当前的用户ID和组ID
+这里将容器init进程(1号进程)的uid和gid设置为0(root)，且分别映射为母机当前的用户ID和组ID(非root)
 
 ## Mount namespaces
 
+Mount namespace用于隔离进程文件系统的挂载点视图，在不同namespace的进程中，看到的文件系统层次是不一样的，同时，在 Mount Namespace 中调用 mount()和 umount()仅仅只会影响当前Namespace内的文件系统，而对全局的文件系统是没有影响的（Mount Namespace是Linux第一个实现的Namespace类型，因此，它的系统调用参数是NEWNS ( New Namespace的缩写））
 
+这里我将主要探讨如何实现使用mount namespace实现容器挂载联合文件系统作为它的rootfs，这也是上述讲解aufs时遗留的一个问题
+
+通常来说我们需要在容器中按照如下步骤进行挂载：
+
+* remounts current root filesystem with MS_PRIVATE
+
+* Bind mount newRoot to itself - this is a slight hack needed to satisfy the pivot_root requirement that newRoot and putold must not be on the same filesystem as the current root
+
+* creates temporary directory, where the old root will be stored
+
+* [pivots root (swaps the mount at `/` with another (the `rootfs-dir` in this case).](https://lwn.net/Articles/689856/)
+
+  pivot_root() changes the root directory and the current working directory of each process or thread in the same mount namespace to new_root if they point to the old root directory. (See also NOTES.) On the other hand, pivot_root() does not change the caller's current working directory (unless it is on the old root directory), and thus it should be followed by a chdir("/") call.
+
+  The following restrictions apply:
+
+  - new_root and put_old must be directories.
+  - new_root and put_old must not be on the same mount as the current root.
+  - put_old must be at or underneath new_root; that is, adding some nonnegative number of "/.." prefixes to the pathname pointed to by put_old must yield the same directory as new_root.
+  - new_root must be a path to a mount point, but can't be "/". A path that is not already a mount point can be converted into one by bind mounting the path onto itself.
+  - The propagation type of the parent mount of new_root and the parent mount of the current root directory must not be MS_SHARED; similarly, if put_old is an existing mount point, its propagation type must not be MS_SHARED. These restrictions ensure that pivot_root() never propagates any changes to another mount namespace.
+  - The current root directory must be a mount point.
+
+* ensures current working directory is set to new root(os.Chdir("/"))
+
+* umounts and removes the old root
+
+核心代码如下：
+
+```go
+func RunContainerInitProcess() error {
+    ...
+	setUpMount()
+    ...
+	return nil
+}
+
+/**
+Init 挂载点
+*/
+func setUpMount() {
+	pwd, err := os.Getwd()
+	if err != nil {
+		log.Errorf("Get current location error %v", err)
+		return
+	}
+	log.Infof("Current location is %s", pwd)
+	pivotRoot(pwd)
+    ...
+}
+
+func pivotRoot(root string) error {
+	// Remounts current root filesystem with MS_PRIVATE
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("syscall Mount current root failure: %v", err)
+	}
+	/**
+	  为了使当前root的老 root 和新 root 不在同一个文件系统下，我们把root重新mount了一次
+	  bind mount是把相同的内容换了一个挂载点的挂载方法
+	*/
+	if err := syscall.Mount(root, root, "bind", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("Mount rootfs to itself error: %v", err)
+	}
+	// 创建 rootfs/.pivot_root 存储 old_root
+	pivotDir := filepath.Join(root, ".pivot_root")
+	if err := os.Mkdir(pivotDir, 0777); err != nil {
+		return err
+	}
+	// pivot_root 到新的rootfs, 现在老的 old_root 是挂载在rootfs/.pivot_root
+	// 挂载点现在依然可以在mount命令中看到
+	if err := syscall.PivotRoot(root, pivotDir); err != nil {
+		return fmt.Errorf("pivot_root %v", err)
+	}
+	// 修改当前的工作目录到根目录
+	if err := syscall.Chdir("/"); err != nil {
+		return fmt.Errorf("chdir / %v", err)
+	}
+
+	pivotDir = filepath.Join("/", ".pivot_root")
+	// umount rootfs/.pivot_root
+	if err := syscall.Unmount(pivotDir, syscall.MNT_DETACH); err != nil {
+		return fmt.Errorf("unmount pivot_root dir %v", err)
+	}
+	// 删除临时文件夹
+	return os.Remove(pivotDir)
+}
+```
+
+通过上述步骤，我们可以成功做到将联合文件系统挂载成为容器的rootfs，如下：
+
+```bash
+# inside of container
+JJMhAjPfRh # mount
+none on / type aufs (rw,relatime,si=b7a28d49e33081ad)
+JJMhAjPfRh # ls
+bin   dev   etc   home  proc  root  sys   tmp   usr   var
+# outside of container
+$ cat /sys/fs/aufs/si_b7a28d49e33081ad/*
+/var/lib/sample-container-runtime/writeLayer/container1=rw
+/var/lib/sample-container-runtime/busybox=ro
+64
+65
+/var/lib/sample-container-runtime/writeLayer/container1/.aufs.xino
+```
 
 ### PID namespaces
 
