@@ -46,6 +46,8 @@ AUFS具备如下特性：
 $ make build
 $ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti --name container1 -v /root/tmp/from1:/to1 busybox sh
 # on node
+$ ls /var/lib/sample-container-runtime/  
+busybox  busybox.tar  mnt  writeLayer
 $ mount|grep aufs
 none on /var/lib/sample-container-runtime/mnt/container1 type aufs (rw,relatime,si=b7a28d49e64d71ad)
 $ cat /sys/fs/aufs/si_b7a28d49e64d71ad/*
@@ -182,7 +184,7 @@ namespace提供了一种内核级别资源隔离的方法：
 Linux目前提供了6种namespace类型，每种namespace用途各不相同：
 
 * Mount namespaces (CLONE_NEWNS, Linux 2.4.19) isolate the set of filesystem mount points seen by a group of processes
-* UTS namespaces (CLONE_NEWUTS, Linux 2.6.19) isolate two system identifiers—nodename and domainname—returned by the uname() system call
+* UTS namespaces (CLONE_NEWUTS, Linux 2.6.19) UTS namespaces provide isolation of two system identifiers: the hostname and the NIS domain name.
 * IPC namespaces (CLONE_NEWIPC, Linux 2.6.19) isolate certain interprocess communication (IPC) resources, namely, System V IPC objects and (since Linux 2.6.30) POSIX message queues.
 * PID namespaces (CLONE_NEWPID, Linux 2.6.24) isolate the process ID number space. In other words, processes in different PID namespaces can have the same PID. 
 * Network namespaces (CLONE_NEWNET, started in Linux 2.4.19 2.6.24 and largely completed by about Linux 2.6.29) provide isolation of the system resources associated with networking. Thus, each network namespace has its own network devices, IP addresses, IP routing tables, /proc/net directory, port numbers, and so on.
@@ -192,7 +194,7 @@ Linux目前提供了6种namespace类型，每种namespace用途各不相同：
 
 ### UTS namespaces
 
-UTS namespace实现了nodename以及domainname的隔离，它允许我们给容器设置与母机不同的nodename以及domainname。通过给Cloneflags设置CLONE_NEWUTS来实现隔离，并在容器内部使用syscall.Sethostname()函数设置hostname，如下：
+UTS namespace实现了hostname以及domain name的隔离，它允许我们给容器设置与母机不同的hostname以及domainname。通过给Cloneflags设置CLONE_NEWUTS来实现隔离，并在容器内部使用syscall.Sethostname()函数设置hostname，如下：
 
 ```go
 func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
@@ -256,6 +258,12 @@ func RunContainerInitProcess() error {
 		return fmt.Errorf("Run container get user command error, cmdArray is nil")
 	}
 
+	hostname := util.RandomSeq(10)
+
+	if err := syscall.Sethostname([]byte(hostname)); err != nil {
+		log.Errorf("set hostname error: %v", err)
+		return err
+	}
 	setUpMount()
 
 	path, err := exec.LookPath(cmdArray[0])
@@ -264,11 +272,28 @@ func RunContainerInitProcess() error {
 		return err
 	}
 	log.Infof("Find path %s", path)
-	if err := syscall.Exec(path, cmdArray[0:], os.Environ()); err != nil {
+	if err := syscall.Exec(path, cmdArray[0:], append(os.Environ(), fmt.Sprintf("PS1=%s # ", hostname))); err != nil {
 		log.Errorf(err.Error())
 	}
 	return nil
 }
+```
+
+运行如下：
+
+```bash
+# on container
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti --name container1 busybox sh
+{"level":"info","msg":"createTty true","time":"2020-11-03T11:20:56+08:00"}
+{"level":"info","msg":"init come on","time":"2020-11-03T11:20:56+08:00"}
+{"level":"info","msg":"command all is sh","time":"2020-11-03T11:20:56+08:00"}
+{"level":"info","msg":"Current location is /var/lib/sample-container-runtime/mnt/container1","time":"2020-11-03T11:20:56+08:00"}
+{"level":"info","msg":"Find path /bin/sh","time":"2020-11-03T11:20:56+08:00"}
+MbNtIFraOd # hostname
+MbNtIFraOd
+# on node
+$ hostname
+VM-xxx-centos
 ```
 
 ### IPC namespaces
