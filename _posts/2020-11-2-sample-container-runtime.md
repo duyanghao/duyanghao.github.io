@@ -595,7 +595,7 @@ $ cat /sys/fs/aufs/si_b7a28d49e33081ad/*
 
 PID namespace用于隔离进程的PID，它会导致容器进程只能看到属于该namespace空间下的进程，同时不同PID namespace下的进程可以拥有相同的PID。当我们通过上述mnt namespace将联合文件系统作为容器的根文件系统后，由于没有/proc目录，我们通过ps命令看到的会是空返回(linux通过/proc目录存储操作系统所有进程的信息)。因此我们必须在运行容器指定进程前设置proc文件系统
 
-具体来说我们需要给Cloneflags设置syscall.CLONE_NEWPID实现PID namespace隔离，同时在容器中设置proc文件系统，核心代码如下：
+具体来说我们需要给Cloneflags设置syscall.CLONE_NEWPID实现PID namespace隔离，同时在容器中设置proc文件系统(mount -t proc proc /proc)，核心代码如下：
 
 ```go
 func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
@@ -699,6 +699,188 @@ func NewParentProcess(tty bool, containerName, volume, imageName string, envSlic
 ```
 
 ## cgroups控制
+
+cgroups提供了对一组进程以及子进程资源限制，控制以及统计的能力，包括：CPU，内存，I/O，网络等。通过cgroups，我们可以实现对容器资源的限制和统计，下面介绍cgroups的几个组件：
+
+* cgroup是对进程分组管理的一种机制， 一个 cgroup包含一组进程，井可以在这个cgroup上增加Linux subsystem的各种参数配置，将一组进程和一组subsystem的系统参数关联起来
+* subsystem是一组资源控制的模块，包括：blkio(块设备(比如硬盘)输入输出的访问控制)，cpu(进程CPU调度策略)，cpuacct(进程CPU占用)，cpuset(在多核机器上设置 cgroup 中进程可以使用的 CPU 和内存)，memory(进程内存占用)，net_cls(用于将 cgroup 中进程产生的网络包分类)。每个subsystem会关联到定义了相应限制的cgroup上，并对该cgroup中的进程做资源控制
+* hierarchy的功能是把一组cgroup串成一个树状的结构，一个这样的树便是一个hierarchy，通过这种树状结构，cgroups可以做到继承
+
+cgroups是通过这三个组件之间相互协作实现的，它们之间的关系可以归纳如下：
+
+* 一个hierarchy可以附加多个subsystem
+* 一个subsystem只能附加到一个hierarchy上面 
+* 一个进程可以作为多个cgroup的成员，但是这些cgroup必须在不同的hierarchy中
+* 一个进程fork出子进程时，子进程是和父进程在同一个cgroup中的，也可以根据需要将其移动到其它cgroup中
+
+Kernel为了使对cgroups的配置更直观，是通过一个虚拟的树状文件系统配置cgroups的，通过层级的目录虚拟出cgroup树。系统默认已经为每个subsystem创建了一个hierarchy，如下：
+
+```bash
+cgroup on /sys/fs/cgroup/systemd type cgroup (rw,nosuid,nodev,noexec,relatime,xattr,release_agent=/usr/lib/systemd/systemd-cgroups-agent,name=systemd)
+cgroup on /sys/fs/cgroup/devices type cgroup (rw,nosuid,nodev,noexec,relatime,devices)
+cgroup on /sys/fs/cgroup/freezer type cgroup (rw,nosuid,nodev,noexec,relatime,freezer)
+cgroup on /sys/fs/cgroup/pids type cgroup (rw,nosuid,nodev,noexec,relatime,pids)
+cgroup on /sys/fs/cgroup/cpu,cpuacct type cgroup (rw,nosuid,nodev,noexec,relatime,cpu,cpuacct)
+cgroup on /sys/fs/cgroup/net_cls,net_prio type cgroup (rw,nosuid,nodev,noexec,relatime,net_cls,net_prio)
+cgroup on /sys/fs/cgroup/perf_event type cgroup (rw,nosuid,nodev,noexec,relatime,perf_event)
+cgroup on /sys/fs/cgroup/blkio type cgroup (rw,nosuid,nodev,noexec,relatime,blkio)
+cgroup on /sys/fs/cgroup/cpuset type cgroup (rw,nosuid,nodev,noexec,relatime,cpuset)
+cgroup on /sys/fs/cgroup/hugetlb type cgroup (rw,nosuid,nodev,noexec,relatime,hugetlb)
+cgroup on /sys/fs/cgroup/memory type cgroup (rw,nosuid,nodev,noexec,relatime,memory)
+```
+
+可以看到，/sys/fs/cgroup/memory目录便是挂在了memory subsystem的hierarchy上
+
+接下来将详细讲解`sample-container-runtime`对cgroups的使用细节：
+
+```go
+type CgroupManager struct {
+	// cgroup在hierarchy中的路径 相当于创建的cgroup目录相对于root cgroup目录的路径
+	Path string
+	// 资源配置
+	Resource *subsystems.ResourceConfig
+}
+```
+
+这里首先封装了一层CgroupManager，表示对cgroups的管理，同时设置了相应的操作接口：
+
+```go
+// 将进程pid加入到这个cgroup中
+func (c *CgroupManager) Apply(pid int) error {
+	for _, subSysIns := range subsystems.SubsystemsIns {
+		subSysIns.Apply(c.Path, pid)
+	}
+	return nil
+}
+
+// 设置cgroup资源限制
+func (c *CgroupManager) Set(res *subsystems.ResourceConfig) error {
+	for _, subSysIns := range subsystems.SubsystemsIns {
+		subSysIns.Set(c.Path, res)
+	}
+	return nil
+}
+
+//释放cgroup
+func (c *CgroupManager) Destroy() error {
+	for _, subSysIns := range subsystems.SubsystemsIns {
+		if err := subSysIns.Remove(c.Path); err != nil {
+			log.Warnf("remove cgroup fail %v", err)
+		}
+	}
+	return nil
+}
+```
+
+上述接口含义如下：
+
+* Apply：调用subsystem.Apply接口将进程PID添加到相应的cgroup tasks文件中(such as /sys/fs/cgroup/memory/ContainerID/tasks)
+* Set：调用subsystem.Set接口设置cgroup资源配额(such as /sys/fs/cgroup/memory/ContainerID/memory.limit_in_bytes)
+* Destory：调用subsystem.Remove接口删除cgroup(such as /sys/fs/cgroup/memory/ContainerID)
+
+下面展开介绍一下subsystem接口(目前只实现了三种subsystem cgroup)：
+
+```go
+package subsystems
+
+type ResourceConfig struct {
+	MemoryLimit string
+	CpuShare    string
+	CpuSet      string
+}
+
+type Subsystem interface {
+	Name() string
+	Set(path string, res *ResourceConfig) error
+	Apply(path string, pid int) error
+	Remove(path string) error
+}
+
+var (
+	SubsystemsIns = []Subsystem{
+		&CpusetSubSystem{},
+		&MemorySubSystem{},
+		&CpuSubSystem{},
+	}
+)
+```
+
+这里举例说明memory subsystem实现：
+
+```go
+func (s *MemorySubSystem) Set(cgroupPath string, res *ResourceConfig) error {
+	if subsysCgroupPath, err := GetCgroupPath(s.Name(), cgroupPath, true); err == nil {
+		if res.MemoryLimit != "" {
+			if err := ioutil.WriteFile(path.Join(subsysCgroupPath, "memory.limit_in_bytes"), []byte(res.MemoryLimit), 0644); err != nil {
+				return fmt.Errorf("set cgroup memory fail %v", err)
+			}
+		}
+		return nil
+	} else {
+		return err
+	}
+
+}
+
+func (s *MemorySubSystem) Remove(cgroupPath string) error {
+	if subsysCgroupPath, err := GetCgroupPath(s.Name(), cgroupPath, false); err == nil {
+		return os.RemoveAll(subsysCgroupPath)
+	} else {
+		return err
+	}
+}
+
+func (s *MemorySubSystem) Apply(cgroupPath string, pid int) error {
+	if subsysCgroupPath, err := GetCgroupPath(s.Name(), cgroupPath, false); err == nil {
+		if err := ioutil.WriteFile(path.Join(subsysCgroupPath, "tasks"), []byte(strconv.Itoa(pid)), 0644); err != nil {
+			return fmt.Errorf("set cgroup proc fail %v", err)
+		}
+		return nil
+	} else {
+		return fmt.Errorf("get cgroup %s error: %v", cgroupPath, err)
+	}
+}
+
+func (s *MemorySubSystem) Name() string {
+	return "memory"
+}
+```
+
+可以看到MemorySubSystem.Set将res.MemoryLimit限制写入到了`/sys/fs/cgroup/memory/ContainerID/memory.limit_in_bytes`文件，对ContainerID命名的cgroup进行了内存限制；同时Apply函数将进程PID写入到`/sys/fs/cgroup/memory/ContainerID/tasks`文件中，使得容器进程被添加到该cgroup中；最后Remove函数删除`/sys/fs/cgroup/memory/ContainerID`目录，也即删除该cgroup。其它subsystem原理依次类推
+
+运行程序如下：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti -m 100m -cpuset 1 -cpushare 512 -name container1 busybox sh
+{"level":"info","msg":"createTty true","time":"2020-11-03T16:34:16+08:00"}
+{"level":"info","msg":"init come on","time":"2020-11-03T16:34:16+08:00"}
+{"level":"info","msg":"command all is sh","time":"2020-11-03T16:34:16+08:00"}
+{"level":"info","msg":"Current location is /var/lib/sample-container-runtime/mnt/container1","time":"2020-11-03T16:34:16+08:00"}
+{"level":"info","msg":"Find path /bin/sh","time":"2020-11-03T16:34:16+08:00"}
+IkIucFXIzM # 
+
+# outside of container
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+6123430628   container1   23965       running     sh          2020-11-03 16:34:16
+$ ls /sys/fs/cgroup/memory/6123430628/
+cgroup.clone_children       memory.kmem.max_usage_in_bytes      memory.limit_in_bytes            memory.numa_stat            memory.use_hierarchy
+cgroup.event_control        memory.kmem.slabinfo                memory.max_usage_in_bytes        memory.oom_control          notify_on_release
+cgroup.procs                memory.kmem.tcp.failcnt             memory.memsw.failcnt             memory.pressure_level       tasks
+memory.failcnt              memory.kmem.tcp.limit_in_bytes      memory.memsw.limit_in_bytes      memory.soft_limit_in_bytes
+memory.force_empty          memory.kmem.tcp.max_usage_in_bytes  memory.memsw.max_usage_in_bytes  memory.stat
+memory.kmem.failcnt         memory.kmem.tcp.usage_in_bytes      memory.memsw.usage_in_bytes      memory.swappiness
+memory.kmem.limit_in_bytes  memory.kmem.usage_in_bytes          memory.move_charge_at_immigrate  memory.usage_in_bytes
+$ cat /sys/fs/cgroup/memory/6123430628/tasks 
+23965
+$ cat /sys/fs/cgroup/memory/6123430628/memory.limit_in_bytes 
+104857600
+$ ps -ef|grep 23958
+xxx     23958 14180  0 16:34 pts/0    00:00:00 ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti -m 100m -cpuset 1 -cpushare 512 -name container1 busybox sh
+xxx     23965 23958  0 16:34 pts/0    00:00:00 sh
+```
+
+通过将容器init进程PID添加到对应subsystem的cgroup.tasks文件中，我们就可以实现对容器资源的限制
 
 ## 容器进阶
 
