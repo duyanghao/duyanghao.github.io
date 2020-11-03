@@ -175,7 +175,7 @@ mount -t aufs -o dirs=/var/lib/sample-container-runtime/writeLayer/container1:/v
 
 上述的aufs联合挂载点作为容器rootfs，这里利用了mount namespace，会在接下来的namespace章节-Mount namespaces介绍
 
-通过上述操作，我们实现了容器重复利用只读层，并构建可写层运行容器的方法，而这实际上也是目前Docker采用的原理
+通过上述操作，我们实现了容器重复利用只读层，并构建可写层运行容器的方法，而这实际上也是目前Docker采用的原理。通过联合文件系统可以使Docker镜像最大程度利用磁盘空间，同时也提高了Docker容器启动的效率
 
 ## [namespace隔离](https://lwn.net/Articles/531114/)
 
