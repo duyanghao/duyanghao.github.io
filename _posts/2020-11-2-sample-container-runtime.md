@@ -882,7 +882,7 @@ xxx     23958 14180  0 16:34 pts/0    00:00:00 ./build/pkg/cmd/sample-container-
 xxx     23965 23958  0 16:34 pts/0    00:00:00 sh
 ```
 
-通过将容器init进程PID添加到对应subsystem的cgroup.tasks文件中，我们就可以实现对容器资源的限制
+通过将容器init进程PID添加到对应subsystem的cgroup.tasks文件中，我们就可以实现对容器资源的限制(一个进程fork出子进程时，子进程是和父进程在同一个cgroup中)
 
 ## 容器进阶
 
