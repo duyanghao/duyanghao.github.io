@@ -1526,7 +1526,111 @@ xxx     26634  8812  0 20:12 pts/1    00:00:00 grep --color=auto 26338
 
 ### sample-container-runtime rm
 
+rm命令用于删除已经停止的容器，删除内容包括：容器存储信息，容器日志，容器aufs文件系统以及容器cgroup。步骤如下：
+
+* 根据容器名查找容器信息(getContainerInfoByName)
+* 判断容器是否处于停止状态(containerInfo.Status)
+* 删除容器云数据存储目录(容器信息+日志)
+* 删除容器对应的aufs文件系统(包括读写层，不包括只读层)
+* 删除容器对应的各subsystem cgroup
+
+核心代码如下：
+
+```go
+var RemoveCommand = cli.Command{
+	Name:  "rm",
+	Usage: "remove unused containers",
+	Action: func(context *cli.Context) error {
+		if len(context.Args()) < 1 {
+			return fmt.Errorf("Missing container name")
+		}
+		containerName := context.Args().Get(0)
+		removeContainer(containerName)
+		return nil
+	},
+}
+
+func removeContainer(containerName string) {
+	containerInfo, err := getContainerInfoByName(containerName)
+	if err != nil {
+		log.Errorf("Get container %s info error %v", containerName, err)
+		return
+	}
+	if containerInfo.Status != container.STOP {
+		log.Errorf("Couldn't remove running container")
+		return
+	}
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	if err := os.RemoveAll(dirURL); err != nil {
+		log.Errorf("Remove file %s error %v", dirURL, err)
+		return
+	}
+	container.DeleteWorkSpace(containerInfo.Volume, containerName)
+	// clear cgroup
+	cgroupManager := cgroups.NewCgroupManager(containerInfo.Id)
+	cgroupManager.Destroy()
+}
+
+// Delete the AUFS filesystem while container exit
+func DeleteWorkSpace(volume, containerName string) {
+	if volume != "" {
+		volumeURLs := strings.Split(volume, ":")
+		length := len(volumeURLs)
+		if length == 2 && volumeURLs[0] != "" && volumeURLs[1] != "" {
+			DeleteMountPointWithVolume(volumeURLs, containerName)
+		} else {
+			DeleteMountPoint(containerName)
+		}
+	} else {
+		DeleteMountPoint(containerName)
+	}
+	DeleteWriteLayer(containerName)
+}
+
+func DeleteMountPoint(containerName string) error {
+	mntURL := fmt.Sprintf(MntUrl, containerName)
+	_, err := exec.Command("umount", mntURL).CombinedOutput()
+	if err != nil {
+		log.Errorf("Unmount %s error %v", mntURL, err)
+		return err
+	}
+	if err := os.RemoveAll(mntURL); err != nil {
+		log.Errorf("Remove mountpoint dir %s error %v", mntURL, err)
+		return err
+	}
+	return nil
+}
+
+func DeleteWriteLayer(containerName string) {
+	writeURL := fmt.Sprintf(WriteLayerUrl, containerName)
+	if err := os.RemoveAll(writeURL); err != nil {
+		log.Infof("Remove writeLayer dir %s error %v", writeURL, err)
+	}
+}
+```
+
+运行如下：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -m 100m -cpuset 1 -cpushare 512 -name container6 busybox top
+{"level":"info","msg":"createTty false","time":"2020-11-03T20:38:00+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-03T20:38:00+08:00"}
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+9373732263   container6   31067       running     top         2020-11-03 20:38:00
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime stop container6
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+9373732263   container6               stopped     top         2020-11-03 20:38:00
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime rm container6
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+empty
+```
+
 ### sample-container-runtime commit
+
+
 
 ### sample-container-runtime env
 
