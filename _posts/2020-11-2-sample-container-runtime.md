@@ -475,7 +475,7 @@ Mount namespace用于隔离进程文件系统的挂载点视图，在不同names
 
 通常来说我们需要在容器中按照如下步骤进行挂载：
 
-* remounts current root filesystem with MS_PRIVATE
+* remounts current root filesystem with MS_PRIVATE(This mount point is private; it does not have a peer group. Mount and unmount events do not propagate into or out of this mount point.)
 * Bind mount newRoot to itself - this is a slight hack needed to satisfy the pivot_root requirement that newRoot and putold must not be on the same filesystem as the current root
 * creates temporary directory, where the old root will be stored
 * [pivots root (swaps the mount at `/` with another (the `rootfs-dir` in this case).](https://lwn.net/Articles/689856/)
