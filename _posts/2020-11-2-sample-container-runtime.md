@@ -296,9 +296,105 @@ $ hostname
 VM-xxx-centos
 ```
 
+可以看到容器中hostname为MbNtIFraOd，而母机为VM-xxx-centos
+
 ### IPC namespaces
 
+IPC用于隔离某些IPC(进程间通信)资源，具体来说就是：System V IPC objects and (since Linux 2.6.30) POSIX message queues。其中System V IPC objects又包括：Shared Memory(共享内存), Semaphore(信号量) and Message Queues(消息队列)
+
+这里我们通过给Cloneflags设置CLONE_NEWIPC来实现隔离，如下：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+	if tty {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		dirURL := fmt.Sprintf(DefaultInfoLocation, containerName)
+		if err := os.MkdirAll(dirURL, 0622); err != nil {
+			log.Errorf("NewParentProcess mkdir %s error %v", dirURL, err)
+			return nil, nil
+		}
+		stdLogFilePath := dirURL + ContainerLogFile
+		stdLogFile, err := os.Create(stdLogFilePath)
+		if err != nil {
+			log.Errorf("NewParentProcess create file %s error %v", stdLogFilePath, err)
+			return nil, nil
+		}
+		cmd.Stdout = stdLogFile
+	}
+
+	cmd.ExtraFiles = []*os.File{readPipe}
+	cmd.Env = append(os.Environ(), envSlice...)
+	NewWorkSpace(volume, imageName, containerName)
+	cmd.Dir = fmt.Sprintf(MntUrl, containerName)
+	return cmd, writePipe
+}
+```
+
+验证如下：
+
+```bash
+# inside of container
+gyZQRmcHMr # ipcs -a
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
+
+------ Semaphore Arrays --------
+key        semid      owner      perms      nsems     
+
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages
+gyZQRmcHMr # readlink /proc/$$/ns/ipc
+ipc:[4026532515]
+
+# outside of container
+$ ipcmk -Q
+Message queue id: 0
+$ ipcs -a
+
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages    
+0x11df483b 0          root       644        0            0                    
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
+0x00005feb 0          root       666        12000      3                                            
+...                     
+
+------ Semaphore Arrays --------
+key        semid      owner      perms      nsems     
+0x00008708 0          root       666        1                
+...
+
+$ readlink /proc/$$/ns/ipc
+ipc:[4026531839]
+```
+
+可以看到母机和容器中的IPC资源不同了，两者处于不同的ipc namespace
+
 ### PID namespaces
+
+
 
 ### User namespaces
 
