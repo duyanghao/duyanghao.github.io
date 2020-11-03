@@ -1424,6 +1424,104 @@ ipc:[4026532321]
 
 ### sample-container-runtime stop
 
+stop命令用于停止容器执行，具体来说就是向容器主进程(init process)发送SIGKILL信号，实现流程如下：
+
+* 获取容器PID
+* 对该PID发送kill信号(SIGKILL)
+* 修改容器相关信息(STATUS&PID)
+* 将信息重新写入相应文件(/var/run/sample-container-runtime/containerName/config.json)
+
+核心代码如下：
+
+```go
+var StopCommand = cli.Command{
+	Name:  "stop",
+	Usage: "stop a container",
+	Action: func(context *cli.Context) error {
+		if len(context.Args()) < 1 {
+			return fmt.Errorf("Missing container name")
+		}
+		containerName := context.Args().Get(0)
+		stopContainer(containerName)
+		return nil
+	},
+}
+
+func stopContainer(containerName string) {
+	pid, err := GetContainerPidByName(containerName)
+	if err != nil {
+		log.Errorf("Get contaienr pid by name %s error %v", containerName, err)
+		return
+	}
+	pidInt, err := strconv.Atoi(pid)
+	if err != nil {
+		log.Errorf("Conver pid from string to int error %v", err)
+		return
+	}
+	if err := syscall.Kill(pidInt, syscall.SIGKILL); err != nil {
+		log.Errorf("Stop container %s error %v", containerName, err)
+		return
+	}
+	containerInfo, err := getContainerInfoByName(containerName)
+	if err != nil {
+		log.Errorf("Get container %s info error %v", containerName, err)
+		return
+	}
+	containerInfo.Status = container.STOP
+	containerInfo.Pid = " "
+	newContentBytes, err := json.Marshal(containerInfo)
+	if err != nil {
+		log.Errorf("Json marshal %s error %v", containerName, err)
+		return
+	}
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	configFilePath := dirURL + container.ConfigName
+	if err := ioutil.WriteFile(configFilePath, newContentBytes, 0622); err != nil {
+		log.Errorf("Write file %s error", configFilePath, err)
+	}
+}
+
+func getContainerInfoByName(containerName string) (*container.ContainerInfo, error) {
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	configFilePath := dirURL + container.ConfigName
+	contentBytes, err := ioutil.ReadFile(configFilePath)
+	if err != nil {
+		log.Errorf("Read file %s error %v", configFilePath, err)
+		return nil, err
+	}
+	var containerInfo container.ContainerInfo
+	if err := json.Unmarshal(contentBytes, &containerInfo); err != nil {
+		log.Errorf("GetContainerInfoByName unmarshal error %v", err)
+		return nil, err
+	}
+	return &containerInfo, nil
+}
+```
+
+运行如下：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -name container5 busybox top
+{"level":"info","msg":"createTty false","time":"2020-11-03T20:10:40+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-03T20:10:40+08:00"}
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+2845654752   container4   5571        running     top         2020-11-03 18:01:39
+7060111258   container5   26338       running     top         2020-11-03 20:10:40
+$ ps -ef|grep 26338
+xxx     26338     1  0 20:10 pts/0    00:00:00 top
+xxx     26451  8812  0 20:11 pts/1    00:00:00 grep --color=auto 26338
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime stop container5
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+2845654752   container4   5571        running     top         2020-11-03 18:01:39
+7060111258   container5               stopped     top         2020-11-03 20:10:40
+# ps -ef|grep 26338
+xxx     26634  8812  0 20:12 pts/1    00:00:00 grep --color=auto 26338
+```
+
+**注意：如果容器主进程(init process)存在子进程，那么子进程也会一起被kill掉**
+
 ### sample-container-runtime start
 
 ### sample-container-runtime rm
@@ -1434,7 +1532,7 @@ ipc:[4026532321]
 
 ## 容器网络
 
-## RoadMap
+## Roadmap
 
 ## Conclusion
 
