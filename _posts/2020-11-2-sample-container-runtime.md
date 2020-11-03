@@ -1179,7 +1179,248 @@ Load average: 0.05 0.05 0.01 1/303 9
 
 ### sample-container-runtime exec
 
+sample-container-runtime exec可以进入到容器命名空间中。由于对Mount Namespace来说， 一个具有多线程的进程是无法使用 setns调用进入到对应的命名空间的，而Go每启动一个程序就会进入多线程状态，因此无法简简单单地在 Go 里面直接调用系统调用，使当前的进程进入对应的Mount Namespace
 
+这里我们采用借助Cgo来实现这个功能。Cgo允许Go程序以一种特殊的方式调用C函数与标准库，Cgo会将C 源码文件和Go文件整合成一个包，如下是使用C根据指定PID进入其对应的namespace的函数：
+
+```c
+package nsenter
+
+/*
+#include <errno.h>
+#include <sched.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+
+__attribute__((constructor)) void enter_namespace(void) {
+	char *scr_pid;
+	scr_pid = getenv("scr_pid");
+	if (scr_pid) {
+		//fprintf(stdout, "got scr_pid=%s\n", scr_pid);
+	} else {
+		//fprintf(stdout, "missing scr_pid env skip nsenter");
+		return;
+	}
+	char *scr_cmd;
+	scr_cmd = getenv("scr_cmd");
+	if (scr_cmd) {
+		//fprintf(stdout, "got scr_cmd=%s\n", scr_cmd);
+	} else {
+		//fprintf(stdout, "missing scr_cmd env skip nsenter");
+		return;
+	}
+	int i;
+	char nspath[1024];
+	char *namespaces[] = { "ipc", "uts", "net", "pid", "mnt" };
+
+	for (i=0; i<5; i++) {
+		sprintf(nspath, "/proc/%s/ns/%s", scr_pid, namespaces[i]);
+		int fd = open(nspath, O_RDONLY);
+
+		if (setns(fd, 0) == -1) {
+			//fprintf(stderr, "setns on %s namespace failed: %s\n", namespaces[i], strerror(errno));
+		} else {
+			//fprintf(stdout, "setns on %s namespace succeeded\n", namespaces[i]);
+		}
+		close(fd);
+	}
+	int res = system(scr_cmd);
+	exit(0);
+	return;
+}
+*/
+import "C"
+```
+
+可以看到，这里使用了构造函数，然后导入了C模块，一旦这个包(nsenter)被引入，它就会在所有Go运行的环境启动之前执行，这段程序执行完毕后，Go程序才会执行。这样就避免了Go多线程导致的无法进入mnt Namespace的问题，同时通过在enter_namespace中设置开关避免了sample-container-runtime run启动容器时也会执行该函数，如下：
+
+```c
+__attribute__((constructor)) void enter_namespace(void) {
+	char *scr_pid;
+	scr_pid = getenv("scr_pid");
+	if (scr_pid) {
+		//fprintf(stdout, "got scr_pid=%s\n", scr_pid);
+	} else {
+		//fprintf(stdout, "missing scr_pid env skip nsenter");
+		return;
+	}
+	char *scr_cmd;
+	scr_cmd = getenv("scr_cmd");
+	if (scr_cmd) {
+		//fprintf(stdout, "got scr_cmd=%s\n", scr_cmd);
+	} else {
+		//fprintf(stdout, "missing scr_cmd env skip nsenter");
+		return;
+	}
+  ...
+}    
+```
+
+setns可以让进程加入已经存在的namespace：int setns(int fd, int nstype)；
+
+* fd参数是一个文件描述符，可通打开namespace文件获取
+* 调用这个函数的进程就会被加入到fd所代表的namesapce
+
+通过enter_namespace可以实现成功进入指定PID的5种namespace(ipc, uts, network, pid, mount)，接下来我们再来看一下sample-container-runtime是如何使用enter_namespace的：
+
+```go
+var ExecCommand = cli.Command{
+	Name:  "exec",
+	Usage: "exec a command into container",
+	Action: func(context *cli.Context) error {
+		//This is for callback
+		if os.Getenv(ENV_EXEC_PID) != "" {
+			log.Infof("pid callback pid %s", os.Getgid())
+			return nil
+		}
+
+		if len(context.Args()) < 2 {
+			return fmt.Errorf("Missing container name or command")
+		}
+		containerName := context.Args().Get(0)
+		var commandArray []string
+		for _, arg := range context.Args().Tail() {
+			commandArray = append(commandArray, arg)
+		}
+		ExecContainer(containerName, commandArray)
+		return nil
+	},
+}
+
+const ENV_EXEC_PID = "scr_pid"
+const ENV_EXEC_CMD = "scr_cmd"
+
+func ExecContainer(containerName string, comArray []string) {
+	pid, err := GetContainerPidByName(containerName)
+	if err != nil {
+		log.Errorf("Exec container getContainerPidByName %s error %v", containerName, err)
+		return
+	}
+
+	cmdStr := strings.Join(comArray, " ")
+	log.Infof("container pid %s", pid)
+	log.Infof("command %s", cmdStr)
+
+	cmd := exec.Command("/proc/self/exe", "exec")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	os.Setenv(ENV_EXEC_PID, pid)
+	os.Setenv(ENV_EXEC_CMD, cmdStr)
+	containerEnvs := getEnvsByPid(pid)
+	cmd.Env = append(os.Environ(), containerEnvs...)
+
+	if err := cmd.Run(); err != nil {
+		log.Errorf("Exec container %s error %v", containerName, err)
+	}
+}
+
+func GetContainerPidByName(containerName string) (string, error) {
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	configFilePath := dirURL + container.ConfigName
+	contentBytes, err := ioutil.ReadFile(configFilePath)
+	if err != nil {
+		return "", err
+	}
+	var containerInfo container.ContainerInfo
+	if err := json.Unmarshal(contentBytes, &containerInfo); err != nil {
+		return "", err
+	}
+	return containerInfo.Pid, nil
+}
+
+func getEnvsByPid(pid string) []string {
+	path := fmt.Sprintf("/proc/%s/environ", pid)
+	contentBytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Errorf("Read file %s error %v", path, err)
+		return nil
+	}
+	//env split by \u0000
+	envs := strings.Split(string(contentBytes), "\u0000")
+	return envs
+}
+```
+
+通过如上代码，我们知道当执行exec命令时，会执行ExecContainer函数，而ExecContainer会先设置子进程的ENV_EXEC_PID(容器PID)以及ENV_EXEC_CMD(exec执行的shell命令)环境变量，之后clone出子进程(/proc/self/exe)，并一直等待
+
+子进程(/proc/self/exe)会先执行enter_namespace函数，进入到容器namespace，然后执行system函数，该函数会fork出一个子进程(孙)，并在该子进程(孙)中执行shell命令(**The system() library function uses fork(2) to create a child process that executes the shell command specified in command using execl(3) as follows: execl("/bin/sh", "sh", "-c", command, (char *) NULL);**)，在子进程(孙)执行完shell命令后，子进程(/proc/self/exe)会回到ExecCommand，并由于ENV_EXEC_PID设置并不为空而直接退出，如下：
+
+```go
+var ExecCommand = cli.Command{
+	Name:  "exec",
+	Usage: "exec a command into container",
+	Action: func(context *cli.Context) error {
+		//This is for callback
+		if os.Getenv(ENV_EXEC_PID) != "" {
+			log.Infof("pid callback pid %s", os.Getgid())
+			return nil
+		}
+
+		if len(context.Args()) < 2 {
+			return fmt.Errorf("Missing container name or command")
+		}
+		containerName := context.Args().Get(0)
+		var commandArray []string
+		for _, arg := range context.Args().Tail() {
+			commandArray = append(commandArray, arg)
+		}
+		ExecContainer(containerName, commandArray)
+		return nil
+	},
+}
+```
+
+通过如上的调用流程，很巧妙地解决了在不影响启动容器功能前提下，如何在Go运行的环境启动之前进入到容器命名空间的问题，如下是执行结果：
+
+```bash
+# outside of container
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+2845654752   container4   5571        running     top         2020-11-03 18:01:39
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime exec container4 sh
+{"level":"info","msg":"container pid 5571","time":"2020-11-03T19:05:53+08:00"}
+{"level":"info","msg":"command sh","time":"2020-11-03T19:05:53+08:00"}
+OHdBBchsCx # ps -ef
+PID   USER     TIME  COMMAND
+    1 root      0:00 top
+   12 root      0:00 sh
+   13 root      0:00 ps -ef
+$ pstree 8812
+bash---sample-containe-+-exe---sh
+                       `-5*[{sample-containe}]   
+# ps -ef|grep 8812
+xxx      8812 14177  0 11:33 pts/1    00:00:00 -bash
+xxx     15555  8812  0 19:05 pts/1    00:00:00 ./build/pkg/cmd/sample-container-runtime/sample-container-runtime exec container4 sh
+xxx     15561 15555  0 19:05 pts/1    00:00:00 /proc/self/exe exec
+xxx     15562 15561  0 19:05 pts/1    00:00:00 sh
+```
+
+可以看到调用链：bash---sample-containe-+-exe---sh。在容器中看到了top以及sh进程，说明exec成功进入到了容器命名空间
+
+这里有一个小疑问：为什么子进程(proc/self/exec)没有显示出来？
+
+答案就是：**CLONE_NEWPID 和其他 namespace 不同，把进程加入到PID namespace 并不会修改该进程的 PID namespace，而只修改它所有子进程的 PID namespace**
+
+```bash
+# PID namespace diffs between proc/self/exec and sh
+$ readlink /proc/15555/ns/pid
+pid:[4026531836]
+$ readlink /proc/15561/ns/pid 
+pid:[4026531836]
+$ readlink /proc/15562/ns/pid
+pid:[4026532322]
+# other namespaces are same as below
+$ readlink /proc/15555/ns/ipc
+ipc:[4026531839]
+$ readlink /proc/15561/ns/ipc
+ipc:[4026532321]
+$ readlink /proc/15562/ns/ipc
+ipc:[4026532321]
+```
 
 ### sample-container-runtime stop
 
