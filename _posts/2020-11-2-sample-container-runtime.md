@@ -886,7 +886,295 @@ xxx     23965 23958  0 16:34 pts/0    00:00:00 sh
 
 ## 容器进阶
 
+在介绍完容器的底层核心技术(aufs，namespace隔离以及cgroups资源控制)之后，我们将进行更加高阶的操作，构建实际可用的容器命令行工具。包括：ps(容器列表)，logs(日志查看)，exec(进入容器命名空间)，stop(停止容器)，start(启动容器)，rm(删除容器)，commit(通过容器创建镜像)，env(容器指定环境变量运行)等
 
+### sample-container-runtime ps
+
+sample-container-runtime ps用于查看容器信息列表。这里我们使用/var/run/sample-container-runtime/containerName/config.json文件存储每个容器相关信息，包括：容器ID，容器名称，容器PID(init process PID)，容器运行状态，容器启动命令，容器创建时间等。如下：
+
+```bash
+# outside of container
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           NAME         PID         STATUS      COMMAND     CREATED
+6123430628   container1   23965       running     sh          2020-11-03 16:34:16
+$ cat /var/run/sample-container-runtime/container1/config.json 
+{"pid":"23965","id":"6123430628","name":"container1","command":"sh","createTime":"2020-11-03 16:34:16","status":"running","volume":"","portmapping":null}
+```
+
+核心代码实现参考：
+
+```go
+type ContainerInfo struct {
+	Pid         string   `json:"pid"`         //容器的init进程在宿主机上的 PID
+	Id          string   `json:"id"`          //容器Id
+	Name        string   `json:"name"`        //容器名
+	Command     string   `json:"command"`     //容器内init运行命令
+	CreatedTime string   `json:"createTime"`  //创建时间
+	Status      string   `json:"status"`      //容器的状态
+	Volume      string   `json:"volume"`      //容器的数据卷
+	PortMapping []string `json:"portmapping"` //端口映射
+}
+
+func recordContainerInfo(containerPID int, commandArray []string, containerName, id, volume string) (string, error) {
+	createTime := time.Now().Format("2006-01-02 15:04:05")
+	command := strings.Join(commandArray, "")
+	containerInfo := &container.ContainerInfo{
+		Id:          id,
+		Pid:         strconv.Itoa(containerPID),
+		Command:     command,
+		CreatedTime: createTime,
+		Status:      container.RUNNING,
+		Name:        containerName,
+		Volume:      volume,
+	}
+
+	jsonBytes, err := json.Marshal(containerInfo)
+	if err != nil {
+		log.Errorf("Record container info error %v", err)
+		return "", err
+	}
+	jsonStr := string(jsonBytes)
+
+	dirUrl := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	if err := os.MkdirAll(dirUrl, 0622); err != nil {
+		log.Errorf("Mkdir error %s error %v", dirUrl, err)
+		return "", err
+	}
+	fileName := dirUrl + "/" + container.ConfigName
+	file, err := os.Create(fileName)
+	defer file.Close()
+	if err != nil {
+		log.Errorf("Create file %s error %v", fileName, err)
+		return "", err
+	}
+	if _, err := file.WriteString(jsonStr); err != nil {
+		log.Errorf("File write string error %v", err)
+		return "", err
+	}
+
+	return containerName, nil
+}
+
+func Run(tty bool, comArray []string, res *subsystems.ResourceConfig, containerName, volume, imageName string,
+	envSlice []string, nw string, portmapping []string) {
+	containerID := randStringBytes(10)
+	if containerName == "" {
+		containerName = containerID
+	}
+
+	parent, writePipe := container.NewParentProcess(tty, containerName, volume, imageName, envSlice)
+	if parent == nil {
+		log.Errorf("New parent process error")
+		return
+	}
+
+	if err := parent.Start(); err != nil {
+		log.Error(err)
+	}
+
+	//record container info
+	containerName, err := recordContainerInfo(parent.Process.Pid, comArray, containerName, containerID, volume)
+	if err != nil {
+		log.Errorf("Record container info error %v", err)
+		return
+	}
+
+	// use containerID as cgroup name
+	cgroupManager := cgroups.NewCgroupManager(containerID)
+	defer cgroupManager.Destroy()
+	cgroupManager.Set(res)
+	cgroupManager.Apply(parent.Process.Pid)
+
+	if nw != "" {
+		// config container network
+		network.Init()
+		containerInfo := &container.ContainerInfo{
+			Id:          containerID,
+			Pid:         strconv.Itoa(parent.Process.Pid),
+			Name:        containerName,
+			PortMapping: portmapping,
+		}
+		if err := network.Connect(nw, containerInfo); err != nil {
+			log.Errorf("Error Connect Network %v", err)
+			return
+		}
+	}
+
+	sendInitCommand(comArray, writePipe)
+
+	if tty {
+		parent.Wait()
+		deleteContainerInfo(containerName)
+		container.DeleteWorkSpace(volume, containerName)
+	}
+
+}
+```
+
+从上述代码可以看出当容器创建时，父进程会设置容器进程的相关信息到指定文件中，而sample-container-runtime ps命令其实也就是简单地读取这些文件(/var/run/sample-container-runtime/containerName/config.json)，并进行排列输出，如下：
+
+```go
+var ListCommand = cli.Command{
+	Name:  "ps",
+	Usage: "list all the containers",
+	Action: func(context *cli.Context) error {
+		ListContainers()
+		return nil
+	},
+}
+
+func ListContainers() {
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, "")
+	dirURL = dirURL[:len(dirURL)-1]
+	files, err := ioutil.ReadDir(dirURL)
+	if err != nil {
+		log.Errorf("Read dir %s error %v", dirURL, err)
+		return
+	}
+
+	var containers []*container.ContainerInfo
+	for _, file := range files {
+		if file.Name() == "network" {
+			continue
+		}
+		tmpContainer, err := getContainerInfo(file)
+		if err != nil {
+			log.Errorf("Get container info error %v", err)
+			continue
+		}
+		containers = append(containers, tmpContainer)
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 12, 1, 3, ' ', 0)
+	fmt.Fprint(w, "ID\tNAME\tPID\tSTATUS\tCOMMAND\tCREATED\n")
+	for _, item := range containers {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			item.Id,
+			item.Name,
+			item.Pid,
+			item.Status,
+			item.Command,
+			item.CreatedTime)
+	}
+	if err := w.Flush(); err != nil {
+		log.Errorf("Flush error %v", err)
+		return
+	}
+}
+
+func getContainerInfo(file os.FileInfo) (*container.ContainerInfo, error) {
+	containerName := file.Name()
+	configFileDir := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	configFileDir = configFileDir + container.ConfigName
+	content, err := ioutil.ReadFile(configFileDir)
+	if err != nil {
+		log.Errorf("Read file %s error %v", configFileDir, err)
+		return nil, err
+	}
+	var containerInfo container.ContainerInfo
+	if err := json.Unmarshal(content, &containerInfo); err != nil {
+		log.Errorf("Json unmarshal error %v", err)
+		return nil, err
+	}
+
+	return &containerInfo, nil
+}
+```
+
+注意：该实现只是在容器创建时设置了容器的状态为RUNNING，但没有对该容器进行监控，当容器状态发生改变时，通过ps命令查看到的会是错误的状态，这个可以在后续改进
+
+### sample-container-runtime logs
+
+sample-container-runtime logs用于查看容器日志，这里我们将容器的标准输出重定向到文件中(/var/run/sample-container-runtime/containerName/container.log )，在调用logs命令时读取相应容器的container.log即可：
+
+```go
+func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
+	readPipe, writePipe, err := NewPipe()
+	if err != nil {
+		log.Errorf("New pipe error %v", err)
+		return nil, nil
+	}
+	initCmd, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		log.Errorf("get init process error %v", err)
+		return nil, nil
+	}
+
+	cmd := exec.Command(initCmd, "init")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+	}
+
+	if tty {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		dirURL := fmt.Sprintf(DefaultInfoLocation, containerName)
+		if err := os.MkdirAll(dirURL, 0622); err != nil {
+			log.Errorf("NewParentProcess mkdir %s error %v", dirURL, err)
+			return nil, nil
+		}
+		stdLogFilePath := dirURL + ContainerLogFile
+		stdLogFile, err := os.Create(stdLogFilePath)
+		if err != nil {
+			log.Errorf("NewParentProcess create file %s error %v", stdLogFilePath, err)
+			return nil, nil
+		}
+		cmd.Stdout = stdLogFile
+	}
+
+	cmd.ExtraFiles = []*os.File{readPipe}
+	cmd.Env = append(os.Environ(), envSlice...)
+	NewWorkSpace(volume, imageName, containerName)
+	cmd.Dir = fmt.Sprintf(MntUrl, containerName)
+	return cmd, writePipe
+}
+
+...
+var LogCommand = cli.Command{
+	Name:  "logs",
+	Usage: "print logs of a container",
+	Action: func(context *cli.Context) error {
+		if len(context.Args()) < 1 {
+			return fmt.Errorf("Please input your container name")
+		}
+		containerName := context.Args().Get(0)
+		logContainer(containerName)
+		return nil
+	},
+}
+
+func logContainer(containerName string) {
+	dirURL := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	logFileLocation := dirURL + container.ContainerLogFile
+	file, err := os.Open(logFileLocation)
+	defer file.Close()
+	if err != nil {
+		log.Errorf("Log container open file %s error %v", logFileLocation, err)
+		return
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Errorf("Log container read file %s error %v", logFileLocation, err)
+		return
+	}
+	fmt.Fprint(os.Stdout, string(content))
+}
+```
+
+### sample-container-runtime exec
+
+### sample-container-runtime stop
+
+### sample-container-runtime start
+
+### sample-container-runtime rm
+
+### sample-container-runtime commit
+
+### sample-container-runtime env
 
 ## 容器网络
 
