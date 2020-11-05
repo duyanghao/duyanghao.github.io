@@ -886,7 +886,7 @@ xxx     23965 23958  0 16:34 pts/0    00:00:00 sh
 
 ## 容器进阶
 
-在介绍完容器的底层核心技术(aufs，namespace隔离以及cgroups资源控制)之后，我们将进行更加高阶的操作，构建实际可用的容器命令行工具。包括：ps(容器列表)，logs(日志查看)，exec(进入容器命名空间)，stop(停止容器)，start(启动容器)，rm(删除容器)，commit(通过容器创建镜像)，env(容器指定环境变量运行)等
+在介绍完容器的底层核心技术(aufs，namespace隔离以及cgroups资源控制)之后，我们将进行更加高阶的操作，构建实际可用的容器命令行工具。包括：ps(容器列表)，logs(容器日志查看)，exec(进入容器命名空间)，stop(停止容器)，start(启动容器)，rm(删除容器)，commit(通过容器创建镜像)，env(容器指定环境变量运行)等
 
 ### sample-container-runtime ps
 
@@ -905,14 +905,19 @@ $ cat /var/run/sample-container-runtime/container1/config.json
 
 ```go
 type ContainerInfo struct {
-	Pid         string   `json:"pid"`         //容器的init进程在宿主机上的 PID
-	Id          string   `json:"id"`          //容器Id
-	Name        string   `json:"name"`        //容器名
-	Command     string   `json:"command"`     //容器内init运行命令
-	CreatedTime string   `json:"createTime"`  //创建时间
-	Status      string   `json:"status"`      //容器的状态
-	Volume      string   `json:"volume"`      //容器的数据卷
-	PortMapping []string `json:"portmapping"` //端口映射
+	Pid         string                     `json:"pid"`         // 容器的init进程在宿主机上的PID
+	Id          string                     `json:"id"`          // 容器Id
+	Name        string                     `json:"name"`        // 容器名
+	Command     []string                   `json:"command"`     // 容器内init运行命令
+	CreatedTime string                     `json:"createTime"`  // 创建时间
+	Status      string                     `json:"status"`      // 容器的状态
+	Volume      string                     `json:"volume"`      // 容器的数据卷
+	PortMapping []string                   `json:"portmapping"` // 端口映射
+	ImageName   string                     `json:"imageName"`   // 镜像名
+	Detached    bool                       `json:"detached"`    // 是否后端执行
+	ResConf     *subsystems.ResourceConfig `json:"resConf"`     // cgroup限制
+	Env         []string                   `json:"env"`         // 容器环境变量
+	Network     string                     `json:"network"`     // 容器网络
 }
 
 func recordContainerInfo(containerPID int, commandArray []string, containerName, id, volume string) (string, error) {
@@ -1081,7 +1086,7 @@ func getContainerInfo(file os.FileInfo) (*container.ContainerInfo, error) {
 }
 ```
 
-注意：该实现只是在容器创建时设置了容器的状态为RUNNING，但没有对该容器进行监控，当容器状态发生改变时，通过ps命令查看到的会是错误的状态，这个可以在后续改进
+**注意：该实现只是在容器创建时设置了容器的状态为RUNNING，但没有对该容器进行监控，当容器状态发生改变时，通过ps命令查看到的会是错误的状态，这个可以在后续改进**
 
 ### sample-container-runtime logs
 
