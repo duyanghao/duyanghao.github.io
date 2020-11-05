@@ -1,10 +1,10 @@
 ---
 layout: post
-title: sample container runtime
+title: 从零构建容器运行时
 date: 2020-11-2 19:10:31
 category: 技术
 tags: Kubernetes Docker runc container-runtime
-excerpt: 本文描述了sample-container-runtime初始版本的核心实现细节
+excerpt: sample-container-runtime是基于《自己动手写Docker》项目二次定制，试图构建云原生时代的容器运行时，目前已经完成基础版本。本文依次介绍了sample-container-runtime对Linux UnionFS，namespace以及cgroups的具体使用细节。之后，详细讲解了容器命令行的各种高级操作实现原理以及容器网络。希望通过本文可以将读者带入到容器世界中，真正理解容器底层核心技术实现细节
 ---
 
 ## 前言
