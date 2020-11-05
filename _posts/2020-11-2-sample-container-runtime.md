@@ -2139,6 +2139,784 @@ bird=l23
 
 ## 容器网络
 
+在上述容器namespace章节中，介绍了network namespace，通过network namespace给容器配置了独立的网络命名空间，但是却没有任何网络设备，这样容器是无法与外部进行通信的，而本章节就是要解决容器与外部通信的问题
+
+在详细代码之前，我们先介绍Linux网络的一些基础知识：
+
+* Linux Veth：Veth是成对出现的虚拟网络设备，发送到Veth一端虚拟设备的请求会从另一端的虚拟设备中发出。在容器的虚拟化场景中，经常会使用Veth连接不同的网络Namespace
+* Linux Bridge：Bridge虚拟设备是用来桥接的网络设备，它相当于交换机，可以连接不同的网络设备，当请求到达Bridge设备时，可以通过报文中的Mac地址进行广播或转发
+* Linux路由表：路由表用于定义某个网络namespace中包的流向，通过route可以查看路由信息，几本核心字段含义如下：
+  * Destination：The destination network or destination host(目标网段或者主机)
+  * Gateway：The gateway address or '*' if none set(网关地址，”*” 表示目标是本主机所属的网络，不需要路由)
+  * Genmask：The netmask for the destination net; '255.255.255.255' for a host destination and '0.0.0.0' for the default route(目标网络掩码)
+  * Flags：Possible flags，U — 路由是活动的，H — 目标是一个主机，G — 路由指向网关
+  * Iface：Interface to which packets for this route will be sent(该路由表项对应的输出接口)
+* Linux iptables：iptables是对Linux内核netfilter模块进行操作和展示的工具，用来管理包的流动和转送。iptables定义了一套链式处理的结构，在网络包传输的各个阶段可以使用不同的策略对包进行加工、传送或丢弃。在容器虚拟化的技术中，经常会用到两种策略 MASQUERADE(可以将请求包中的源地址转换成一个网络设备的地址)和DNAT(DNAT策略也是做网络地址的转换，不过它是更换目标地址，经常用于将内部网络地址的端口映射到外部去)，用于容器和宿主机外部的网络通信
+
+在介绍完上述基础网络知识后，我们开始描述sample-container-runtime的网络模型，如下：
+
+![](/public/img/sample-container-runtime/scr-network-model.png)
+
+* 网络是容器的一个集合，在一个网络中的容器可以通过这个网络通信，就像挂载到同一个Linux Bridge设备上的网络设备一样，可以直接通过 Bridge实现网络互连。网络中会包括该网络相关的配置，比如：网络的容器地址段、网络操作所调用的网络驱动等信息
+* 网络端点：网络端点用于连接容器与网络，保证容器内部与网络的通信。如同Veth设备，一端挂载到容器内部，另一端挂载到 Bridge上， 就能保证容器和网络的通信。 网络端点中会包括连接到网络的一些信息，比如地址、 Veth设备、端口映射、连接的容器和网络等信息
+* 网络驱动：网络驱动 (Network Driver) 是一个网络功能中的组件，不同的驱动对网络的创建、连接、销毁的策略不同，通过在创建网络时指定不同的网络驱动来定义使用哪个驱动做网络的配置(例如Bridge)
+* IPAM：IPAM也是网络功能中的一个组件，用于网络IP地址的分配和释放，包括容器的IP地址和网络网关的IP地址
+
+下面我们分别介绍上述模型的具体实现细节：
+
+### IPAM
+
+对于IP地址的管理。我们可以使用bitmap(位图，在大规模连续且少状态的数据处理中有很高的效率)来存储地址分配信息，在网段中，某个 IP 地址有两种状态，l表示己经被分配了 ，0表示还未被分配，那么一个IP地址的状态就可以用一位来表示 ，井且通过相对偏移也能够迅速定位到数据所在的位：
+
+![](/public/img/sample-container-runtime/ipam.png) 
+
+数据结构如下：
+
+```go
+const ipamDefaultAllocatorPath = "/var/run/sample-container-runtime/network/ipam/subnet.json"
+
+type IPAM struct {
+	SubnetAllocatorPath string
+	Subnets             *map[string]string
+}
+
+var ipAllocator = &IPAM{
+	SubnetAllocatorPath: ipamDefaultAllocatorPath,
+}
+
+func (ipam *IPAM) load() error {
+	if _, err := os.Stat(ipam.SubnetAllocatorPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		} else {
+			return err
+		}
+	}
+	subnetConfigFile, err := os.Open(ipam.SubnetAllocatorPath)
+	defer subnetConfigFile.Close()
+	if err != nil {
+		return err
+	}
+	subnetJson := make([]byte, 2000)
+	n, err := subnetConfigFile.Read(subnetJson)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(subnetJson[:n], ipam.Subnets)
+	if err != nil {
+		log.Errorf("Error dump allocation info, %v", err)
+		return err
+	}
+	return nil
+}
+
+func (ipam *IPAM) dump() error {
+	ipamConfigFileDir, _ := path.Split(ipam.SubnetAllocatorPath)
+	if _, err := os.Stat(ipamConfigFileDir); err != nil {
+		if os.IsNotExist(err) {
+			os.MkdirAll(ipamConfigFileDir, 0644)
+		} else {
+			return err
+		}
+	}
+	subnetConfigFile, err := os.OpenFile(ipam.SubnetAllocatorPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
+	defer subnetConfigFile.Close()
+	if err != nil {
+		return err
+	}
+
+	ipamConfigJson, err := json.Marshal(ipam.Subnets)
+	if err != nil {
+		return err
+	}
+
+	_, err = subnetConfigFile.Write(ipamConfigJson)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ipam *IPAM) Allocate(subnet *net.IPNet) (ip net.IP, err error) {
+	// 存放网段中地址分配信息的数组
+	ipam.Subnets = &map[string]string{}
+
+	// 从文件中加载已经分配的网段信息
+	err = ipam.load()
+	if err != nil {
+		log.Errorf("Error dump allocation info, %v", err)
+	}
+
+	_, subnet, _ = net.ParseCIDR(subnet.String())
+
+	one, size := subnet.Mask.Size()
+
+	if _, exist := (*ipam.Subnets)[subnet.String()]; !exist {
+		(*ipam.Subnets)[subnet.String()] = strings.Repeat("0", 1<<uint8(size-one))
+	}
+
+	for c := range (*ipam.Subnets)[subnet.String()] {
+		if (*ipam.Subnets)[subnet.String()][c] == '0' {
+			ipalloc := []byte((*ipam.Subnets)[subnet.String()])
+			ipalloc[c] = '1'
+			(*ipam.Subnets)[subnet.String()] = string(ipalloc)
+			ip = subnet.IP
+			for t := uint(4); t > 0; t -= 1 {
+				[]byte(ip)[4-t] += uint8(c >> ((t - 1) * 8))
+			}
+			ip[3] += 1
+			break
+		}
+	}
+
+	ipam.dump()
+	return
+}
+
+func (ipam *IPAM) Release(subnet *net.IPNet, ipaddr *net.IP) error {
+	ipam.Subnets = &map[string]string{}
+
+	_, subnet, _ = net.ParseCIDR(subnet.String())
+
+	err := ipam.load()
+	if err != nil {
+		log.Errorf("Error dump allocation info, %v", err)
+	}
+
+	c := 0
+	releaseIP := ipaddr.To4()
+	releaseIP[3] -= 1
+	for t := uint(4); t > 0; t -= 1 {
+		c += int(releaseIP[t-1]-subnet.IP[t-1]) << ((4 - t) * 8)
+	}
+
+	ipalloc := []byte((*ipam.Subnets)[subnet.String()])
+	ipalloc[c] = '0'
+	(*ipam.Subnets)[subnet.String()] = string(ipalloc)
+
+	ipam.dump()
+	return nil
+}
+```
+
+从上面代码可以看出，这里为了代码实现简单和易于阅读，使用string中的一个字符表示一个状态位(实际上可以采用一位表示一个是否分配的状态位，这样资源会有更低的消耗)。其中，load函数用于从指定文件路径(/var/run/sample-container-runtime/network/ipam/subnet.json)加载网络地址信息；而dump函数则相反，将网络地址信息写入到该文件中。Allocate与Release功能也相反，前者用于从某个网络中分配一个IP地址，后者释放网络中的某个IP地址
+
+### Bridge网络管理
+
+这里我们直接基于Bridge网络驱动管理容器网络，如下是初始化Linux Bridge的4个流程：
+
+![](/public/img/sample-container-runtime/bridge_network.png)
+
+```go
+type BridgeNetworkDriver struct {
+}
+
+func (d *BridgeNetworkDriver) Name() string {
+	return "bridge"
+}
+
+...
+type Network struct {
+	Name    string
+	IpRange *net.IPNet
+	Driver  string
+}
+
+func (d *BridgeNetworkDriver) Create(subnet string, name string) (*Network, error) {
+	ip, ipRange, _ := net.ParseCIDR(subnet)
+	ipRange.IP = ip
+	n := &Network{
+		Name:    name,
+		IpRange: ipRange,
+		Driver:  d.Name(),
+	}
+	err := d.initBridge(n)
+	if err != nil {
+		log.Errorf("error init bridge: %v", err)
+	}
+
+	return n, err
+}
+
+func (d *BridgeNetworkDriver) initBridge(n *Network) error {
+	// try to get bridge by name, if it already exists then just exit
+	bridgeName := n.Name
+	if err := createBridgeInterface(bridgeName); err != nil {
+		return fmt.Errorf("Error add bridge： %s, Error: %v", bridgeName, err)
+	}
+
+	// Set bridge IP
+	gatewayIP := *n.IpRange
+	gatewayIP.IP = n.IpRange.IP
+
+	if err := setInterfaceIP(bridgeName, gatewayIP.String()); err != nil {
+		return fmt.Errorf("Error assigning address: %s on bridge: %s with an error of: %v", gatewayIP, bridgeName, err)
+	}
+
+	if err := setInterfaceUP(bridgeName); err != nil {
+		return fmt.Errorf("Error set bridge up: %s, Error: %v", bridgeName, err)
+	}
+
+	// Setup iptables
+	if err := setupIPTables(bridgeName, n.IpRange); err != nil {
+		return fmt.Errorf("Error setting iptables for %s: %v", bridgeName, err)
+	}
+
+	return nil
+}
+```
+
+首先是创建Bridge虚拟设备：
+
+```go
+func createBridgeInterface(bridgeName string) error {
+  // 先检查是否己经存在了这个同名的Bridge设备
+	_, err := net.InterfaceByName(bridgeName)
+  // 如果已经存在或者报错则返回创建错误
+	if err == nil || !strings.Contains(err.Error(), "no such network interface") {
+		return err
+	}
+
+	// create *netlink.Bridge object
+  // 初始化一个netlink的Link基础对象， Link的名字即Bridge虚拟设备的名字
+	la := netlink.NewLinkAttrs()
+	la.Name = bridgeName
+
+  // 使用刚才创建的Link属性创建netlink的Bridge对象
+	br := &netlink.Bridge{la}
+  // 调用netlink的Linkadd方法，创建Bridge虚拟网络设备
+  // Linkadd方法用来创建虚拟网络设备，相当于ip link add xxx
+	if err := netlink.LinkAdd(br); err != nil {
+		return fmt.Errorf("Bridge creation failed for bridge %s: %v", bridgeName, err)
+	}
+	return nil
+}
+```
+
+通过netlink的LinkAdd方法，创建出了LinuxBridge的虚拟设备
+
+接着，设置 Bridge 设备的地址和路由：
+
+```go
+	// Set bridge IP
+	gatewayIP := *n.IpRange
+	gatewayIP.IP = n.IpRange.IP
+
+	if err := setInterfaceIP(bridgeName, gatewayIP.String()); err != nil {
+		return fmt.Errorf("Error assigning address: %s on bridge: %s with an error of: %v", gatewayIP, bridgeName, err)
+	}
+
+	if err := setInterfaceUP(bridgeName); err != nil {
+		return fmt.Errorf("Error set bridge up: %s, Error: %v", bridgeName, err)
+	}
+
+...
+// Set the IP addr of a netlink interface
+// 设置一个网络接口的IP地址，例如setinterfaceIP(”testbridge”，”192.168.0.1/24”)
+func setInterfaceIP(name string, rawIP string) error {
+	retries := 2
+	var iface netlink.Link
+	var err error
+	for i := 0; i < retries; i++ {
+    // 通过netlink的LinkByName方法找到需要设置的网络接口
+		iface, err = netlink.LinkByName(name)
+		if err == nil {
+			break
+		}
+		log.Debugf("error retrieving new bridge netlink link [ %s ]... retrying", name)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("Abandoning retrieving the new bridge link from netlink, Run [ ip link ] to troubleshoot the error: %v", err)
+	}
+  // 返回值中的ipNet既包含了网段的信息：192.168.0.0/24，也包含了原始的IP: 192.168.0.1
+	ipNet, err := netlink.ParseIPNet(rawIP)
+	if err != nil {
+		return err
+	}
+  // 通过netlink.AddrAdd给网络接口配置地址，相当于ip addr add xxx的命令
+  // 同时如果配置了地址所在网段的信息，例如 192.168.0.0/24
+  // 还会配置路由表192.168.0.0/24转发到这个testbridge的网络接口上
+	addr := &netlink.Addr{ipNet, "", 0, 0, nil}
+	return netlink.AddrAdd(iface, addr)
+}
+
+// 设置网络接口为UP状态
+func setInterfaceUP(interfaceName string) error {
+	iface, err := netlink.LinkByName(interfaceName)
+	if err != nil {
+		return fmt.Errorf("Error retrieving a link named [ %s ]: %v", iface.Attrs().Name, err)
+	}
+
+  // 等价于 ip link set xxx up命令
+	if err := netlink.LinkSetUp(iface); err != nil {
+		return fmt.Errorf("Error enabling interface for %s: %v", interfaceName, err)
+	}
+	return nil
+}
+```
+
+Linux的网络设备只有设置成UP状态后才能处理和转发请求
+
+最后设置iptabels Linux Bridge SNAT规则：
+
+```go
+// 设置iptables对应bridge的MASQUERADE规则
+func setupIPTables(bridgeName string, subnet *net.IPNet) error {
+  // 创建iptables命令
+  // iptables -t nat -A POSTROUTING -s <subNet> ! -o <bridgeName> -j MASQUERADE
+	iptablesCmd := fmt.Sprintf("-t nat -A POSTROUTING -s %s ! -o %s -j MASQUERADE", subnet.String(), bridgeName)
+	cmd := exec.Command("iptables", strings.Split(iptablesCmd, " ")...)
+	//err := cmd.Run()
+	output, err := cmd.Output()
+	if err != nil {
+		log.Errorf("iptables Output, %v", output)
+	}
+	return err
+}
+```
+
+通过直接执行 iptables命令，创建SNAT规则，只要是从这个网桥上出来的包，都会对其做源IP地址转换，保证了容器经过宿主机访问外部网络请求的包都转换成宿主机的IP，从而能正确的送达和接收
+
+### 管理容器网络端点
+
+最后，我们介绍如何配置容器网络端点，使容器最终实现通信。创建容器网络端点流程如下：
+
+![](/public/img/sample-container-runtime/network-endpoint.png)
+
+从上述流程可以看到，在容器的Net Namespace中，可以通过容器的Veth直接与挂载在同一个 Bridge上的容器通信，以及通过Bridge上创建的iptables的MASQUERADE规则访问外部网络，同时，外部也可以通过宿主机的端口经过iptables的DNAT的转发访问容器内部。也即实现了：**容器与容器通信，容器与宿主机通信，容器与外部宿主机通信**
+
+下面我们看具体实现：
+
+```go
+func Run(tty bool, containerID string, comArray []string, res *subsystems.ResourceConfig, containerName, volume, imageName string,
+	envSlice []string, nw string, portmapping []string) {
+	if containerName == "" {
+		containerName = containerID
+	}
+
+	parent, writePipe := container.NewParentProcess(tty, containerName, volume, imageName, envSlice)
+	if parent == nil {
+		log.Errorf("New parent process error")
+		return
+	}
+
+	if err := parent.Start(); err != nil {
+		log.Error(err)
+	}
+
+  ...
+
+	if nw != "" {
+		// config container network
+		network.Init()
+		containerInfo := &container.ContainerInfo{
+			Id:          containerID,
+			Pid:         strconv.Itoa(parent.Process.Pid),
+			Name:        containerName,
+			PortMapping: portmapping,
+		}
+		if err := network.Connect(nw, containerInfo); err != nil {
+			log.Errorf("Error Connect Network %v", err)
+			return
+		}
+	}
+
+	sendInitCommand(comArray, writePipe)
+
+	if tty {
+		parent.Wait()
+		deleteContainerInfo(containerName)
+		container.DeleteWorkSpace(volume, containerName)
+		cgroupManager.Destroy()
+	}
+
+}
+
+func Connect(networkName string, cinfo *container.ContainerInfo) error {
+	network, ok := networks[networkName]
+	if !ok {
+		return fmt.Errorf("No Such Network: %s", networkName)
+	}
+
+	// 分配容器IP地址
+	ip, err := ipAllocator.Allocate(network.IpRange)
+	if err != nil {
+		return err
+	}
+
+	// 创建网络端点
+	ep := &Endpoint{
+		ID:          fmt.Sprintf("%s-%s", cinfo.Id, networkName),
+		IPAddress:   ip,
+		Network:     network,
+		PortMapping: cinfo.PortMapping,
+	}
+	// 调用网络驱动挂载和配置网络端点
+	if err = drivers[network.Driver].Connect(network, ep); err != nil {
+		return err
+	}
+	// 到容器的namespace配置容器网络设备IP地址
+	if err = configEndpointIpAddressAndRoute(ep, cinfo); err != nil {
+		return err
+	}
+
+	return configPortMapping(ep, cinfo)
+}
+```
+
+我们看一下如何实现连接容器网络端点到 Linux Bridge：
+
+```go
+//连接一个网络和网络端点
+func (d *BridgeNetworkDriver) Connect(network *Network, endpoint *Endpoint) error {
+  // 获取网络名 ，即Linux Bridge的接口名
+	bridgeName := network.Name
+  // 通过接口名获取到Linux Bridge接口的对象和接口属性
+	br, err := netlink.LinkByName(bridgeName)
+	if err != nil {
+		return err
+	}
+
+  // 创建Veth接口的配置
+	la := netlink.NewLinkAttrs()
+  // 由于Linux接口名的限制，名字取endpoint ID的前5位
+	la.Name = endpoint.ID[:5]
+  // 通过设置Veth接口的master属性，设置这个Veth的一端挂载到网络对应的Linux Bridge上
+	la.MasterIndex = br.Attrs().Index
+
+  // 创建Veth对象，通过PeerName配置Veth另外一端的接口名
+	endpoint.Device = netlink.Veth{
+		LinkAttrs: la,
+		PeerName:  "cif-" + endpoint.ID[:5],
+	}
+
+  // 调用netlink的LinkAdd方法创建出这个Veth接口
+  // 因为上面指定了link的MasterIndex是网络对应的Linux Bridge
+  // 所以Veth的一端就己经挂载到了网络对应的Linux Bridge上了
+	if err = netlink.LinkAdd(&endpoint.Device); err != nil {
+		return fmt.Errorf("Error Add Endpoint Device: %v", err)
+	}
+
+  // 调用netlink的LinkSetUp方法，设置Veth启动
+  // 相当于 ip link set xxx up命令
+	if err = netlink.LinkSetUp(&endpoint.Device); err != nil {
+		return fmt.Errorf("Error Add Endpoint Device: %v", err)
+	}
+	return nil
+}
+```
+
+通过调用Bridge驱动中的Connect 方法 ，容器的网络端点己经挂载到了Bridge网络上。下一步就是配置网络端点的另外一端 ，即容器的 network namespace那一端(容器有自己独立的network Namespace，需要将网络端点Veth设备的另外一端移到这个network namespace中并配置，才能给这个容器 “插上网线”）：
+
+```go
+// 配置容器网络端点的地址和路由
+func configEndpointIpAddressAndRoute(ep *Endpoint, cinfo *container.ContainerInfo) error 
+  // 通过网络端点中“Veth”的另一端
+	peerLink, err := netlink.LinkByName(ep.Device.PeerName)
+	if err != nil {
+		return fmt.Errorf("fail config endpoint: %v", err)
+	}
+
+  // 将网络端点加入到容器的网络空间中 
+  // 并使这个函数下面的操作都在这个网络空间中进行 
+  // 执行完函数后，恢复为默认的网络空间，具体实现下面再做介绍
+	defer enterContainerNetns(&peerLink, cinfo)()
+
+  // 获取到容器的IP地址及网段，用于配置容器内部接口地址
+  // 比如容器IP是192.168.1.2，而网络的网段是192.168.1.0/24
+  // 那么这里产出的IP字符串就是192.168.1.2/24，用于容器内Veth端点配置
+	interfaceIP := *ep.Network.IpRange
+	interfaceIP.IP = ep.IPAddress
+  // 调用setinterfaceIP函数设置容器内Veth端点的IP
+	if err = setInterfaceIP(ep.Device.PeerName, interfaceIP.String()); err != nil {
+		return fmt.Errorf("%v,%s", ep.Network, err)
+	}
+	// 启动容器内的Veth端点
+	if err = setInterfaceUP(ep.Device.PeerName); err != nil {
+		return err
+	}
+
+  // Net Namespace中默认本地地址127.0.0.1的"lo"网卡是关闭状态的
+	// 启动它以保证容器访问自己的请求
+	if err = setInterfaceUP("lo"); err != nil {
+		return err
+	}
+
+  // 设置容器内的外部请求都通过容器内的Veth端点访问
+  // 0.0.0.0/0的网段，表示所有的IP地址段
+	_, cidr, _ := net.ParseCIDR("0.0.0.0/0")
+
+  // 构建要添加的路由数据，包括网络设备、网关IP及目的网段
+  // 相当于route add -net 0.0.0.0/0 gw {Bridge网桥地址} dev {容器内的Veth端点设备}
+	defaultRoute := &netlink.Route{
+		LinkIndex: peerLink.Attrs().Index,
+		Gw:        ep.Network.IpRange.IP,
+		Dst:       cidr,
+	}
+
+	// 调用netlink的RouteAdd，添加路由到容器的网络空间
+	// RouteAdd函数相当于route add命令
+	if err = netlink.RouteAdd(defaultRoute); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// 将网络端点加入到容器的网络空间中
+// 并锁定当前程序所执行的线程，使当前线程进入到容器的网络空间
+// 返回值是一个函数指针，执行这个返回函数才会退出容器的网络空间，回归到宿主机的网络空间
+func enterContainerNetns(enLink *netlink.Link, cinfo *container.ContainerInfo) func() {
+  // 找到容器的Net Namespace
+  // /proc/{pid}/ns/net打开这个文件的文件描述符就可以来操作Net Namespace
+	// 而Conta工nerinfo中的PID，即容器在宿主机上映射的进程ID
+  // 它对应的/proc/{pid}/ns/net就是容器内部的Net Namespace
+	f, err := os.OpenFile(fmt.Sprintf("/proc/%s/ns/net", cinfo.Pid), os.O_RDONLY, 0)
+	if err != nil {
+		log.Errorf("error get container net namespace, %v", err)
+	}
+
+  // 锁定当前程序所执行的线程，如果不锁定操作系统线程的话
+I // Go语言的goroutine可能会被调度到别的线程上去 
+  // 就不能保证一直在所需要的网络空间中了
+	// 所以调用runtime.LockOSThread时要先锁定当前程序执行的线程
+	runtime.LockOSThread()
+
+  // 取到文件描述符
+	nsFD := f.Fd()
+	// 修改veth peer另外一端移到容器的namespace中
+	if err = netlink.LinkSetNsFd(*enLink, int(nsFD)); err != nil {
+		log.Errorf("error set link netns , %v", err)
+	}
+
+	// 获取当前的网络namespace
+	origns, err := netns.Get()
+	if err != nil {
+		log.Errorf("error get current netns, %v", err)
+	}
+
+	// 设置当前进程到新的网络namespace，并在函数执行完成之后再恢复到之前的namespace
+	if err = netns.Set(netns.NsHandle(nsFD)); err != nil {
+		log.Errorf("error set netns, %v", err)
+	}
+	return func() {
+    // 恢复到上面获取到的之前的Net Namespace
+		netns.Set(origns)
+    // 关闭Namespace文件
+		origns.Close()
+    // 取消对当附程序的线程锁定
+		runtime.UnlockOSThread()
+    // 关闭Namespace文件
+		f.Close()
+	}
+}
+```
+
+在调用 enterContainerNetns(&peerLink, cinfo)()时会使当前执行的函数进入容器的Net Namespace，配置容器网络端点的地址和路由，而用了defer关键字后会在函数体结束时执行返回的恢复函数指针，恢复到之前宿主机所在的网络空间
+
+现在的容器己经有了自己的网络空间和地址，但是这个地址宿主机外部访问不到的，所以需要配置宿主机到容器的端口映射，通过 iptables的DNAT规则来实现宿主机上的请求转发到容器上：
+
+```go
+func configPortMapping(ep *Endpoint, cinfo *container.ContainerInfo) error {
+	for _, pm := range ep.PortMapping {
+    // 分割成宿主机的端口和容器的端口
+		portMapping := strings.Split(pm, ":")
+		if len(portMapping) != 2 {
+			log.Errorf("port mapping format error, %v", pm)
+			continue
+		}
+    // 由于 iptables没有Go语言版本的实现，所以采用exec.Command的方式直接调用命令配置
+    // 在iptables的PREROUTING中添加DNAT规则
+    // 将宿主机的端口请求转发到容器的地址和端口上
+		iptablesCmd := fmt.Sprintf("-t nat -A PREROUTING -p tcp -m tcp --dport %s -j DNAT --to-destination %s:%s",
+			portMapping[0], ep.IPAddress.String(), portMapping[1])
+		cmd := exec.Command("iptables", strings.Split(iptablesCmd, " ")...)
+		//err := cmd.Run()
+		output, err := cmd.Output()
+		if err != nil {
+			log.Errorf("iptables Output, %v", output)
+			continue
+		}
+	}
+	return nil
+}
+```
+
+最后，我们实际运行测试：
+
+```bash
+# 打开IP转发
+$ sysctl -w net.ipv4.conf.all.forwarding=1
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime network create --driver bridge --subnet 194.172.10.1/24 testbridge
+$ route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+...
+194.172.10.0    0.0.0.0         255.255.255.0   U     0      0        0 testbridge
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti -net testbridge busybox sh
+{"level":"info","msg":"createTty true","time":"2020-11-05T17:40:01+08:00"}
+{"level":"info","msg":"init come on","time":"2020-11-05T17:40:01+08:00"}
+{"level":"info","msg":"command all is sh","time":"2020-11-05T17:40:01+08:00"}
+{"level":"info","msg":"Current location is /var/lib/sample-container-runtime/mnt/3126272807","time":"2020-11-05T17:40:01+08:00"}
+{"level":"info","msg":"Find path /bin/sh","time":"2020-11-05T17:40:01+08:00"}
+RscfSjrHMv # 
+RscfSjrHMv # ifconfig 
+cif-31262 Link encap:Ethernet  HWaddr 2A:11:11:DC:1B:BD  
+          inet addr:194.172.10.2  Bcast:0.0.0.0  Mask:255.255.255.0
+          inet6 addr: fe80::2811:11ff:fedc:1bbd/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:6 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:516 (516.0 B)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+RscfSjrHMv # route
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+default         194.172.10.1    0.0.0.0         UG    0      0        0 cif-31262
+194.172.10.0    *               255.255.255.0   U     0      0        0 cif-31262
+RscfSjrHMv # ping -c 3 194.172.10.3
+PING 194.172.10.3 (194.172.10.3): 56 data bytes
+64 bytes from 194.172.10.3: seq=0 ttl=64 time=0.053 ms
+64 bytes from 194.172.10.3: seq=1 ttl=64 time=0.054 ms
+64 bytes from 194.172.10.3: seq=2 ttl=64 time=0.055 ms
+
+--- 194.172.10.3 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.053/0.054/0.055 ms
+RscfSjrHMv # ping -c 3 x.x.x.x
+PING x.x.x.x (x.x.x.x): 56 data bytes
+64 bytes from x.x.x.x: seq=0 ttl=63 time=0.302 ms
+64 bytes from x.x.x.x: seq=1 ttl=63 time=0.255 ms
+64 bytes from x.x.x.x: seq=2 ttl=63 time=0.249 ms
+
+--- x.x.x.x ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.249/0.268/0.302 ms
+
+# ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti -net testbridge busybox sh
+{"level":"info","msg":"createTty true","time":"2020-11-05T17:40:17+08:00"}
+{"level":"info","msg":"init come on","time":"2020-11-05T17:40:17+08:00"}
+{"level":"info","msg":"command all is sh","time":"2020-11-05T17:40:17+08:00"}
+{"level":"info","msg":"Current location is /var/lib/sample-container-runtime/mnt/0549304775","time":"2020-11-05T17:40:17+08:00"}
+{"level":"info","msg":"Find path /bin/sh","time":"2020-11-05T17:40:17+08:00"}
+sNTHMBOKJJ # 
+sNTHMBOKJJ # ifconfig 
+cif-05493 Link encap:Ethernet  HWaddr B6:C0:8B:03:1B:96  
+          inet addr:194.172.10.3  Bcast:0.0.0.0  Mask:255.255.255.0
+          inet6 addr: fe80::b4c0:8bff:fe03:1b96/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:5 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:426 (426.0 B)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+sNTHMBOKJJ # route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         194.172.10.1    0.0.0.0         UG    0      0        0 cif-05493
+194.172.10.0    0.0.0.0         255.255.255.0   U     0      0        0 cif-05493
+sNTHMBOKJJ # ping -c 3 194.172.10.2
+PING 194.172.10.2 (194.172.10.2): 56 data bytes
+64 bytes from 194.172.10.2: seq=0 ttl=64 time=0.049 ms
+64 bytes from 194.172.10.2: seq=1 ttl=64 time=0.057 ms
+64 bytes from 194.172.10.2: seq=2 ttl=64 time=0.055 ms
+
+--- 194.172.10.2 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.049/0.053/0.057 ms
+       
+# outside of container
+$ ip a 
+...
+3: testbridge: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP qlen 1000
+    link/ether b6:f7:a4:aa:a5:25 brd ff:ff:ff:ff:ff:ff
+    inet 194.172.10.1/24 scope global testbridge
+       valid_lft forever preferred_lft forever
+5: 31262@if4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master testbridge state UP qlen 1000
+    link/ether b6:f7:a4:aa:a5:25 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+7: 05493@if6: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master testbridge state UP qlen 1000
+    link/ether e2:49:c2:80:25:06 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    
+$ route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+...
+194.172.10.0    0.0.0.0         255.255.255.0   U     0      0        0 testbridge 
+
+$ iptables -t nat -v -L POSTROUTING -n --line-number
+Chain POSTROUTING (policy ACCEPT 21 packets, 1990 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        2   168 MASQUERADE  all  --  *      !testbridge  194.172.10.0/24      0.0.0.0/0
+```
+
+从上面的例子可以看出，容器之间可以互相访问，容器可以访问宿主机外部IP，接下来我们测试宿主机外访问容器：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -ti -p 80:80 -net testbridge busybox sh
+{"level":"info","msg":"createTty true","time":"2020-11-05T18:50:40+08:00"}
+{"level":"info","msg":"init come on","time":"2020-11-05T18:50:40+08:00"}
+{"level":"info","msg":"command all is sh","time":"2020-11-05T18:50:40+08:00"}
+{"level":"info","msg":"Current location is /var/lib/sample-container-runtime/mnt/8941010042","time":"2020-11-05T18:50:40+08:00"}
+{"level":"info","msg":"Find path /bin/sh","time":"2020-11-05T18:50:40+08:00"}
+PqDLDjvFyB # ifconfig 
+cif-89410 Link encap:Ethernet  HWaddr C6:27:36:61:F3:3E  
+          inet addr:194.172.10.4  Bcast:0.0.0.0  Mask:255.255.255.0
+          inet6 addr: fe80::c427:36ff:fe61:f33e/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:6 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:516 (516.0 B)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+PqDLDjvFyB # nc -lp 80
+hello world
+
+$ iptables -t nat -v -L PREROUTING -n --line-number
+Chain PREROUTING (policy ACCEPT 108 packets, 3024 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        1    60 DNAT       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:80 to:194.172.10.4:80
+
+# other nodes
+$ telnet x.x.x.x(container node) 80
+Trying x.x.x.x...
+Connected to x.x.x.x.
+Escape character is '^]'.
+hello world
+```
+
+可以看到通过iptables DNAT规则，外部宿主机也可以访问容器了：
+
+![](/public/img/sample-container-runtime/iptables.png)
+
 ## Roadmap
 
 ## Conclusion
