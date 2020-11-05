@@ -1524,6 +1524,306 @@ xxx     26634  8812  0 20:12 pts/1    00:00:00 grep --color=auto 26338
 
 ### sample-container-runtime start
 
+sample-container-runtime用于启动停止的容器：重新运行容器进程(容器ID不变)，并构建新的容器namespace，同时将新的容器进程PID放到原有的cgroup目录中，aufs目录也沿用之前的配置，核心代码如下：
+
+```go
+var StartCommand = cli.Command{
+	Name:  "start",
+	Usage: "start a container",
+	Action: func(context *cli.Context) error {
+		if len(context.Args()) < 1 {
+			return fmt.Errorf("Missing container name")
+		}
+		containerName := context.Args().Get(0)
+		startContainer(containerName)
+		return nil
+	},
+}
+
+func startContainer(containerName string) {
+	containerInfo, err := getContainerInfoByName(containerName)
+	if err != nil {
+		log.Errorf("Get contaienr info by name %s error %v", containerName, err)
+		return
+	}
+	Run(containerInfo.Detached, containerInfo.Id, containerInfo.Command, containerInfo.ResConf, containerName, containerInfo.Volume, containerInfo.ImageName, containerInfo.Env, containerInfo.Network, containerInfo.PortMapping)
+}
+
+func Run(tty bool, containerID string, comArray []string, res *subsystems.ResourceConfig, containerName, volume, imageName string,
+	envSlice []string, nw string, portmapping []string) {
+	if containerName == "" {
+		containerName = containerID
+	}
+
+	parent, writePipe := container.NewParentProcess(tty, containerName, volume, imageName, envSlice)
+	if parent == nil {
+		log.Errorf("New parent process error")
+		return
+	}
+
+	if err := parent.Start(); err != nil {
+		log.Error(err)
+	}
+
+	//record container info
+	containerName, err := recordContainerInfo(tty, parent.Process.Pid, comArray, containerName, containerID, imageName, volume, res, envSlice, nw, portmapping)
+	if err != nil {
+		log.Errorf("Record container info error %v", err)
+		return
+	}
+
+	// use containerID as cgroup name
+	cgroupManager := cgroups.NewCgroupManager(containerID)
+	cgroupManager.Set(res)
+	cgroupManager.Apply(parent.Process.Pid)
+
+	if nw != "" {
+		// config container network
+		network.Init()
+		containerInfo := &container.ContainerInfo{
+			Id:          containerID,
+			Pid:         strconv.Itoa(parent.Process.Pid),
+			Name:        containerName,
+			PortMapping: portmapping,
+		}
+		if err := network.Connect(nw, containerInfo); err != nil {
+			log.Errorf("Error Connect Network %v", err)
+			return
+		}
+	}
+
+	sendInitCommand(comArray, writePipe)
+
+	if tty {
+		parent.Wait()
+		deleteContainerInfo(containerName)
+		container.DeleteWorkSpace(volume, containerName)
+		cgroupManager.Destroy()
+	}
+
+}
+```
+
+从上述代码看出，这里start函数复用了run函数(Run command对应func)，关键在于之前保留了容器的所有运行信息：
+
+```go
+	//record container info
+	containerName, err := recordContainerInfo(tty, parent.Process.Pid, comArray, containerName, containerID, imageName, volume, res, envSlice, nw, portmapping)
+	if err != nil {
+		log.Errorf("Record container info error %v", err)
+		return
+	}
+
+func recordContainerInfo(tty bool, containerPID int, commandArray []string, containerName, id, imageName, volume string, res *subsystems.ResourceConfig, envSlice []string, nw string, portmapping []string) (string, error) {
+	createTime := time.Now().Format("2006-01-02 15:04:05")
+	containerInfo := &container.ContainerInfo{
+		Id:          id,
+		Pid:         strconv.Itoa(containerPID),
+		Command:     commandArray,
+		CreatedTime: createTime,
+		Status:      container.RUNNING,
+		Name:        containerName,
+		Volume:      volume,
+		ResConf:     res,
+		Env:         envSlice,
+		Network:     nw,
+		PortMapping: portmapping,
+		Detached:    tty,
+		ImageName:   imageName,
+	}
+
+	jsonBytes, err := json.Marshal(containerInfo)
+	if err != nil {
+		log.Errorf("Record container info error %v", err)
+		return "", err
+	}
+	jsonStr := string(jsonBytes)
+
+	dirUrl := fmt.Sprintf(container.DefaultInfoLocation, containerName)
+	if err := os.MkdirAll(dirUrl, 0622); err != nil {
+		log.Errorf("Mkdir error %s error %v", dirUrl, err)
+		return "", err
+	}
+	fileName := dirUrl + "/" + container.ConfigName
+	file, err := os.Create(fileName)
+	defer file.Close()
+	if err != nil {
+		log.Errorf("Create file %s error %v", fileName, err)
+		return "", err
+	}
+	if _, err := file.WriteString(jsonStr); err != nil {
+		log.Errorf("File write string error %v", err)
+		return "", err
+	}
+
+	return containerName, nil
+}
+
+type ContainerInfo struct {
+	Pid         string                     `json:"pid"`         // 容器的init进程在宿主机上的 PID
+	Id          string                     `json:"id"`          // 容器Id
+	Name        string                     `json:"name"`        // 容器名
+	Command     []string                   `json:"command"`     // 容器内init运行命令
+	CreatedTime string                     `json:"createTime"`  // 创建时间
+	Status      string                     `json:"status"`      // 容器的状态
+	Volume      string                     `json:"volume"`      // 容器的数据卷
+	PortMapping []string                   `json:"portmapping"` // 端口映射
+	ImageName   string                     `json:"imageName"`   // 镜像名
+	Detached    bool                       `json:"detached"`    // 是否后端执行
+	ResConf     *subsystems.ResourceConfig `json:"resConf"`     // cgroup限制
+	Env         []string                   `json:"env"`         // 容器环境变量
+	Network     string                     `json:"network"`     // 容器网络
+}
+```
+
+通过读取容器的配置文件(/var/run/sample-container-runtime/containerName/config.json)获取容器相关信息，然后重新执行容器启动流程(Run)。这里还需要注意重新运行容器时，只有容器进程和namespace发生改变，容器的ID保持不变，且cgroups和volume保持不变，需要做特殊处理，如下：
+
+```go
+// 保持ID不变
+func startContainer(containerName string) {
+	containerInfo, err := getContainerInfoByName(containerName)
+	if err != nil {
+		log.Errorf("Get contaienr info by name %s error %v", containerName, err)
+		return
+	}
+	Run(containerInfo.Detached, containerInfo.Id, containerInfo.Command, containerInfo.ResConf, containerName, containerInfo.Volume, containerInfo.ImageName, containerInfo.Env, containerInfo.Network, containerInfo.PortMapping)
+}
+
+// Create a AUFS filesystem as container root workspace
+func NewWorkSpace(volume, imageName, containerName string) {
+	CreateReadOnlyLayer(imageName)
+	CreateWriteLayer(containerName)
+	CreateMountPoint(containerName, imageName)
+	if volume != "" {
+		volumeURLs := strings.Split(volume, ":")
+		length := len(volumeURLs)
+		if length == 2 && volumeURLs[0] != "" && volumeURLs[1] != "" {
+			MountVolume(volumeURLs, containerName)
+			log.Infof("NewWorkSpace volume urls %q", volumeURLs)
+		} else {
+			log.Infof("Volume parameter input is not correct.")
+		}
+	}
+}
+
+// Create read-write layer
+func CreateWriteLayer(containerName string) {
+	writeURL := fmt.Sprintf(WriteLayerUrl, containerName)
+	if _, err := os.Stat(writeURL); os.IsNotExist(err) {
+		if err := os.MkdirAll(writeURL, 0777); err != nil {
+			log.Infof("Mkdir write layer dir %s error. %v", writeURL, err)
+		}
+	}
+}
+
+func MountVolume(volumeURLs []string, containerName string) error {
+	containerUrl := volumeURLs[1]
+	mntURL := fmt.Sprintf(MntUrl, containerName)
+	containerVolumeURL := mntURL + "/" + containerUrl
+	if _, err := os.Stat(containerVolumeURL); os.IsNotExist(err) {
+		if err := os.Mkdir(containerVolumeURL, 0777); err != nil {
+			log.Infof("Mkdir container dir %s error. %v", containerVolumeURL, err)
+		}
+		parentUrl := volumeURLs[0]
+		if err := os.Mkdir(parentUrl, 0777); err != nil {
+			log.Infof("Mkdir parent dir %s error. %v", parentUrl, err)
+		}
+		dirs := "dirs=" + parentUrl
+		_, err := exec.Command("mount", "-t", "aufs", "-o", dirs, "none", containerVolumeURL).CombinedOutput()
+		if err != nil {
+			log.Errorf("Mount volume failed. %v", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// Create aufs mount point
+func CreateMountPoint(containerName, imageName string) error {
+	mntUrl := fmt.Sprintf(MntUrl, containerName)
+	if _, err := os.Stat(mntUrl); os.IsNotExist(err) {
+		if err := os.MkdirAll(mntUrl, 0777); err != nil {
+			log.Errorf("Mkdir mountpoint dir %s error. %v", mntUrl, err)
+			return err
+		}
+
+		tmpWriteLayer := fmt.Sprintf(WriteLayerUrl, containerName)
+		tmpImageLocation := RootUrl + "/" + imageName
+		mntURL := fmt.Sprintf(MntUrl, containerName)
+		dirs := "dirs=" + tmpWriteLayer + ":" + tmpImageLocation
+		_, err := exec.Command("mount", "-t", "aufs", "-o", dirs, "none", mntURL).CombinedOutput()
+		if err != nil {
+			log.Errorf("Run command for creating mount point failed %v", err)
+			return err
+		}
+	}
+	return nil
+}
+```
+
+运行如下：
+
+```bash
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -m 100m -cpuset 1 -cpushare 512 -name container1 -e bird=l23 -e luck=bird -v /root/tmp/from1:/to1 busybox top
+{"level":"info","msg":"createTty false","time":"2020-11-05T12:03:50+08:00"}
+{"level":"info","msg":"NewWorkSpace volume urls [\"/root/tmp/from1\" \"/to1\"]","time":"2020-11-05T12:03:50+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-05T12:03:50+08:00"}
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           IMAGE       NAME         PID         STATUS      COMMAND     CREATED
+7186029418   busybox     container1   13481       running     top         2020-11-05 12:03:50
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime exec container1 sh
+{"level":"info","msg":"container pid 13481","time":"2020-11-05T12:04:59+08:00"}
+{"level":"info","msg":"command sh","time":"2020-11-05T12:04:59+08:00"}
+IGgzGHLSWs # ps -ef
+PID   USER     TIME  COMMAND
+    1 root      0:00 top
+    7 root      0:00 sh
+    8 root      0:00 ps -ef
+IGgzGHLSWs # mount 
+none on / type aufs (rw,relatime,si=b7a28d49ff1499ad)
+none on /to1 type aufs (rw,relatime,si=b7a28d48ccccd9ad)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /dev type tmpfs (rw,nosuid,mode=755)
+IGgzGHLSWs # env|grep bird
+luck=bird
+bird=l23
+$ cat /sys/fs/cgroup/memory/7186029418/tasks 
+13481
+
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime stop container1
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           IMAGE       NAME         PID         STATUS      COMMAND     CREATED
+7186029418   busybox     container1               stopped     top         2020-11-05 12:03:50
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime start container1  
+{"level":"info","msg":"NewWorkSpace volume urls [\"/root/tmp/from1\" \"/to1\"]","time":"2020-11-05T12:05:46+08:00"}
+{"level":"info","msg":"command all is top","time":"2020-11-05T12:05:46+08:00"}
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime ps
+ID           IMAGE       NAME         PID         STATUS      COMMAND     CREATED
+7186029418   busybox     container1   13829       running     top         2020-11-05 12:05:46
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime exec container1 sh  
+{"level":"info","msg":"container pid 13829","time":"2020-11-05T12:06:45+08:00"}
+{"level":"info","msg":"command sh","time":"2020-11-05T12:06:45+08:00"}
+HxNPTMOCSh # ps -ef
+PID   USER     TIME  COMMAND
+    1 root      0:00 top
+    7 root      0:00 sh
+    8 root      0:00 ps -ef
+HxNPTMOCSh # 
+HxNPTMOCSh # mount
+none on / type aufs (rw,relatime,si=b7a28d49ff1499ad)
+none on /to1 type aufs (rw,relatime,si=b7a28d48ccccd9ad)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /dev type tmpfs (rw,nosuid,mode=755)
+HxNPTMOCSh # 
+HxNPTMOCSh # env|grep bird
+luck=bird
+bird=l23
+$ cat /sys/fs/cgroup/memory/7186029418/tasks 
+13829
+```
+
+可以看到当容器重启时，PID有改变，容器ID以及cgroup，volume目录没有发生改变
+
 ### sample-container-runtime rm
 
 rm命令用于删除已经停止的容器，删除内容包括：容器存储信息，容器日志，容器aufs文件系统以及容器cgroup。步骤如下：
