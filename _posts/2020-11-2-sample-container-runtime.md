@@ -674,7 +674,7 @@ network namespace用于隔离进程网络资源，每个network namespace都有�
 JJMhAjPfRh # ifconfig
 ```
 
-可以看到容器中执行ifconfig命令显示为空，表明容器中没有任何网络设备；而宿主机是存在网络设备的，从这一点可以看出网络命令空间确实隔离了，而实现这一现象的操作只需要给Cloneflags设置syscall.CLONE_NEWNET即可：
+可以看到容器中执行ifconfig命令显示为空，表明容器中没有任何网络设备；而宿主机是存在网络设备的，从这一点可以看出容器网络命名空间确实隔离了，而实现这一现象的操作只需要给Cloneflags设置syscall.CLONE_NEWNET即可：
 
 ```go
 func NewParentProcess(tty bool, containerName, volume, imageName string, envSlice []string) (*exec.Cmd, *os.File) {
@@ -704,8 +704,8 @@ func NewParentProcess(tty bool, containerName, volume, imageName string, envSlic
 
 cgroups提供了对一组进程以及子进程资源限制，控制以及统计的能力，包括：CPU，内存，I/O，网络等。通过cgroups，我们可以实现对容器资源的限制和统计，下面介绍cgroups的几个组件：
 
-* cgroup是对进程分组管理的一种机制， 一个 cgroup包含一组进程，井可以在这个cgroup上增加Linux subsystem的各种参数配置，将一组进程和一组subsystem的系统参数关联起来
-* subsystem是一组资源控制的模块，包括：blkio(块设备(比如硬盘)输入输出的访问控制)，cpu(进程CPU调度策略)，cpuacct(进程CPU占用)，cpuset(在多核机器上设置 cgroup 中进程可以使用的 CPU 和内存)，memory(进程内存占用)，net_cls(用于将 cgroup 中进程产生的网络包分类)。每个subsystem会关联到定义了相应限制的cgroup上，并对该cgroup中的进程做资源控制
+* cgroup是对进程分组管理的一种机制， 一个cgroup包含一组进程，井可以在这个cgroup上增加Linux subsystem的各种参数配置，将一组进程和一组subsystem的系统参数关联起来
+* subsystem是一组资源控制的模块，包括：blkio(块设备(比如硬盘)输入输出的访问控制)，cpu(进程CPU调度策略)，cpuacct(进程CPU占用)，cpuset(在多核机器上设置cgroup中进程可以使用的CPU)，memory(进程内存占用)，net_cls(用于将cgroup中进程产生的网络包分类)。每个subsystem会关联到定义了相应限制的cgroup上，并对该cgroup中的进程做资源控制
 * hierarchy的功能是把一组cgroup串成一个树状的结构，一个这样的树便是一个hierarchy，通过这种树状结构，cgroups可以做到继承
 
 cgroups是通过这三个组件之间相互协作实现的，它们之间的关系可以归纳如下：
@@ -715,7 +715,7 @@ cgroups是通过这三个组件之间相互协作实现的，它们之间的关�
 * 一个进程可以作为多个cgroup的成员，但是这些cgroup必须在不同的hierarchy中
 * 一个进程fork出子进程时，子进程是和父进程在同一个cgroup中的，也可以根据需要将其移动到其它cgroup中
 
-Kernel为了使对cgroups的配置更直观，是通过一个虚拟的树状文件系统配置cgroups的，通过层级的目录虚拟出cgroup树。系统默认已经为每个subsystem创建了一个hierarchy，如下：
+Kernel通过层级的目录虚拟出cgroups树，使得cgroups的配置更加直观。系统默认已经为每个subsystem创建了一个hierarchy，如下：
 
 ```bash
 cgroup on /sys/fs/cgroup/systemd type cgroup (rw,nosuid,nodev,noexec,relatime,xattr,release_agent=/usr/lib/systemd/systemd-cgroups-agent,name=systemd)
