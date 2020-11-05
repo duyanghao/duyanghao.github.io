@@ -1681,7 +1681,7 @@ type ContainerInfo struct {
 }
 ```
 
-通过读取容器的配置文件(/var/run/sample-container-runtime/containerName/config.json)获取容器相关信息，然后重新执行容器启动流程(Run)。这里还需要注意重新运行容器时，只有容器进程和namespace发生改变，容器的ID保持不变，且cgroups和volume保持不变，需要做特殊处理，如下：
+通过读取容器的配置文件(/var/run/sample-container-runtime/containerName/config.json)获取容器相关信息，然后重新执行容器启动流程(Run)。这里需要注意的是：在重新运行容器时，只有容器进程和namespace发生改变，容器的ID保持不变，且cgroups和volume保持不变，因此需要做特殊处理
 
 ```go
 // 保持ID不变
@@ -1835,8 +1835,8 @@ rm命令用于删除已经停止的容器，删除内容包括：容器存储信
 
 * 根据容器名查找容器信息(getContainerInfoByName)
 * 判断容器是否处于停止状态(containerInfo.Status)
-* 删除容器云数据存储目录(容器信息+日志)
-* 删除容器对应的aufs文件系统(包括读写层，不包括只读层)
+* 删除容器数据存储目录(容器信息+日志)
+* 删除容器对应的aufs文件系统(包括aufs挂载点，读写层；不包括只读层)
 * 删除容器对应的各subsystem cgroup
 
 核心代码如下：
