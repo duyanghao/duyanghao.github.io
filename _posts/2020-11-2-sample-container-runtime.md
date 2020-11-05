@@ -1172,10 +1172,10 @@ func logContainer(containerName string) {
 执行如下：
 
 ```bash
-# ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -name container4 busybox top  
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime run -d -name container4 busybox top  
 {"level":"info","msg":"createTty false","time":"2020-11-03T18:01:39+08:00"}
 {"level":"info","msg":"command all is top","time":"2020-11-03T18:01:39+08:00"}
-# ./build/pkg/cmd/sample-container-runtime/sample-container-runtime logs container4
+$ ./build/pkg/cmd/sample-container-runtime/sample-container-runtime logs container4
 Mem: 264484K used, 237248K free, 1256K shrd, 19616K buff, 115258K cached
 CPU:  0.0% usr  0.0% sys  0.0% nic 99.8% idle  0.0% io  0.0% irq  0.0% sirq
 Load average: 0.05 0.05 0.01 1/303 9
@@ -1184,9 +1184,9 @@ Load average: 0.05 0.05 0.01 1/303 9
 
 ### sample-container-runtime exec
 
-sample-container-runtime exec可以进入到容器命名空间中。由于对Mount Namespace来说， 一个具有多线程的进程是无法使用 setns调用进入到对应的命名空间的，而Go每启动一个程序就会进入多线程状态，因此无法简简单单地在 Go 里面直接调用系统调用，使当前的进程进入对应的Mount Namespace
+sample-container-runtime exec可以进入到容器命名空间中。由于对Mount Namespace来说，一个具有多线程的进程是无法使用setns调用进入到对应命名空间的，而Go每启动一个程序就会进入多线程状态(单进程多线程模型)，因此无法简单地在Go里面直接调用setns，使当前的进程进入容器对应的Mount Namespace
 
-这里我们采用借助Cgo来实现这个功能。Cgo允许Go程序以一种特殊的方式调用C函数与标准库，Cgo会将C 源码文件和Go文件整合成一个包，如下是使用C根据指定PID进入其对应的namespace的函数：
+这里我们采用借助Cgo来实现这个功能。Cgo允许Go程序以一种特殊的方式调用C函数与标准库，Cgo会将C源码文件和Go文件整合成一个包，如下是使用C根据指定PID进入其对应namespace的函数：
 
 ```c
 package nsenter
@@ -1379,7 +1379,7 @@ var ExecCommand = cli.Command{
 }
 ```
 
-通过如上的调用流程，很巧妙地解决了在不影响启动容器功能前提下，如何在Go运行的环境启动之前进入到容器命名空间的问题，如下是执行结果：
+通过如上的调用流程，很巧妙地解决了在不影响启动容器功能的前提下，如何在Go运行的环境启动之前进入到容器命名空间的问题，如下是执行结果：
 
 ```bash
 # outside of container
@@ -1408,7 +1408,7 @@ xxx     15562 15561  0 19:05 pts/1    00:00:00 sh
 
 这里有一个小疑问：为什么子进程(proc/self/exec)没有显示出来？
 
-答案就是：**CLONE_NEWPID 和其他 namespace 不同，把进程加入到PID namespace 并不会修改该进程的 PID namespace，而只修改它所有子进程的 PID namespace**
+答案就是：**CLONE_NEWPID和其他namespace不同，把进程加入到PID namespace并不会修改该进程的PID namespace，而只修改它所有子进程的PID namespace**
 
 ```bash
 # PID namespace diffs between proc/self/exec and sh
