@@ -763,7 +763,7 @@ func (c *CgroupManager) Set(res *subsystems.ResourceConfig) error {
 	return nil
 }
 
-//释放cgroup
+// 释放cgroup
 func (c *CgroupManager) Destroy() error {
 	for _, subSysIns := range subsystems.SubsystemsIns {
 		if err := subSysIns.Remove(c.Path); err != nil {
@@ -848,7 +848,7 @@ func (s *MemorySubSystem) Name() string {
 }
 ```
 
-可以看到MemorySubSystem.Set将res.MemoryLimit限制写入到了`/sys/fs/cgroup/memory/ContainerID/memory.limit_in_bytes`文件，对ContainerID命名的cgroup进行了内存限制；同时Apply函数将进程PID写入到`/sys/fs/cgroup/memory/ContainerID/tasks`文件中，使得容器进程被添加到该cgroup中；最后Remove函数删除`/sys/fs/cgroup/memory/ContainerID`目录，也即删除该cgroup。其它subsystem原理依次类推
+可以看到MemorySubSystem.Set将res.MemoryLimit限制写入到了`/sys/fs/cgroup/memory/ContainerID/memory.limit_in_bytes`文件，对ContainerID命名的cgroup进行了内存限制；同时Apply函数将进程PID写入到`/sys/fs/cgroup/memory/ContainerID/tasks`文件中，使得容器进程被添加到该cgroup中；最后Remove函数删除`/sys/fs/cgroup/memory/ContainerID`目录，也即删除该cgroup。其它subsystem原理依此类推
 
 运行程序如下：
 
