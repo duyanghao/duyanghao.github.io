@@ -2306,7 +2306,7 @@ func (ipam *IPAM) Release(subnet *net.IPNet, ipaddr *net.IP) error {
 }
 ```
 
-从上面代码可以看出，这里为了使代码实现简单和易于阅读，使用string中的一个字符表示一个状态位(实际上可以采用一位表示一个是否分配的状态位，这样资源会有更低的消耗)。其中，load函数用于从指定文件路径(/var/run/sample-container-runtime/network/ipam/subnet.json)加载网络地址信息；而dump函数则相反，将网络地址信息写入到该文件中。Allocate与Release功能也相反，前者用于从某个网络中分配一个IP地址，后者释放网络中的某个IP地址
+从上面代码可以看出，这里为了使代码实现简单和易于阅读，使用string中的一个字符表示一个状态位(实际上可以采用一位表示一个是否分配的状态位，这样资源会有更低的消耗)。其中，load函数用于从指定文件路径(/var/run/sample-container-runtime/network/ipam/subnet.json)加载网络地址信息；而dump函数则相反，将网络地址信息写入到该文件中。Allocate与Release功能相反，前者用于从某个网络中分配一个IP地址，后者释放网络中的某个IP地址
 
 ### Bridge网络管理
 
@@ -2402,7 +2402,7 @@ func createBridgeInterface(bridgeName string) error {
 
 通过netlink的LinkAdd方法，创建出了LinuxBridge的虚拟设备
 
-接着，设置 Bridge 设备的地址和路由：
+接着，设置Bridge设备的地址和路由：
 
 ```go
 	// Set bridge IP
@@ -2483,7 +2483,7 @@ func setupIPTables(bridgeName string, subnet *net.IPNet) error {
 }
 ```
 
-通过直接执行 iptables命令，创建SNAT规则，只要是从这个网桥上出来的包，都会对其做源IP地址转换，保证了容器经过宿主机访问外部网络请求的包都转换成宿主机的IP，从而能正确的送达和接收
+通过直接执行iptables命令，创建SNAT规则，只要是从这个网桥上出来的包，都会对其做源IP地址转换，保证了容器经过宿主机访问外部网络请求的包都转换成宿主机的IP，从而能正确的送达和接收
 
 ### 管理容器网络端点
 
@@ -2491,7 +2491,7 @@ func setupIPTables(bridgeName string, subnet *net.IPNet) error {
 
 ![](/public/img/sample-container-runtime/network-endpoint.png)
 
-从上述流程可以看到，在容器的Net Namespace中，可以通过容器的Veth直接与挂载在同一个 Bridge上的容器通信，以及通过Bridge上创建的iptables的MASQUERADE规则访问外部网络，同时，外部也可以通过宿主机的端口经过iptables的DNAT的转发访问容器内部。也即实现了：**容器与容器通信，容器与宿主机通信，容器与外部宿主机通信**
+从上述流程可以看到，在容器的Net Namespace中，可以通过容器的Veth直接与挂载在同一个 Bridge上的容器通信，以及通过Bridge上创建的iptables MASQUERADE规则访问外部网络，同时，外部也可以通过宿主机的端口经过iptables DNAT转发访问容器内部。也即实现了：**容器与容器通信，容器与宿主机通信，容器与外部宿主机通信**
 
 下面我们看具体实现：
 
@@ -2572,7 +2572,7 @@ func Connect(networkName string, cinfo *container.ContainerInfo) error {
 }
 ```
 
-我们看一下如何实现连接容器网络端点到 Linux Bridge：
+我们看一下如何实现连接容器网络端点到Linux Bridge：
 
 ```go
 // 连接一个网络和网络端点
@@ -2614,7 +2614,7 @@ func (d *BridgeNetworkDriver) Connect(network *Network, endpoint *Endpoint) erro
 }
 ```
 
-通过调用Bridge驱动中的Connect 方法 ，容器的网络端点己经挂载到了Bridge网络上。下一步就是配置网络端点的另外一端 ，即容器的 network namespace那一端(容器有自己独立的network Namespace，需要将网络端点Veth设备的另外一端移到这个network namespace中并配置，才能给这个容器 “插上网线”）：
+通过调用Bridge驱动中的Connect方法，容器的网络端点己经挂载到了Bridge网络上。下一步就是配置网络端点的另外一端，即容器的network namespace那一端(容器有自己独立的network Namespace，需要将网络端点Veth设备的另外一端移到这个network namespace中并配置，才能给这个容器“插上网线”）：
 
 ```go
 // 配置容器网络端点的地址和路由
@@ -2722,9 +2722,9 @@ func enterContainerNetns(enLink *netlink.Link, cinfo *container.ContainerInfo) f
 }
 ```
 
-在调用 enterContainerNetns(&peerLink, cinfo)()时会使当前执行的函数进入容器的Net Namespace，配置容器网络端点的地址和路由，而用了defer关键字后会在函数体结束时执行返回的恢复函数指针，恢复到之前宿主机所在的网络空间
+在调用enterContainerNetns(&peerLink, cinfo)()时会使当前执行的函数进入容器的Net Namespace，配置容器网络端点的地址和路由，而用了defer关键字后会在函数体结束时执行返回的恢复函数指针，恢复到之前宿主机所在的网络空间
 
-现在的容器己经有了自己的网络空间和地址，但是这个地址宿主机外部访问不到的，所以需要配置宿主机到容器的端口映射，通过 iptables的DNAT规则来实现宿主机上的请求转发到容器上：
+现在的容器己经有了自己的网络空间和地址，但是这个地址宿主机外部是访问不到的，所以需要配置宿主机到容器的端口映射，通过iptables的DNAT规则来实现宿主机上的请求转发到容器中：
 
 ```go
 func configPortMapping(ep *Endpoint, cinfo *container.ContainerInfo) error {
