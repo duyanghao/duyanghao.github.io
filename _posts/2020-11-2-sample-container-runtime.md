@@ -2150,28 +2150,28 @@ bird=l23
 
 * Linux Veth：Veth是成对出现的虚拟网络设备，发送到Veth一端虚拟设备的请求会从另一端的虚拟设备中发出。在容器的虚拟化场景中，经常会使用Veth连接不同的网络Namespace
 * Linux Bridge：Bridge虚拟设备是用来桥接的网络设备，它相当于交换机，可以连接不同的网络设备，当请求到达Bridge设备时，可以通过报文中的Mac地址进行广播或转发
-* Linux路由表：路由表用于定义某个网络namespace中包的流向，通过route可以查看路由信息，几本核心字段含义如下：
+* Linux路由表：路由表用于定义某个网络namespace中包的流向，通过route可以查看路由信息，几个核心字段含义如下：
   * Destination：The destination network or destination host(目标网段或者主机)
-  * Gateway：The gateway address or '*' if none set(网关地址，”*” 表示目标是本主机所属的网络，不需要路由)
+  * Gateway：The gateway address or * if none set(网关地址，*表示目标是本主机所属的网络，不需要路由)
   * Genmask：The netmask for the destination net; '255.255.255.255' for a host destination and '0.0.0.0' for the default route(目标网络掩码)
   * Flags：Possible flags，U — 路由是活动的，H — 目标是一个主机，G — 路由指向网关
   * Iface：Interface to which packets for this route will be sent(该路由表项对应的输出接口)
-* Linux iptables：iptables是对Linux内核netfilter模块进行操作和展示的工具，用来管理包的流动和转送。iptables定义了一套链式处理的结构，在网络包传输的各个阶段可以使用不同的策略对包进行加工、传送或丢弃。在容器虚拟化的技术中，经常会用到两种策略 MASQUERADE(可以将请求包中的源地址转换成一个网络设备的地址)和DNAT(DNAT策略也是做网络地址的转换，不过它是更换目标地址，经常用于将内部网络地址的端口映射到外部去)，用于容器和宿主机外部的网络通信
+* Linux iptables：iptables是对Linux内核netfilter模块进行操作和展示的工具，用来管理包的流动和转送。iptables定义了一套链式处理的结构，在网络包传输的各个阶段可以使用不同的策略对包进行加工、传送或丢弃。在容器虚拟化的技术中，经常会用到两种策略：MASQUERADE(可以将请求包中的源地址转换成一个网络设备的地址)和DNAT(DNAT策略也是做网络地址的转换，不过它是更换目标地址，经常用于将内部网络地址的端口映射到外部去)，用于容器和宿主机外部的网络通信
 
 在介绍完上述基础网络知识后，我们开始描述sample-container-runtime的网络模型，如下：
 
 ![](/public/img/sample-container-runtime/scr-network-model.png)
 
-* 网络是容器的一个集合，在一个网络中的容器可以通过这个网络通信，就像挂载到同一个Linux Bridge设备上的网络设备一样，可以直接通过 Bridge实现网络互连。网络中会包括该网络相关的配置，比如：网络的容器地址段、网络操作所调用的网络驱动等信息
-* 网络端点：网络端点用于连接容器与网络，保证容器内部与网络的通信。如同Veth设备，一端挂载到容器内部，另一端挂载到 Bridge上， 就能保证容器和网络的通信。 网络端点中会包括连接到网络的一些信息，比如地址、 Veth设备、端口映射、连接的容器和网络等信息
-* 网络驱动：网络驱动 (Network Driver) 是一个网络功能中的组件，不同的驱动对网络的创建、连接、销毁的策略不同，通过在创建网络时指定不同的网络驱动来定义使用哪个驱动做网络的配置(例如Bridge)
+* 网络是容器的一个集合，在一个网络中的容器可以通过这个网络通信，就像挂载到同一个Linux Bridge设备上的网络设备一样，可以直接通过Bridge实现网络互连。网络中会包括该网络相关的配置，比如：网络的容器地址段、网络操作所调用的网络驱动等信息
+* 网络端点：网络端点用于连接容器与网络，保证容器内部与网络的通信。如同Veth设备，一端挂载到容器内部，另一端挂载到Bridge上，就能保证容器和网络的通信。网络端点中会包括连接到网络的一些信息，比如地址、Veth设备、端口映射、连接的容器和网络等信息
+* 网络驱动：网络驱动 (Network Driver) 是一个网络功能中的组件，不同的驱动对网络的创建、连接、销毁的策略不同，通过在创建网络时指定不同的网络驱动来定义使用哪种驱动做网络的配置(例如Bridge)
 * IPAM：IPAM也是网络功能中的一个组件，用于网络IP地址的分配和释放，包括容器的IP地址和网络网关的IP地址
 
 下面我们分别介绍上述模型的具体实现细节：
 
 ### IPAM
 
-对于IP地址的管理。我们可以使用bitmap(位图，在大规模连续且少状态的数据处理中有很高的效率)来存储地址分配信息，在网段中，某个 IP 地址有两种状态，l表示己经被分配了 ，0表示还未被分配，那么一个IP地址的状态就可以用一位来表示 ，井且通过相对偏移也能够迅速定位到数据所在的位：
+对于IP地址的管理。我们可以使用bitmap(位图，在大规模连续且少状态的数据处理中有很高的效率)来存储地址分配信息，在网段中，某个IP地址有两种状态，1表示己经被分配了，0表示还未被分配，那么一个IP地址的状态就可以用一位来表示 ，井且通过相对偏移也能够迅速定位到数据所在的位：
 
 ![](/public/img/sample-container-runtime/ipam.png) 
 
@@ -2306,7 +2306,7 @@ func (ipam *IPAM) Release(subnet *net.IPNet, ipaddr *net.IP) error {
 }
 ```
 
-从上面代码可以看出，这里为了代码实现简单和易于阅读，使用string中的一个字符表示一个状态位(实际上可以采用一位表示一个是否分配的状态位，这样资源会有更低的消耗)。其中，load函数用于从指定文件路径(/var/run/sample-container-runtime/network/ipam/subnet.json)加载网络地址信息；而dump函数则相反，将网络地址信息写入到该文件中。Allocate与Release功能也相反，前者用于从某个网络中分配一个IP地址，后者释放网络中的某个IP地址
+从上面代码可以看出，这里为了使代码实现简单和易于阅读，使用string中的一个字符表示一个状态位(实际上可以采用一位表示一个是否分配的状态位，这样资源会有更低的消耗)。其中，load函数用于从指定文件路径(/var/run/sample-container-runtime/network/ipam/subnet.json)加载网络地址信息；而dump函数则相反，将网络地址信息写入到该文件中。Allocate与Release功能也相反，前者用于从某个网络中分配一个IP地址，后者释放网络中的某个IP地址
 
 ### Bridge网络管理
 
