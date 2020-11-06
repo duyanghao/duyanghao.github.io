@@ -704,7 +704,7 @@ func NewParentProcess(tty bool, containerName, volume, imageName string, envSlic
 
 cgroups提供了对一组进程以及子进程资源限制，控制以及统计的能力，包括：CPU，内存，I/O，网络等。通过cgroups，我们可以实现对容器资源的限制和统计，下面介绍cgroups的几个组件：
 
-* cgroup是对进程分组管理的一种机制， 一个cgroup包含一组进程，井可以在这个cgroup上增加Linux subsystem的各种参数配置，将一组进程和一组subsystem的系统参数关联起来
+* cgroup是对进程分组管理的一种机制， 一个cgroup包含一组进程，并可以在这个cgroup上增加Linux subsystem的各种参数配置，将一组进程和一组subsystem的系统参数关联起来
 * subsystem是一组资源控制的模块，包括：blkio(块设备(比如硬盘)输入输出的访问控制)，cpu(进程CPU调度策略)，cpuacct(进程CPU占用)，cpuset(在多核机器上设置cgroup中进程可以使用的CPU)，memory(进程内存占用)，net_cls(用于将cgroup中进程产生的网络包分类)。每个subsystem会关联到定义了相应限制的cgroup上，并对该cgroup中的进程做资源控制
 * hierarchy的功能是把一组cgroup串成一个树状的结构，一个这样的树便是一个hierarchy，通过这种树状结构，cgroups可以做到继承
 
@@ -2171,7 +2171,7 @@ bird=l23
 
 ### IPAM
 
-对于IP地址的管理。我们可以使用bitmap(位图，在大规模连续且少状态的数据处理中有很高的效率)来存储地址分配信息，在网段中，某个IP地址有两种状态，1表示己经被分配了，0表示还未被分配，那么一个IP地址的状态就可以用一位来表示 ，井且通过相对偏移也能够迅速定位到数据所在的位：
+对于IP地址的管理。我们可以使用bitmap(位图，在大规模连续且少状态的数据处理中有很高的效率)来存储地址分配信息，在网段中，某个IP地址有两种状态，1表示己经被分配了，0表示还未被分配，那么一个IP地址的状态就可以用一位来表示 ，并且通过相对偏移也能够迅速定位到数据所在的位：
 
 ![](/public/img/sample-container-runtime/ipam.png) 
 
