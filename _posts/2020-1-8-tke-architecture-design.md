@@ -4,7 +4,7 @@ title: TKE架构设计
 date: 2020-1-8 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: 本文对TKE架构设计进行分析和讲解……
+excerpt: TKE是腾讯Kubernetes-native公有云容器管理平台。本文基于TKE v1.1.0开源版本，介绍了TKE基于Kubernetes Aggregated APIServer以及Controller的设计模式，并以business模块作为例子进行了详细说明。总的来说，TKE开源项目代码精炼且优雅，不失为Kubernetes AA的最佳实践
 ---
 
 ## 前言
