@@ -44,11 +44,8 @@ Go使用semantic version来标识package的版本。具体来说：
 >> The version selection problem therefore is to define the meaning of, and to give algorithms implementing, these four operations on build lists:
 >>
 >> 1. Construct the current build list.
->>
 >> 2. Upgrade all modules to their latest versions.
->>
 >> 3. Upgrade one module to a specific newer version.
->>
 >> 4. Downgrade one module to a specific older version.
 
 这里将一次构建(go build)中所依赖模块及其版本列表称为build list，对于一个稳定发展的项目，build list应该尽可能保持不变，同时也允许开发人员修改build list，比如升级或者降级依赖。而依赖管理因此也可以归纳为如下四个操作：
@@ -71,11 +68,8 @@ Go使用semantic version来标识package的版本。具体来说：
 >> Then the definitions of the four operations are:
 >>
 >> 1. To construct the build list for a given target: start the list with the target itself, and then append each requirement's own build list. If a module appears in the list multiple times, keep only the newest version.
->>
 >> 2. To upgrade all modules to their latest versions: construct the build list, but read each requirement as if it requested the latest module version.
->>
 >> 3. To upgrade one module to a specific newer version: construct the non-upgraded build list and then append the new module's build list. If a module appears in the list multiple times, keep only the newest version.
->>
 >> 4. To downgrade one module to a specific older version: rewind the required version of each top-level requirement until that requirement's build list no longer refers to newer versions of the downgraded module.
 
 Minimal version selection也即最小版本选择，如果光看上述的引用可能会很迷惑(或者矛盾)：明明是选择最新的版本(keep only the newest version)，为什么叫最小版本选择？
@@ -84,7 +78,6 @@ Minimal version selection也即最小版本选择，如果光看上述的引用�
 
 * 最小的修改操作
 * 最小的需求列表
-
 * 最小的模块版本。这里比较的对象是该模块的最新版本：如果项目需要依赖的模块版本是v1.2，而该模块实际最新的版本是v1.3，那么最小版本选择算法会选取v1.2版本而非v1.3(为了尽可能提高构建的稳定性和重复性)。也即'最小版本'表示项目所需要依赖模块的最小版本号(v1.2)，而不是该模块实际的最小版本号(v1.1)，也并非该模块实际的最大版本号(v1.3)
 
 这里，我们举例子依次对Go Modules最小版本选择的算法细节进行阐述：
