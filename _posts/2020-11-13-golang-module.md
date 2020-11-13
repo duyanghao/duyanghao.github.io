@@ -21,7 +21,7 @@ excerpt: 依赖管理是一个语言必须要解决的问题，而且随着项�
 * [dep](https://github.com/golang/dep)(2016.08)：dep期望统一Go依赖管理，虽然提供了兼容其它依赖管理工具的功能，但是本质上还是利用GOPATH和vendor解决依赖管理
 * [Go Modules](https://research.swtch.com/vgo-principles)(2018.08)：Go 1.11发布的官方依赖管理解决方案，并最终统一了Go依赖管理(by Russ Cox)。Go Modules以semantic version(语义版本化)和Minimal Version Selection, MVS(最小版本选择)为核心，相比dep更具稳定性；同时也解决了vendor代码库依赖过于庞大，造成存储浪费的问题
 
-通过如上历史，我们可以看出：go依赖管理的发展历史，其实就是go去google的历史(google内部没有强烈的版本管理需求)，也是典型的社区驱动开发的例子
+通过如上历史，我们可以看出：Go依赖管理的发展历史，其实就是Go去google的历史(google内部没有强烈的版本管理需求)，同时也是典型的社区驱动开发的例子
 
 接下来，我将详细探讨Go Modules的两大核心概念：semantic version(语义化版本)和Minimal Version Selection, MVS(最小版本选择)
 
