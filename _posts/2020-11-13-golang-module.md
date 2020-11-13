@@ -18,7 +18,7 @@ excerpt: 依赖管理是一个语言必须要解决的问题，而且随着项�
 * godep(2013.09)：godep提供了一个依赖文件，记录所有依赖具体的版本和路径，编译时将依赖下载到workspace中，然后切换到指定版本，并设置GOPATH访问(解决go get没有版本管理的缺陷)
 * [gopkg.in](https://labix.org/gopkg.in)(2014.03)：通过import路径中添加版本号来标示不同版本，而实际代码存放于github中，go通过redirect获取代码。例如(import `gopkg.in/yaml.v1`，实际代码地址为：`https://github.com/go-yaml/yaml`)
 * vendor(2015.06)；Go 1.5版本引入vendor(类似godep)，存放于项目根目录，编译时优先使用vendor目录，之后再去GOPATH，GOROOT目录查找(解决GOPATH无法管控依赖变更和丢失的问题)
-* [dep](https://github.com/golang/dep)(2016.08)：dep期望统一Golang依赖管理，虽然提供了兼容其它依赖管理工具的功能，但是本质上还是利用GOPATH和vendor解决依赖管理
+* [dep](https://github.com/golang/dep)(2016.08)：dep期望统一Go依赖管理，虽然提供了兼容其它依赖管理工具的功能，但是本质上还是利用GOPATH和vendor解决依赖管理
 * [Go Modules](https://research.swtch.com/vgo-principles)(2018.08)：Go 1.11发布的官方依赖管理解决方案，并最终统一了Go依赖管理(by Russ Cox)。Go Modules以semantic version(语义版本化)和Minimal Version Selection, MVS(最小版本选择)为核心，相比dep更具稳定性；同时也解决了vendor代码库依赖过于庞大，造成存储浪费的问题
 
 通过如上历史，我们可以看出：go依赖管理的发展历史，其实就是go去google的历史(google内部没有强烈的版本管理需求)，也是典型的社区驱动开发的例子
