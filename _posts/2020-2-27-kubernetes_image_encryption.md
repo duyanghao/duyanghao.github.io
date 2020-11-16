@@ -4,7 +4,7 @@ title: 容器安全——镜像加密
 date: 2020-2-27 19:10:31
 category: 技术
 tags: Kubernetes container-runtime image-encryption
-excerpt: ​在容器安全涉及的内容中，目前还不十分成熟的部分是镜像加密，镜像加密在数据保密性要求较强的领域中会显得十分重要，例如：金融、银行以及国企等，本文针对社区目前的工作对镜像加密的原理及使用进行分析和讲解
+excerpt: 在容器安全涉及的内容中，目前还不十分成熟的部分是镜像加密，镜像加密在数据保密性要求较强的领域中会显得十分重要，例如：金融、银行以及国企等。本文首先介绍了镜像加密涉及的OCI规范，在此基础上对镜像加密原理以及流程进行了说明，并利用containerd imgcrypt工具对加密流程进行了实操。而Kubernetes对镜像加密特性支持Node Key Model以及Multitenant Key Model两种使用模式，本文详细讲解了Kubernetes基于Node Key Model使用模式的原理&流程，并结合CRIO演示了镜像加密Kubernetes-Native的用法。通过本文，用户可以了解到镜像加密的原理以及社区目前这块的进展和规划
 ---
 
 ## Overview
@@ -35,7 +35,7 @@ OCI(Open Container Initiative)由 Docker，CoreOS以及容器行业中的其他�
 * [containerd](https://github.com/containerd/containerd)：在[runc](https://github.com/opencontainers/runc)基础上实现了`OCI Image Spec`部分
 * [cri-o](https://github.com/cri-o/cri-o)：在[runc](https://github.com/opencontainers/runc)基础上实现了`OCI Image Spec`部分(base on [containers/image](https://github.com/containers/image), [containers/storage](https://github.com/containers/storage) and [CNI](https://github.com/containernetworking/cni))
 * [Podman](https://github.com/containers/libpod)：在[Buildah](https://github.com/containers/buildah)基础上实现了`OCI Image&Runtime Spec`([Buildah and Podman relationship](https://github.com/containers/buildah#buildah-and-podman-relationship))
-* [docker](https://github.com/moby/moby)：在[runc](https://github.com/opencontainers/runc)基础上实现了`OCI Image Spec`部分([计划这部分代码切换到containerd](https://github.com/moby/moby/issues/38043))
+* [docker](https://github.com/moby/moby)：在containerd基础上包装了docker的API，并计划将底层相关代码都迁移到containerd(moby/moby#38043)
 * [rkt(pronounced like a "rocket")](https://github.com/rkt/rkt)
 
 为此`containerd`, `cri-o`, `docker`以及`rkt`也被广义地称为`container runtime`(High-Level Container Runtimes)，如图：
@@ -784,7 +784,7 @@ Commercial support is available at
 * 2、利用对称加密算法(i.e. AES)加密镜像Layer，加密后数据长度不变——对镜像pull影响不大&解密速度快，耗费时间少
 * 3、Memory would not be that bad since we are using a stream cipher
   
-**补充：目前社区对于Docker的支持计划参考如下(我的思考)：应该是等到Docker `OCI`部分切换到`Containerd`，然后对于`CRI-Docker`写插件支持镜像加密，所以目前是阻塞的状态，参考[The main integration points for Encrypted Container Images](https://github.com/opencontainers/image-spec/pull/775#issuecomment-540060318)**
+**补充：目前社区对于Docker的支持计划参考如下(我的思考)：应该是等到Docker底层代码切换到Containerd(moby/moby#38043)，然后修改docker-shim支持镜像加密，所以目前是[阻塞的状态](https://github.com/opencontainers/image-spec/pull/775#issuecomment-540060318)**
 
 ## Conclusion
 
