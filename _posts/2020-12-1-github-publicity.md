@@ -1,15 +1,15 @@
 ---
 layout: post
-title: github自研项目概述
+title: Github自研项目推广
 date: 2020-12-3 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: 本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望通过本文可以使项目能更多地被认识和推广
+excerpt: 本文对自研的Github项目进行了一个概括性的介绍，包括功能和使用场景，希望通过本文可以使项目能更多地被认识和推广
 ---
 
 ## 前言
 
-本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望项目能更多地被认识和推广
+本文对自研的Github项目进行了一个概括性的介绍，包括功能和使用场景，希望项目能更多地被认识和推广
 
 ## 项目总览
 
@@ -351,6 +351,6 @@ func (tw *TaskWork) AsyncTask(task TaskChan) error {
 
 ## Conclusion
 
-本文对部分自研github项目的功能以及使用场景进行了概述，希望通过本文可以使项目能更多地被认识和推广
+本文对部分自研Github项目的功能以及使用场景进行了概述，希望通过本文可以使项目能更多地被认识和推广
 
 ![img](https://duyanghao.github.io/public/img/wechat/duyanghao.png)
