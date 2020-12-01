@@ -4,12 +4,12 @@ title: github自研项目概述
 date: 2020-12-3 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: 本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望通过本文可以使项目能更多地被认可和推广
+excerpt: 本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望通过本文可以使项目能更多地被认识和推广
 ---
 
 ## 前言
 
-本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望项目能更多地被认可和推广
+本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望项目能更多地被认识和推广
 
 ## 项目总览
 
@@ -165,11 +165,11 @@ DemoOs是对《Linux内核完全剖析：基于0.12内核》中的例子进行�
 
 **DemoOs可谓是：麻雀虽小，五脏俱全，是入门Linux内核的不二选择**
 
-## registry-sync-tools
+## [registry-sync-tools](https://github.com/duyanghao/registry-sync-tools)
 
 ![img](https://github.com/duyanghao/registry-sync-tools/raw/master/images/registry-sync-tools.png)
 
-registry-sync-tools是一个kubernetes-native工具，用于定期从github中获取镜像列表，并依据该镜像列表从一个镜像仓库推送到另一个镜像仓库。**支持helm chart一键部署，适用于日常镜像的备份**
+registry-sync-tools是一个kubernetes-native工具，用于定期从github中获取镜像列表，并依据该列表将镜像从一个镜像仓库推送到另一个镜像仓库。**支持helm chart一键部署，适用于日常镜像的备份**
 
 ## [crds-code-generation-tools](https://github.com/duyanghao/crds-code-generation-tools)
 
@@ -266,7 +266,7 @@ generated
     └── duyanghao
 ```
 
-**本项目适用于快速构建简单的CRDs以及对应的clientset**
+**本项目适用于快速构建简单的CRDs模板以及对应的clientset**
 
 ## [registry-pressure-measurement-tools](https://github.com/duyanghao/registry-pressure-measurement-tools)
 
@@ -280,13 +280,31 @@ registry-pressure-measurement-tools是基于[openstack test_plans](https://docs.
 
 ## [GSEAsyncServer](https://github.com/duyanghao/GSEAsyncServer)
 
-[GSEAsyncServer](https://github.com/duyanghao/GSEAsyncServer)是自研的Go异步任务处理框架，采用有缓存channel进行任务生产和消费，每个任务会单独以一个goroutine运行，并设置超时限制，整个项目核精简且高效，代码只有几百行：
+[GSEAsyncServer](https://github.com/duyanghao/GSEAsyncServer)是自研的Go异步任务处理框架，采用有缓存channel进行任务生产和消费，每个任务会单独以一个goroutine运行，并设置超时限制，整个项目精简且高效，代码只有几百行：
 
 ![img](https://github.com/duyanghao/GSEAsyncServer/raw/master/images/architecture.png)
 
 **该项目适合单独运行，也很容易抽取核心代码与其它系统进行集成**
 
 ```go
+type TaskWork struct {
+	taskClient *Task
+	taskChan   chan TaskChan
+	queueChan  chan int
+	sync.RWMutex
+}
+
+...
+func NewTaskWork(c *Configuration.MysqlConfig) (*TaskWork, error) {
+	...
+	return &TaskWork{
+		taskClient: task,
+		taskChan:   make(chan TaskChan),
+		queueChan:  make(chan int, WORK_CHANNEL_LEN),
+	}, nil
+}
+
+...
 func (tw *TaskWork) Run() error {
 	defer func() {
 		close(tw.taskChan)
@@ -333,6 +351,6 @@ func (tw *TaskWork) AsyncTask(task TaskChan) error {
 
 ## Conclusion
 
-本文对部分自研github项目的功能以及使用场景进行了概述，希望通过本文可以使项目能更多地被认可和推广
+本文对部分自研github项目的功能以及使用场景进行了概述，希望通过本文可以使项目能更多地被认识和推广
 
 ![img](https://duyanghao.github.io/public/img/wechat/duyanghao.png)
