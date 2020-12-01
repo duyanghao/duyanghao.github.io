@@ -1,10 +1,10 @@
 ---
 layout: post
-title: github项目自荐
+title: github自研项目概述
 date: 2020-12-3 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: 本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望项目能更多地被认可和推广
+excerpt: 本文对自研的github项目进行了一个概括性的介绍，包括功能和使用场景，希望通过本文可以使项目能更多地被认可和推广
 ---
 
 ## 前言
