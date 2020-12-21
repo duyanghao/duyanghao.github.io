@@ -37,7 +37,7 @@ $ GO111MODULE=off KUBE_GIT_TREE_STATE=clean make kube-apiserver GOGCFLAGS="all=-
 
 GoLand IDE通过连接dlv debug server来对Golang进行远程调试，如下：
 
-![](/public/img/remote-debug/GoLand_dlv_debug.png)
+![](/public/img/remote-debug/goland_dlv_debug.png)
 
 这里配置很简单，只需要配置远端的dlv debug server监听地址(Host)以及端口(Port)即可。同时远端通过如下命令启动相应的组件：
 
