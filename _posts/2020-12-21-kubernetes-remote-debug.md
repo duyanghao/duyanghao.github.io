@@ -50,7 +50,6 @@ $ dlv --listen=:1234 --headless=true --api-version=2 --accept-multiclient exec .
 下面展开介绍具体Kubernetes核心组件的调试步骤：
 
 * kube-apiserver
-
   step1：通过GoLand IDE界面Run=>Debug=>Edit Configurations新增Go Remote debug条目，同时配置相关Host以及Port
 
   step2：停止kube-apiserver
@@ -149,7 +148,6 @@ $ dlv --listen=:1234 --headless=true --api-version=2 --accept-multiclient exec .
   **需要注意的是：由于kube-apiserver一直会有请求过来，所以如果要调试kube-apiserver，则可能需要在代码中嵌入一些条件语句以便触发断点，如上所示**
 
 * kube-proxy
-
   kube-proxy以daemonset形式启动，先看看daemonset相关启动参数：
 
   ```yaml
@@ -224,7 +222,6 @@ $ dlv --listen=:1234 --headless=true --api-version=2 --accept-multiclient exec .
   step4：设置kube-proxy代码断点并调试
 
 * kubelet
-
   kubelet与上述组件的启动方式都不同，是通过systemd管理的：
 
   ```bash
