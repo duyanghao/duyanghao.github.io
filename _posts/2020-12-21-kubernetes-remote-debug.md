@@ -267,7 +267,7 @@ $ dlv --listen=:1234 --headless=true --api-version=2 --accept-multiclient exec .
 由于Kubernetes项目`vendor/k8s.io`下各目录是相应`staging/src/k8s.io`下目录的软链，如下：
 
 ```bash
-# ls -al vendor/k8s.io/
+$ ls -al vendor/k8s.io/
 total 36
 drwxr-xr-x  9 xxx xxx 4096 Dec 17 12:39 .
 drwxr-xr-x 18 xxx xxx 4096 Dec 17 12:39 ..
