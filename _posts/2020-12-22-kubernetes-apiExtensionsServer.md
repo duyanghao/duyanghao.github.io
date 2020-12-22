@@ -61,7 +61,7 @@ Custom Resource，简称CR，是Kubernetes自定义资源类型，与之相对�
 
 ## CRD
 
-CRD通过yaml文件的形式向Kubernetes注册CR实现api-resource，属于第二种扩展Kubernetes API资源的方式(相比aggregated apiserver)，同时也是普遍使用的一种
+CRD通过yaml文件的形式向Kubernetes注册CR实现自定义api-resources，属于第二种扩展Kubernetes API资源的方式(相比aggregated apiserver)，同时也是普遍使用的一种
 
 首先我们会创建一个CRD，例子如下：
 
@@ -2363,7 +2363,7 @@ type CustomResourceStorage struct {
 }
 ```
 
-其中spec是CRD定义内容，storages存放该CRD对应CR的后端存储，每个CR版本对应一个项，如下：
+其中spec是CRD定义内容，storages存放该CRD对应CR的后端存储，每个CR版本对应一项，如下：
 
 ![](/public/img/crd-apiserver/crd-apiserver-6.png)
 
@@ -2618,156 +2618,28 @@ func setNestedFieldNoCopy(obj map[string]interface{}, value interface{}, fields 
 * crdHandler处理逻辑如下：
   * 解析req(GET /apis/duyanghao.example.com/v1/namespaces/default/students)，根据请求路径中的group(duyanghao.example.com)，version(v1)，以及resource字段(students)获取对应CRD内容(crd, err := r.crdLister.Get(crdName))
   * 通过crd.UID以及crd.Name获取crdInfo，若不存在则创建对应的crdInfo(crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name))。crdInfo中包含了CRD定义以及该CRD对应Custom Resource的customresource.REST storage
-  * customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用户保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
-  * 从customresource.REST storage获取Unstructured后会对该结构体进行转换然后返回 
+  * customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用于保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
+  * 从customresource.REST storage获取Unstructured结构体后会对其进行相应转换然后返回 
 
 ## 总结
 
 * Custom Resource，简称CR，是Kubernetes自定义资源类型，与之相对应的就是Kubernetes内置的各种资源类型，例如Pod、Service等。利用CR我们可以定义任何想要的资源类型
-* CRD通过yaml文件的形式向Kubernetes注册CR实现api-resource，属于第二种扩展Kubernetes API资源的方式，也是普遍使用的一种
-* APIExtensionServer 作为 kube-apiserver Delegation 链的最后一层，是处理所有用户通过 Custom Resource Definition 定义的资源服务器
-* `crdRegistrationController`负责将 CRD GroupVersions 自动注册到 APIServices 中。具体逻辑：枚举所有CRDs，然后根据CRD定义的crd.Spec.Group以及crd.Spec.Versions字段构建APIService，并添加到autoRegisterController.apiServicesToSync中，由autoRegisterController进行创建以及维护操作。这也是为什么创建完CRD后会产生对应的APIService对象
-* APIExtensionServer包含的 controller 以及功能如下所示：
+* CRD通过yaml文件的形式向Kubernetes注册CR实现自定义api-resources，属于第二种扩展Kubernetes API资源的方式，也是普遍使用的一种
+* APIExtensionServer负责CustomResourceDefinition（CRD）apiResources以及apiVersions的注册，同时处理CRD以及相应CustomResource（CR）的REST请求(如果对应CR不能被处理的话则会返回404)，也是apiserver Delegation的最后一环
+* `crdRegistrationController`负责将CRD GroupVersions自动注册到APIServices中。具体逻辑为：枚举所有CRDs，然后根据CRD定义的crd.Spec.Group以及crd.Spec.Versions字段构建APIService，并添加到autoRegisterController.apiServicesToSync中，由autoRegisterController进行创建以及维护操作。这也是为什么创建完CRD后会产生对应的APIService对象
+* APIExtensionServer包含的controller以及功能如下所示：
   - `openapiController`：将 crd 资源的变化同步至提供的 OpenAPI 文档，可通过访问 `/openapi/v2` 进行查看；
-  - `crdController`：负责将 crd 信息注册到 apiVersions 和 apiResources 中，两者的信息可通过 `$ kubectl api-versions` 和 `$ kubectl api-resources` 查看；
-    * kubectl api-versions命令返回所有Kubernetes集群资源的版本信息(对于kubectl api-versions命令，这里发出了两个请求，分别是https://127.0.0.1:6443/api以及https://127.0.0.1:6443/apis，并在最后将两个请求的返回结果进行了合并)
-
-      ```bash
-      $ kubectl api-versions
-      admissionregistration.k8s.io/v1
-      admissionregistration.k8s.io/v1beta1
-      apiextensions.k8s.io/v1
-      apiextensions.k8s.io/v1beta1
-      apiregistration.k8s.io/v1
-      apiregistration.k8s.io/v1beta1
-      apps/v1
-      ...
-      v1
-      ```
-
-    * kubectl api-resources命令就是先获取所有API版本信息，然后对每一个版本调用上述接口获取该版本下的所有API资源类型
-
-      ```bash
-      5077 loader.go:375] Config loaded from file:  /root/.kube/config
-      I1211 15:19:47.593450   15077 round_trippers.go:420] GET https://127.0.0.1:6443/api?timeout=32s
-      I1211 15:19:47.593470   15077 round_trippers.go:427] Request Headers:
-      I1211 15:19:47.593480   15077 round_trippers.go:431]     Accept: application/json, */*
-      I1211 15:19:47.593489   15077 round_trippers.go:431]     User-Agent: kubectl/v1.18.3 (linux/amd64) kubernetes/2e7996e
-      I1211 15:19:47.593522   15077 round_trippers.go:431]     Authorization: Bearer <masked>
-      I1211 15:19:47.598055   15077 round_trippers.go:446] Response Status: 200 OK in 4 milliseconds
-      I1211 15:19:47.598077   15077 round_trippers.go:449] Response Headers:
-      I1211 15:19:47.598088   15077 round_trippers.go:452]     Cache-Control: no-cache, private
-      I1211 15:19:47.598120   15077 round_trippers.go:452]     Content-Type: application/json
-      I1211 15:19:47.598131   15077 round_trippers.go:452]     Content-Length: 135
-      I1211 15:19:47.598147   15077 round_trippers.go:452]     Date: Fri, 11 Dec 2020 07:19:47 GMT
-      I1211 15:19:47.602273   15077 request.go:1068] Response Body: {"kind":"APIVersions","versions":["v1"],"serverAddressByClientCIDRs":[{"clientCIDR":"0.0.0.0/0","serverAddress":"x.x.x.x:6443"}]}
-      I1211 15:19:47.606279   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis?timeout=32s
-      I1211 15:19:47.606299   15077 round_trippers.go:427] Request Headers:
-      I1211 15:19:47.606334   15077 round_trippers.go:431]     Accept: application/json, */*
-      I1211 15:19:47.606343   15077 round_trippers.go:431]     User-Agent: kubectl/v1.18.3 (linux/amd64) kubernetes/2e7996e
-      I1211 15:19:47.606362   15077 round_trippers.go:431]     Authorization: Bearer <masked>
-      I1211 15:19:47.607007   15077 round_trippers.go:446] Response Status: 200 OK in 0 milliseconds
-      I1211 15:19:47.607028   15077 round_trippers.go:449] Response Headers:
-      I1211 15:19:47.607058   15077 round_trippers.go:452]     Date: Fri, 11 Dec 2020 07:19:47 GMT
-      I1211 15:19:47.607070   15077 round_trippers.go:452]     Cache-Control: no-cache, private
-      I1211 15:19:47.607089   15077 round_trippers.go:452]     Content-Type: application/json
-      I1211 15:19:47.610333   15077 request.go:1068] Response Body: {"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"apiregistration.k8s.io","versions":[{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"},{"groupVersion":"apiregistration.k8s.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"apiregistration.k8s.io/v1","version":"v1"}},{"name":"extensions","versions":[{"groupVersion":"extensions/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"extensions/v1beta1","version":"v1beta1"}},{"name":"apps","versions":[{"groupVersion":"apps/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apps/v1","version":"v1"}},{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"events.k8s.io/v1beta1","version":"v1beta1"}},{"name":"authentication.k8s.io","versions":[{"groupVersion":"authentication.k8s.io/v1","version":"v1"},{"groupVersion":"authentication.k8s.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"authentication.k8s.io/v1"," [truncated 4985 chars]
-      I1211 15:19:47.614700   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/batch/v1?timeout=32s
-      I1211 15:19:47.614804   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/authentication.k8s.io/v1?timeout=32s
-      I1211 15:19:47.615687   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/auth.tkestack.io/v1?timeout=32s
-      https://127.0.0.1:6443/apis/authentication.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616794   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/coordination.k8s.io/v1?timeout=32s
-      I1211 15:19:47.616863   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/apps/v1?timeout=32s
-      I1211 15:19:47.616877   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/scheduling.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.617128   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/networking.k8s.io/v1beta1?timeout=32s
-      ...
-      I1211 15:19:47.617555   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/monitor.tkestack.io/v1?timeout=32s
-      I1211 15:19:47.616542   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/networking.k8s.io/v1?timeout=32s
-      I1211 15:19:47.617327   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/coordination.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.617412   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/monitoring.coreos.com/v1?timeout=32s
-      I1211 15:19:47.617385   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/autoscaling/v2beta2?timeout=32s
-      I1211 15:19:47.617852   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/discovery.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.618032   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/admissionregistration.k8s.io/v1?timeout=32s
-      I1211 15:19:47.618125   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/apiregistration.k8s.io/v1?timeout=32s
-      I1211 15:19:47.618317   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/authorization.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616968   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/policy/v1beta1?timeout=32s
-      I1211 15:19:47.617138   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/configuration.konghq.com/v1?timeout=32s
-      I1211 15:19:47.616526   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/metrics.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616789   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/events.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.618075   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/storage.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.618612   15077 round_trippers.go:420] GET https://127.0.0.1:6443/api/v1?timeout=32s
-      I1211 15:19:47.618268   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/notify.tkestack.io/v1?timeout=32s
-      I1211 15:19:47.618631   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/apiextensions.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616594   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/node.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616595   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/storage.k8s.io/v1?timeout=32s
-      I1211 15:19:47.619458   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/apiregistration.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.619586   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/platform.tkestack.io/v1?timeout=32s
-      I1211 15:19:47.616973   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/authorization.k8s.io/v1?timeout=32s
-      ...
-      I1211 15:19:47.617240   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/duyanghao.example.com/v1?timeout=32s
-      I1211 15:19:47.617305   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/autoscaling/v2beta1?timeout=32s
-      I1211 15:19:47.617321   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/rbac.authorization.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.617428   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/admissionregistration.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.617362   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/extensions/v1beta1?timeout=32s
-      I1211 15:19:47.616554   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/scheduling.k8s.io/v1?timeout=32s
-      I1211 15:19:47.618275   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/rbac.authorization.k8s.io/v1?timeout=32s
-      I1211 15:19:47.618349   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/batch/v1beta1?timeout=32s
-      I1211 15:19:47.618724   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/apiextensions.k8s.io/v1?timeout=32s
-      I1211 15:19:47.618903   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/certificates.k8s.io/v1beta1?timeout=32s
-      I1211 15:19:47.616721   15077 round_trippers.go:420] GET https://127.0.0.1:6443/apis/autoscaling/v1?timeout=32s
-      ...
-      NAME                              SHORTNAMES   APIGROUP                       NAMESPACED   KIND
-      bindings                                                                      true         Binding
-      componentstatuses                 cs                                          false        ComponentStatus
-      configmaps                        cm                                          true         ConfigMap
-      endpoints                         ep                                          true         Endpoints
-      events                            ev                                          true         Event
-      limitranges                       limits                                      true         LimitRange
-      namespaces                        ns                                          false        Namespace
-      nodes                             no                                          false        Node
-      persistentvolumeclaims            pvc                                         true         PersistentVolumeClaim
-      persistentvolumes                 pv                                          false        PersistentVolume
-      pods                              po                                          true         Pod
-      podtemplates                                                                  true         PodTemplate
-      replicationcontrollers            rc                                          true         ReplicationController
-      resourcequotas                    quota                                       true         ResourceQuota
-      secrets                                                                       true         Secret
-      serviceaccounts                   sa                                          true         ServiceAccount
-      services                          svc                                         true         Service
-      customresourcedefinitions         crd,crds     apiextensions.k8s.io           false        CustomResourceDefinition
-      apiservices                                    apiregistration.k8s.io         false        APIService
-      controllerrevisions                            apps                           true         ControllerRevision
-      daemonsets                        ds           apps                           true         DaemonSet
-      deployments                       deploy       apps                           true         Deployment
-      replicasets                       rs           apps                           true         ReplicaSet
-      statefulsets                      sts          apps                           true         StatefulSet
-      HorizontalPodAutoscaler
-      cronjobs                          cj           batch                          true         CronJob
-      jobs                                           batch                          true         Job
-      leases                                         coordination.k8s.io            true         Lease
-      endpointslices                                 discovery.k8s.io               true         EndpointSlice
-      projects                                       duyanghao.example.com          true         Project
-      ...
-      csinodes                                       storage.k8s.io                 false        CSINode
-      storageclasses                    sc           storage.k8s.io                 false        StorageClass
-      volumeattachments                              storage.k8s.io                 false        VolumeAttachment
-      ```
-
+  - `crdController`：负责将 crd 信息注册到 apiVersions 和 apiResources 中，两者的信息可通过 `kubectl api-versions` 和 `kubectl api-resources` 查看：
+    * `kubectl api-versions`命令返回所有Kubernetes集群资源的版本信息(实际发出了两个请求，分别是`https://127.0.0.1:6443/api`以及`https://127.0.0.1:6443/apis`，并在最后将两个请求的返回结果进行了合并)
+    * `kubectl api-resources`命令就是先获取所有API版本信息，然后对每一个API版本调用接口获取该版本下的所有API资源类型
   - `namingController`：检查 crd obj 中是否有命名冲突，可在 crd `.status.conditions` 中查看；
-
   - `establishingController`：检查 crd 是否处于正常状态，可在 crd `.status.conditions` 中查看；
-
   - `nonStructuralSchemaController`：检查 crd obj 结构是否正常，可在 crd `.status.conditions` 中查看；
-
   - `apiApprovalController`：检查 crd 是否遵循 Kubernetes API 声明策略，可在 crd `.status.conditions` 中查看；
-
   - `finalizingController`：类似于 finalizes 的功能，与 CRs 的删除有关；
-
 * 总结CR CRUD APIServer处理逻辑如下：
-
   - createAPIExtensionsServer=>NewCustomResourceDefinitionHandler=>crdHandler=>注册CR CRUD API接口：
-
-    ```
+    ```go
     // New returns a new instance of CustomResourceDefinitions from the given config.
     func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget) (*CustomResourceDefinitions, error) {
     	...
@@ -2797,11 +2669,9 @@ func setNestedFieldNoCopy(obj map[string]interface{}, value interface{}, fields 
     	return s, nil
     }
     ```
-
   - crdHandler处理逻辑如下：
-
     - 解析req(GET /apis/duyanghao.example.com/v1/namespaces/default/students)，根据请求路径中的group(duyanghao.example.com)，version(v1)，以及resource字段(students)获取对应CRD内容(crd, err := r.crdLister.Get(crdName))
     - 通过crd.UID以及crd.Name获取crdInfo，若不存在则创建对应的crdInfo(crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name))。crdInfo中包含了CRD定义以及该CRD对应Custom Resource的customresource.REST storage
-    - customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用户保存所有类型的Custom Resource)，并对该结构题进行SetGroupVersionKind操作(设置具体Custom Resource Type)
-    - 从customresource.REST storage获取Unstructured后会对该结构体进行转换然后返回
+    - customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用于保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
+    - 从customresource.REST storage获取Unstructured结构体后会对其进行相应转换然后返回
 
