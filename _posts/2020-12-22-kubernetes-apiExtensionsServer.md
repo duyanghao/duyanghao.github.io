@@ -4,7 +4,7 @@ title: Kubernetes apiExtensionsServer源码解析
 date: 2020-12-22 19:10:31
 category: 技术
 tags: Kubernetes
-excerpt: 本文从自定义资源出发，从源码角度深度剖析了Kubernetes apiExtensionsServer的内部逻辑以及原理，通过本文对应用层使用CRD会有所助益……
+excerpt: 本文从自定义资源(CR)出发，从源码角度深度剖析了Kubernetes apiExtensionsServer的内部逻辑以及原理，通过本文对应用层理解和使用CRD会有所助益……
 ---
 
 ## Table of Contents
