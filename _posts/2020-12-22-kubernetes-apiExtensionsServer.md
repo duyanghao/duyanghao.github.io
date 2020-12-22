@@ -855,7 +855,9 @@ func (c *DiscoveryController) sync(version schema.GroupVersion) error {
 }
 ```
 
-这里对CRD构造了apiGroup和APIResource列表，并注册了apiGroup和apiVersion的路由：
+sync枚举CRD，根据`CRD.Status`构建Custom Resource对应APIResource，并添加到apiResourcesForDiscovery中，最终构造了CR对应的apiGroup和APIResource列表
+
+
 
 ```go
 // k8s.io/kubernetes/staging/src/k8s.io/apiserver/pkg/endpoints/discovery/group.go:38
@@ -906,38 +908,34 @@ func (s *APIGroupHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 ```
 
-1、**上述代码注册了apiGroup的路由，返回某个api group下所有版本信息**，如下：
+1、**上述代码注册了Custom Resource apiGroup的路由，返回某个api group下所有版本信息**
 
 ```go
 apiGroup := metav1.APIGroup{
-		Name:     version.Group,
-		Versions: apiVersionsForDiscovery,
-		// the preferred versions for a group is the first item in
-		// apiVersionsForDiscovery after it put in the right ordered
-		PreferredVersion: apiVersionsForDiscovery[0],
-	}
+    Name:     version.Group,
+    Versions: apiVersionsForDiscovery,
+    // the preferred versions for a group is the first item in
+    // apiVersionsForDiscovery after it put in the right ordered
+    PreferredVersion: apiVersionsForDiscovery[0],
+}
 ```
 
 返回如下：
 
 ```bash
-$ curl http://localhost:8080/apis/apiextensions.k8s.io     
+$ curl http://localhost:8080/apis/duyanghao.example.com
 {
   "kind": "APIGroup",
   "apiVersion": "v1",
-  "name": "apiextensions.k8s.io",
+  "name": "duyanghao.example.com",
   "versions": [
     {
-      "groupVersion": "apiextensions.k8s.io/v1",
+      "groupVersion": "duyanghao.example.com/v1",
       "version": "v1"
-    },
-    {
-      "groupVersion": "apiextensions.k8s.io/v1beta1",
-      "version": "v1beta1"
     }
   ],
   "preferredVersion": {
-    "groupVersion": "apiextensions.k8s.io/v1",
+    "groupVersion": "duyanghao.example.com/v1",
     "version": "v1"
   }
 }
