@@ -258,7 +258,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 }
 ```
 
-这里createAPIExtensionsServer通过`s.GenericAPIServer.InstallAPIGroup`注册了CRD这种资源(Group: apiextensions.k8s.io; Version: v1beta1|v1; kind: CustomResourceDefinition)的路由和处理函数，核心代码是：
+这里createAPIExtensionsServer通过`s.GenericAPIServer.InstallAPIGroup`注册了CRD这种资源(Group: apiextensions.k8s.io; Version: v1beta1 or v1; Kind: CustomResourceDefinition)的路由和处理函数，核心代码是：
 
 ```go
 ...
