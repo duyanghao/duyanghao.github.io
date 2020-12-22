@@ -855,9 +855,7 @@ func (c *DiscoveryController) sync(version schema.GroupVersion) error {
 }
 ```
 
-sync枚举CRD，根据`CRD.Status`构建Custom Resource对应APIResource，并添加到apiResourcesForDiscovery中，最终构造了CR对应的apiGroup和APIResource列表
-
-
+sync枚举CRD，根据CRD构建Custom Resource对应apiResource(apiResourcesForDiscovery)以及apiVersions(apiVersionsForDiscovery)
 
 ```go
 // k8s.io/kubernetes/staging/src/k8s.io/apiserver/pkg/endpoints/discovery/group.go:38
@@ -1288,7 +1286,7 @@ type APIVersions struct {
 }
 ```
 
-3、**如果要查询某个版本下的所有资源类型**，则需要看apiVersion的注册代码：
+3、**如果要查询某个版本下的所有资源类型**，则需要看apiResources的注册代码：
 
 ```go
 // k8s.io/kubernetes/staging/src/k8s.io/apiserver/pkg/endpoints/discovery/version.go:50
