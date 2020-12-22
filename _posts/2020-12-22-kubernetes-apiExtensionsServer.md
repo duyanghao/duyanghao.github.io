@@ -2363,11 +2363,11 @@ type CustomResourceStorage struct {
 }
 ```
 
-其中spec是CRD定义内容，storages存放该CRD对应CR的后端存储处理函数，如下：
+其中spec是CRD定义内容，storages存放该CRD对应CR的后端存储，每个CR版本对应一个项，如下：
 
 ![](/public/img/crd-apiserver/crd-apiserver-6.png)
 
-这里也即对student CR进行处理的后端为customresource.REST：
+也即对student CR进行处理的后端存储为`customresource.REST`：
 
 ```go
 // getOrCreateServingInfoFor gets the CRD serving info for the given CRD UID if the key exists in the storage map.
@@ -2457,17 +2457,19 @@ func (r *crdHandler) getOrCreateServingInfoFor(uid types.UID, name string) (*crd
 }
 ```
 
-这里会先获取crd，然后遍历crd.Spec.Version为该CR的每个版本设置storages，而具体kind如下：
+这里会先获取crd，然后遍历crd.Spec.Version为该CR的每个版本设置rest.Storage，而具体kind信息如下：
 
 * Group：duyanghao.example.com
 * Version：v1
 * Kind：Student
 
-具体resource如下：
+具体resource信息如下：
 
 * Group：duyanghao.example.com
 * Version：v1
 * Resource：students
+
+在设置了CR对应的crdInfo之后，会将crdInfo存放于crdHandler.customStorage中，以便后续访问直接获取
 
 回到newREST，创建CR存储的地方，如下：
 
@@ -2508,7 +2510,7 @@ func newREST(resource schema.GroupResource, kind, listKind schema.GroupVersionKi
 }
 ```
 
-对于NewFunc函数来说，该函数功能是返回CR实例，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured，并对该结构题进行SetGroupVersionKind操作，如下：
+对于NewFunc函数来说，该函数功能是返回CR实例，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(可以存储所有类型的CR)，并对该结构体设置CR对应的apiVersion(Group/Version)以及kind(资源类型)字段，如下：
 
 ```go
 func (u *Unstructured) SetGroupVersionKind(gvk schema.GroupVersionKind) {
@@ -2583,7 +2585,6 @@ func setNestedFieldNoCopy(obj map[string]interface{}, value interface{}, fields 
 总结CR CRUD APIServer处理逻辑如下：
 
 * createAPIExtensionsServer=>NewCustomResourceDefinitionHandler=>crdHandler=>注册CR CRUD API接口：
-
   ```go
   // New returns a new instance of CustomResourceDefinitions from the given config.
   func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget) (*CustomResourceDefinitions, error) {
@@ -2614,29 +2615,21 @@ func setNestedFieldNoCopy(obj map[string]interface{}, value interface{}, fields 
   	return s, nil
   }
   ```
-
 * crdHandler处理逻辑如下：
   * 解析req(GET /apis/duyanghao.example.com/v1/namespaces/default/students)，根据请求路径中的group(duyanghao.example.com)，version(v1)，以及resource字段(students)获取对应CRD内容(crd, err := r.crdLister.Get(crdName))
   * 通过crd.UID以及crd.Name获取crdInfo，若不存在则创建对应的crdInfo(crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name))。crdInfo中包含了CRD定义以及该CRD对应Custom Resource的customresource.REST storage
-  * customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用户保存所有类型的Custom Resource)，并对该结构题进行SetGroupVersionKind操作(设置具体Custom Resource Type)
+  * customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用户保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
   * 从customresource.REST storage获取Unstructured后会对该结构体进行转换然后返回 
 
 ## 总结
 
 * Custom Resource，简称CR，是Kubernetes自定义资源类型，与之相对应的就是Kubernetes内置的各种资源类型，例如Pod、Service等。利用CR我们可以定义任何想要的资源类型
-
 * CRD通过yaml文件的形式向Kubernetes注册CR实现api-resource，属于第二种扩展Kubernetes API资源的方式，也是普遍使用的一种
-
 * APIExtensionServer 作为 kube-apiserver Delegation 链的最后一层，是处理所有用户通过 Custom Resource Definition 定义的资源服务器
-
 * `crdRegistrationController`负责将 CRD GroupVersions 自动注册到 APIServices 中。具体逻辑：枚举所有CRDs，然后根据CRD定义的crd.Spec.Group以及crd.Spec.Versions字段构建APIService，并添加到autoRegisterController.apiServicesToSync中，由autoRegisterController进行创建以及维护操作。这也是为什么创建完CRD后会产生对应的APIService对象
-
 * APIExtensionServer包含的 controller 以及功能如下所示：
-
   - `openapiController`：将 crd 资源的变化同步至提供的 OpenAPI 文档，可通过访问 `/openapi/v2` 进行查看；
-
   - `crdController`：负责将 crd 信息注册到 apiVersions 和 apiResources 中，两者的信息可通过 `$ kubectl api-versions` 和 `$ kubectl api-resources` 查看；
-
     * kubectl api-versions命令返回所有Kubernetes集群资源的版本信息(对于kubectl api-versions命令，这里发出了两个请求，分别是https://127.0.0.1:6443/api以及https://127.0.0.1:6443/apis，并在最后将两个请求的返回结果进行了合并)
 
       ```bash
