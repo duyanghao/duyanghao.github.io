@@ -26,7 +26,7 @@ kube-apiserver包含三种APIServer：
 * kubeAPIServer：负责对请求的一些通用处理，包括：认证、鉴权以及各个内建资源(pod, deployment，service and etc)的REST服务等
 * apiExtensionsServer：负责CustomResourceDefinition（CRD）的注册，同时处理CRD以及相应CustomResource（CR）的REST请求(如果对应CR不能被处理的话则会返回404)，也是apiserver Delegation的最后一环
 
-本文主要apiExtensionsServer，也是Kubernetes apiserver源码分析系列的最后一篇，其它相关文章可以从如下[链接](https://github.com/duyanghao/kubernetes-reading-notes/blob/master/core/api-server/README.md)查看，这里不做过多介绍
+本文主要介绍apiExtensionsServer，也是Kubernetes apiserver源码分析系列的最后一篇，其它相关文章可以从如下[链接](https://github.com/duyanghao/kubernetes-reading-notes/blob/master/core/api-server/README.md)查看，这里不做过多介绍
 
 接下来将从CR出发分析Kubernetes apiExtensionsServer的内部逻辑以及原理
 
@@ -258,7 +258,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 }
 ```
 
-这里createAPIExtensionsServer通过`s.GenericAPIServer.InstallAPIGroup`注册了CRD这种资源的路由和处理函数，核心代码是：
+这里createAPIExtensionsServer通过`s.GenericAPIServer.InstallAPIGroup`注册了CRD这种资源(Group: apiextensions.k8s.io; Version: v1beta1|v1; kind: CustomResourceDefinition)的路由和处理函数，核心代码是：
 
 ```go
 ...
