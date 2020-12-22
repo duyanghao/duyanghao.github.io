@@ -1242,7 +1242,7 @@ v1
 
 可以看到对于`kubectl api-versions`命令，发出了两个请求，分别是`https://127.0.0.1:6443/api`以及`https://127.0.0.1:6443/apis`，并在最后将两个请求的返回结果进行了合并
 
-注意v1是`/api`接口的返回(`metav1.APIVersions`)；其它则是`/apis`的返回(`metav1.APIGroup`)，如下：
+注意上述结果中`v1`是`/api`接口的返回(`metav1.APIVersions`)；其它则是`/apis`的返回(`metav1.APIGroup`)，如下：
 
 ```go
 // APIGroup contains the name, the supported versions, and the preferred version
