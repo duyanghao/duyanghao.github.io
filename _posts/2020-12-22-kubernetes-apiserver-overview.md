@@ -1005,13 +1005,11 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
 这里结合Kubernetes官方给出的aggregated apiserver例子[sample-apiserver](https://github.com/kubernetes/sample-apiserver)，总结原理如下：
 
 * aggregatorServer通过APIServices对象关联到某个Service来进行请求的转发，其关联的Service类型进一步决定了请求转发的形式。aggregatorServer包括一个 `GenericAPIServer` 和维护自身状态的Controller。其中 `GenericAPIServer` 主要处理 `apiregistration.k8s.io` 组下的APIService资源请求，而Controller包括：
-
   - `apiserviceRegistrationController`：负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server
   - `availableConditionController`：维护 APIServices 的可用状态，包括其引用 Service 是否可用等；
   - `autoRegistrationController`：用于保持 API 中存在的一组特定的 APIServices；
   - `crdRegistrationController`：负责将 CRD GroupVersions 自动注册到 APIServices 中；
   - `openAPIAggregationController`：将 APIServices 资源的变化同步至提供的 OpenAPI 文档；
-
   ```go
   // k8s.io/kubernetes/staging/src/k8s.io/kube-aggregator/pkg/apiserver/apiserver.go:285
   // AddAPIService adds an API service.  It is not thread-safe, so only call it on one thread at a time please.
@@ -1152,11 +1150,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   	handler.ServeHTTP(w, newReq)
   }
   ```
-
-  
-
 * apiserviceRegistrationController负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server。apiService有两种类型：Local(Service为空)以及Service(Service非空)。apiserviceRegistrationController负责对这两种类型apiService设置代理：Local类型会直接路由给kube-apiserver进行处理；而Service类型则会设置代理并将请求转化为对aggregated Service的请求(proxyPath := "/apis/" + apiService.Spec.Group + "/" + apiService.Spec.Version)，而请求的负载均衡策略则是优先本地访问kube-apiserver(如果service为kubernetes default apiserver service:443)=>通过service ClusterIP:Port访问(默认) 或者 通过随机选择service endpoint backend进行访问：
-
   ```bash
   $ kubectl get APIService           
   NAME                                   SERVICE                      AVAILABLE   AGE
@@ -1166,7 +1160,6 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   v1beta1.metrics.k8s.io                 kube-system/metrics-server   True        50d
   ...
   ```
-
   ```yaml
   # default APIServices
   $ kubectl get -o yaml APIService/v1.apps
@@ -1249,15 +1242,10 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
       status: "True"
       type: Available
   ```
-
 * aggregatorServer创建过程中会根据所有kube-apiserver定义的API资源创建默认的APIService列表，名称即是$VERSION/$GROUP，这些APIService都会有标签`kube-aggregator.kubernetes.io/automanaged: onstart`，例如：v1.apps apiService。autoRegistrationController创建并维护这些列表中的APIService，也即我们看到的Local apiService；对于自定义的APIService(aggregated server)，则不会对其进行处理
-
 * aggregated server实现CR(自定义API资源) 的CRUD API接口，并可以灵活选择后端存储，可以与core kube-apiserver一起公用etcd，也可自己独立部署etcd数据库或者其它数据库。aggregated server实现的CR API路径为：/apis/$GROUP/$VERSION，具体到sample apiserver为：/apis/wardle.example.com/v1alpha1，下面的资源类型有：flunders以及fischers
-
 * aggregated server通过部署APIService类型资源，service fields指向对应的aggregated server service实现与core kube-apiserver的集成与交互
-
 * sample-apiserver目录结构如下，可参考编写自己的aggregated server：
-
   ```bash
   staging/src/k8s.io/sample-apiserver
   ├── artifacts
@@ -1404,7 +1392,6 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
                   ├── etcd.go
                   └── strategy.go
   ```
-
   * 其中，artifacts用于部署yaml示例
   * hack目录存放自动脚本(eg: update-codegen)
   * main.go是aggregated server启动入口；pkg/cmd负责启动aggregated server具体逻辑；pkg/apiserver用于aggregated server初始化以及路由注册
@@ -1412,7 +1399,6 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   * pkg/admission负责准入的相关代码
   * pkg/generated负责生成访问CR的clientset，informers，以及listers
   * pkg/registry目录负责CR相关的RESTStorage实现
-
 
 更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
@@ -1615,13 +1601,11 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
     	return s, nil
     }
     ```
-    
   - crdHandler处理逻辑如下：
     - 解析req(GET /apis/duyanghao.example.com/v1/namespaces/default/students)，根据请求路径中的group(duyanghao.example.com)，version(v1)，以及resource字段(students)获取对应CRD内容(crd, err := r.crdLister.Get(crdName))
     - 通过crd.UID以及crd.Name获取crdInfo，若不存在则创建对应的crdInfo(crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name))。crdInfo中包含了CRD定义以及该CRD对应Custom Resource的customresource.REST storage
     - customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用于保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
     - 从customresource.REST storage获取Unstructured结构体后会对其进行相应转换然后返回
-    
     ```go
     func (r *crdHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
     	ctx := req.Context()
