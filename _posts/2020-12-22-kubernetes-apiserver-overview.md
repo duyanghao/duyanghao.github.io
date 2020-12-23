@@ -1217,7 +1217,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
       status: "True"
       type: Available
   ```
-* aggregatorServer创建过程中会根据所有kube-apiserver定义的API资源创建默认的APIService列表，名称即是$VERSION/$GROUP，这些APIService都会有标签`kube-aggregator.kubernetes.io/automanaged: onstart`，例如：v1.apps apiService。autoRegistrationController创建并维护这些列表中的APIService，也即我们看到的Local apiService；对于自定义的APIService(aggregated server)，则不会对其进行处理
+* aggregatorServer创建过程中会根据所有kube-apiserver定义的API资源创建默认的APIService列表，名称即是`$VERSION.$GROUP`，这些APIService都会有标签`kube-aggregator.kubernetes.io/automanaged: onstart`，例如：v1.apps apiService。autoRegistrationController创建并维护这些列表中的APIService，也即我们看到的Local apiService；对于自定义的APIService(aggregated server)，则不会对其进行处理
 * aggregated server实现CR(自定义API资源) 的CRUD API接口，并可以灵活选择后端存储，可以与core kube-apiserver一起公用etcd，也可自己独立部署etcd数据库或者其它数据库。aggregated server实现的CR API路径为：/apis/$GROUP/$VERSION，具体到sample apiserver为：/apis/wardle.example.com/v1alpha1，下面的资源类型有：flunders以及fischers
 * aggregated server通过部署APIService类型资源，service fields指向对应的aggregated server service实现与core kube-apiserver的集成与交互
 * sample-apiserver目录结构如下，可参考编写自己的aggregated server：
