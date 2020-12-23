@@ -21,7 +21,7 @@ kube-apiserver作为整个Kubernetes集群操作etcd的唯一入口，负责Kube
 
 kube-apiserver包含三种APIServer：
 
-* aggregatorServer：暴露的功能类似于一个七层负载均衡，将来自用户的请求拦截转发给其他服务器，也即用于处理扩展api-resource的aggregated apiserver(AA)
+* aggregatorServer：负责处理 `apiregistration.k8s.io` 组下的APIService资源请求，同时将来自用户的请求拦截转发给aggregated server(AA)
 * kubeAPIServer：负责对请求的一些通用处理，包括：认证、鉴权以及各个内建资源(pod, deployment，service and etc)的REST服务等
 * apiExtensionsServer：负责CustomResourceDefinition（CRD）apiResources以及apiVersions的注册，同时处理CRD以及相应CustomResource（CR）的REST请求(如果对应CR不能被处理的话则会返回404)，也是apiserver Delegation的最后一环
 
@@ -99,7 +99,7 @@ func (r *Runner) Start() {
 }
 ```
 
-更多代码原理详情参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
+更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
 ## kubeAPIServer
 
@@ -994,11 +994,427 @@ CreateServerChain --|--> createAPIExtensionsConfig
                                                                                                   |--> s.GenericAPIServer.InstallAPIGroup
 ```
 
-更多代码原理详情参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
+更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
 ## aggregatorServer
 
+aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方式Aggregated APIServer(AA)，将CR请求代理给AA：
 
+![Extension apiservers](https://github.com/kubernetes-sigs/apiserver-builder-alpha/raw/master/docs/concepts/extensionserver.jpg)
+
+这里结合Kubernetes官方给出的aggregated apiserver例子[sample-apiserver](https://github.com/kubernetes/sample-apiserver)，总结原理如下：
+
+* aggregatorServer通过APIServices对象关联到某个Service来进行请求的转发，其关联的Service类型进一步决定了请求转发的形式。aggregatorServer包括一个 `GenericAPIServer` 和维护自身状态的Controller。其中 `GenericAPIServer` 主要处理 `apiregistration.k8s.io` 组下的APIService资源请求，而Controller包括：
+
+  - `apiserviceRegistrationController`：负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server
+  - `availableConditionController`：维护 APIServices 的可用状态，包括其引用 Service 是否可用等；
+  - `autoRegistrationController`：用于保持 API 中存在的一组特定的 APIServices；
+  - `crdRegistrationController`：负责将 CRD GroupVersions 自动注册到 APIServices 中；
+  - `openAPIAggregationController`：将 APIServices 资源的变化同步至提供的 OpenAPI 文档；
+
+  ```go
+  // k8s.io/kubernetes/staging/src/k8s.io/kube-aggregator/pkg/apiserver/apiserver.go:285
+  // AddAPIService adds an API service.  It is not thread-safe, so only call it on one thread at a time please.
+  // It's a slow moving API, so its ok to run the controller on a single thread
+  func (s *APIAggregator) AddAPIService(apiService *v1.APIService) error {
+  	// if the proxyHandler already exists, it needs to be updated. The aggregation bits do not
+  	// since they are wired against listers because they require multiple resources to respond
+  	if proxyHandler, exists := s.proxyHandlers[apiService.Name]; exists {
+  		proxyHandler.updateAPIService(apiService)
+  		if s.openAPIAggregationController != nil {
+  			s.openAPIAggregationController.UpdateAPIService(proxyHandler, apiService)
+  		}
+  		return nil
+  	}
+  
+  	proxyPath := "/apis/" + apiService.Spec.Group + "/" + apiService.Spec.Version
+  	// v1. is a special case for the legacy API.  It proxies to a wider set of endpoints.
+  	if apiService.Name == legacyAPIServiceName {
+  		proxyPath = "/api"
+  	}
+  
+  	// register the proxy handler
+  	proxyHandler := &proxyHandler{
+  		localDelegate:   s.delegateHandler,
+  		proxyClientCert: s.proxyClientCert,
+  		proxyClientKey:  s.proxyClientKey,
+  		proxyTransport:  s.proxyTransport,
+  		serviceResolver: s.serviceResolver,
+  		egressSelector:  s.egressSelector,
+  	}
+  	proxyHandler.updateAPIService(apiService)
+  	if s.openAPIAggregationController != nil {
+  		s.openAPIAggregationController.AddAPIService(proxyHandler, apiService)
+  	}
+  	s.proxyHandlers[apiService.Name] = proxyHandler
+  	s.GenericAPIServer.Handler.NonGoRestfulMux.Handle(proxyPath, proxyHandler)
+  	s.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandlePrefix(proxyPath+"/", proxyHandler)
+  
+  	// if we're dealing with the legacy group, we're done here
+  	if apiService.Name == legacyAPIServiceName {
+  		return nil
+  	}
+  
+  	// if we've already registered the path with the handler, we don't want to do it again.
+  	if s.handledGroups.Has(apiService.Spec.Group) {
+  		return nil
+  	}
+  
+  	// it's time to register the group aggregation endpoint
+  	groupPath := "/apis/" + apiService.Spec.Group
+  	groupDiscoveryHandler := &apiGroupHandler{
+  		codecs:    aggregatorscheme.Codecs,
+  		groupName: apiService.Spec.Group,
+  		lister:    s.lister,
+  		delegate:  s.delegateHandler,
+  	}
+  	// aggregation is protected
+  	s.GenericAPIServer.Handler.NonGoRestfulMux.Handle(groupPath, groupDiscoveryHandler)
+  	s.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandle(groupPath+"/", groupDiscoveryHandler)
+  	s.handledGroups.Insert(apiService.Spec.Group)
+  	return nil
+  }
+  
+  // k8s.io/kubernetes/staging/src/k8s.io/kube-aggregator/pkg/apiserver/handler_proxy.go:109
+  func (r *proxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+  	// 加载roxyHandlingInfo处理请求  
+  	value := r.handlingInfo.Load()
+  	if value == nil {
+  		r.localDelegate.ServeHTTP(w, req)
+  		return
+  	}
+  	handlingInfo := value.(proxyHandlingInfo)
+  	if handlingInfo.local {
+  		if r.localDelegate == nil {
+  			http.Error(w, "", http.StatusNotFound)
+  			return
+  		}
+  		r.localDelegate.ServeHTTP(w, req)
+  		return
+  	}
+  	// 判断APIService服务是否正常
+  	if !handlingInfo.serviceAvailable {
+  		proxyError(w, req, "service unavailable", http.StatusServiceUnavailable)
+  		return
+  	}
+  
+  	if handlingInfo.transportBuildingError != nil {
+  		proxyError(w, req, handlingInfo.transportBuildingError.Error(), http.StatusInternalServerError)
+  		return
+  	}
+  
+  	// 从请求解析用户  
+  	user, ok := genericapirequest.UserFrom(req.Context())
+  	if !ok {
+  		proxyError(w, req, "missing user", http.StatusInternalServerError)
+  		return
+  	}
+  
+  	// 将原始请求转化为对APIService的请求
+  	// write a new location based on the existing request pointed at the target service
+  	location := &url.URL{}
+  	location.Scheme = "https"
+  	rloc, err := r.serviceResolver.ResolveEndpoint(handlingInfo.serviceNamespace, handlingInfo.serviceName, handlingInfo.servicePort)
+  	if err != nil {
+  		klog.Errorf("error resolving %s/%s: %v", handlingInfo.serviceNamespace, handlingInfo.serviceName, err)
+  		proxyError(w, req, "service unavailable", http.StatusServiceUnavailable)
+  		return
+  	}
+  	location.Host = rloc.Host
+  	location.Path = req.URL.Path
+  	location.RawQuery = req.URL.Query().Encode()
+  
+  	newReq, cancelFn := newRequestForProxy(location, req)
+  	defer cancelFn()
+  
+  	if handlingInfo.proxyRoundTripper == nil {
+  		proxyError(w, req, "", http.StatusNotFound)
+  		return
+  	}
+  
+  	// we need to wrap the roundtripper in another roundtripper which will apply the front proxy headers
+  	proxyRoundTripper, upgrade, err := maybeWrapForConnectionUpgrades(handlingInfo.restConfig, handlingInfo.proxyRoundTripper, req)
+  	if err != nil {
+  		proxyError(w, req, err.Error(), http.StatusInternalServerError)
+  		return
+  	}
+  	proxyRoundTripper = transport.NewAuthProxyRoundTripper(user.GetName(), user.GetGroups(), user.GetExtra(), proxyRoundTripper)
+  
+  	// if we are upgrading, then the upgrade path tries to use this request with the TLS config we provide, but it does
+  	// NOT use the roundtripper.  Its a direct call that bypasses the round tripper.  This means that we have to
+  	// attach the "correct" user headers to the request ahead of time.  After the initial upgrade, we'll be back
+  	// at the roundtripper flow, so we only have to muck with this request, but we do have to do it.
+  	if upgrade {
+  		transport.SetAuthProxyHeaders(newReq, user.GetName(), user.GetGroups(), user.GetExtra())
+  	}
+  
+  	handler := proxy.NewUpgradeAwareHandler(location, proxyRoundTripper, true, upgrade, &responder{w: w})
+  	handler.ServeHTTP(w, newReq)
+  }
+  ```
+
+  
+
+* apiserviceRegistrationController负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server。apiService有两种类型：Local(Service为空)以及Service(Service非空)。apiserviceRegistrationController负责对这两种类型apiService设置代理：Local类型会直接路由给kube-apiserver进行处理；而Service类型则会设置代理并将请求转化为对aggregated Service的请求(proxyPath := "/apis/" + apiService.Spec.Group + "/" + apiService.Spec.Version)，而请求的负载均衡策略则是优先本地访问kube-apiserver(如果service为kubernetes default apiserver service:443)=>通过service ClusterIP:Port访问(默认) 或者 通过随机选择service endpoint backend进行访问：
+
+  ```bash
+  $ kubectl get APIService           
+  NAME                                   SERVICE                      AVAILABLE   AGE
+  ...
+  v1.apps                                Local                        True        50d
+  ...
+  v1beta1.metrics.k8s.io                 kube-system/metrics-server   True        50d
+  ...
+  ```
+
+  ```yaml
+  # default APIServices
+  $ kubectl get -o yaml APIService/v1.apps
+  apiVersion: apiregistration.k8s.io/v1
+  kind: APIService
+  metadata:
+    creationTimestamp: "2020-10-20T10:39:48Z"
+    labels:
+      kube-aggregator.kubernetes.io/automanaged: onstart
+    name: v1.apps
+    resourceVersion: "16"
+    selfLink: /apis/apiregistration.k8s.io/v1/apiservices/v1.apps
+    uid: 09374c3d-db49-45e1-8524-1bd8f86daaae
+  spec:
+    group: apps
+    groupPriorityMinimum: 17800
+    version: v1
+    versionPriority: 15
+  status:
+    conditions:
+    - lastTransitionTime: "2020-10-20T10:39:48Z"
+      message: Local APIServices are always available
+      reason: Local
+      status: "True"
+      type: Available
+      
+  # aggregated server    
+  $ kubectl get -o yaml APIService/v1beta1.metrics.k8s.io
+  apiVersion: apiregistration.k8s.io/v1
+  kind: APIService
+  metadata:
+    creationTimestamp: "2020-10-20T10:43:12Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      kubernetes.io/cluster-service: "true"
+    name: v1beta1.metrics.k8s.io
+    resourceVersion: "35484437"
+    selfLink: /apis/apiregistration.k8s.io/v1/apiservices/v1beta1.metrics.k8s.io
+    uid: b16f7fb6-8aa1-475c-b616-fdbd9402bac2
+  spec:
+    group: metrics.k8s.io
+    groupPriorityMinimum: 100
+    insecureSkipTLSVerify: true
+    service:
+      name: metrics-server
+      namespace: kube-system
+      port: 443
+    version: v1beta1
+    versionPriority: 100
+  status:
+    conditions:
+    - lastTransitionTime: "2020-12-05T00:50:48Z"
+      message: all checks passed
+      reason: Passed
+      status: "True"
+      type: Available
+  
+  # CRD
+  $ kubectl get -o yaml APIService/v1.duyanghao.example.com
+  apiVersion: apiregistration.k8s.io/v1
+  kind: APIService
+  metadata:
+    creationTimestamp: "2020-12-11T08:45:37Z"
+    labels:
+      kube-aggregator.kubernetes.io/automanaged: "true"
+    name: v1.duyanghao.example.com
+    resourceVersion: "40788945"
+    selfLink: /apis/apiregistration.k8s.io/v1/apiservices/v1.duyanghao.example.com
+    uid: 9da804ac-e9f1-406b-b253-b1d13e0bb725
+  spec:
+    group: duyanghao.example.com
+    groupPriorityMinimum: 1000
+    version: v1
+    versionPriority: 100
+  status:
+    conditions:
+    - lastTransitionTime: "2020-12-11T08:45:37Z"
+      message: Local APIServices are always available
+      reason: Local
+      status: "True"
+      type: Available
+  ```
+
+* aggregatorServer创建过程中会根据所有kube-apiserver定义的API资源创建默认的APIService列表，名称即是$VERSION/$GROUP，这些APIService都会有标签`kube-aggregator.kubernetes.io/automanaged: onstart`，例如：v1.apps apiService。autoRegistrationController创建并维护这些列表中的APIService，也即我们看到的Local apiService；对于自定义的APIService(aggregated server)，则不会对其进行处理
+
+* aggregated server实现CR(自定义API资源) 的CRUD API接口，并可以灵活选择后端存储，可以与core kube-apiserver一起公用etcd，也可自己独立部署etcd数据库或者其它数据库。aggregated server实现的CR API路径为：/apis/$GROUP/$VERSION，具体到sample apiserver为：/apis/wardle.example.com/v1alpha1，下面的资源类型有：flunders以及fischers
+
+* aggregated server通过部署APIService类型资源，service fields指向对应的aggregated server service实现与core kube-apiserver的集成与交互
+
+* sample-apiserver目录结构如下，可参考编写自己的aggregated server：
+
+  ```bash
+  staging/src/k8s.io/sample-apiserver
+  ├── artifacts
+  │   ├── example
+  │   │   ├── apiservice.yaml
+  │   │   ├── auth-delegator.yaml
+  │   │   ├── auth-reader.yaml
+  │   │   ├── deployment.yaml
+  │   │   ├── ns.yaml
+  │   │   ├── rbac-bind.yaml
+  │   │   ├── rbac.yaml
+  │   │   ├── sa.yaml
+  │   │   └── service.yaml
+  │   ├── flunders
+  │   │   └── 01-flunder.yaml
+  │   └── simple-image
+  │       └── Dockerfile
+  ├── hack
+  │   ├── build-image.sh
+  │   ├── update-codegen.sh
+  │   └── verify-codegen.sh
+  ├── main.go
+  └── pkg
+      ├── admission
+      ├── apis
+      │   └── wardle
+      │       ├── register.go
+      │       ├── types.go
+      │       ├── v1alpha1
+      │       │   ├── BUILD
+      │       │   ├── conversion.go
+      │       │   ├── defaults.go
+      │       │   ├── doc.go
+      │       │   ├── register.go
+      │       │   ├── types.go
+      │       │   ├── zz_generated.conversion.go
+      │       │   ├── zz_generated.deepcopy.go
+      │       │   └── zz_generated.defaults.go
+      │       ├── v1beta1
+      │       │   ├── BUILD
+      │       │   ├── doc.go
+      │       │   ├── register.go
+      │       │   ├── types.go
+      │       │   ├── zz_generated.conversion.go
+      │       │   ├── zz_generated.deepcopy.go
+      │       │   └── zz_generated.defaults.go
+      │       ├── validation
+      │       │   ├── BUILD
+      │       │   └── validation.go
+      │       └── zz_generated.deepcopy.go
+      ├── apiserver
+      │   ├── BUILD
+      │   ├── apiserver.go
+      │   └── scheme_test.go
+      ├── cmd
+      │   └── server
+      │       ├── BUILD
+      │       └── start.go
+      ├── generated
+      │   ├── clientset
+      │   │   └── versioned
+      │   │       ├── BUILD
+      │   │       ├── clientset.go
+      │   │       ├── doc.go
+      │   │       ├── fake
+      │   │       │   ├── BUILD
+      │   │       │   ├── clientset_generated.go
+      │   │       │   ├── doc.go
+      │   │       │   └── register.go
+      │   │       ├── scheme
+      │   │       │   ├── BUILD
+      │   │       │   ├── doc.go
+      │   │       │   └── register.go
+      │   │       └── typed
+      │   │           └── wardle
+      │   │               ├── v1alpha1
+      │   │               │   ├── BUILD
+      │   │               │   ├── doc.go
+      │   │               │   ├── fake
+      │   │               │   │   ├── BUILD
+      │   │               │   │   ├── doc.go
+      │   │               │   │   ├── fake_fischer.go
+      │   │               │   │   ├── fake_flunder.go
+      │   │               │   │   └── fake_wardle_client.go
+      │   │               │   ├── fischer.go
+      │   │               │   ├── flunder.go
+      │   │               │   ├── generated_expansion.go
+      │   │               │   └── wardle_client.go
+      │   │               └── v1beta1
+      │   │                   ├── BUILD
+      │   │                   ├── doc.go
+      │   │                   ├── fake
+      │   │                   │   ├── BUILD
+      │   │                   │   ├── doc.go
+      │   │                   │   ├── fake_flunder.go
+      │   │                   │   └── fake_wardle_client.go
+      │   │                   ├── flunder.go
+      │   │                   ├── generated_expansion.go
+      │   │                   └── wardle_client.go
+      │   ├── informers
+      │   │   └── externalversions
+      │   │       ├── BUILD
+      │   │       ├── factory.go
+      │   │       ├── generic.go
+      │   │       ├── internalinterfaces
+      │   │       │   ├── BUILD
+      │   │       │   └── factory_interfaces.go
+      │   │       └── wardle
+      │   │           ├── BUILD
+      │   │           ├── interface.go
+      │   │           ├── v1alpha1
+      │   │           │   ├── BUILD
+      │   │           │   ├── fischer.go
+      │   │           │   ├── flunder.go
+      │   │           │   └── interface.go
+      │   │           └── v1beta1
+      │   │               ├── BUILD
+      │   │               ├── flunder.go
+      │   │               └── interface.go
+      │   ├── listers
+      │   │   └── wardle
+      │   │       ├── v1alpha1
+      │   │       │   ├── BUILD
+      │   │       │   ├── expansion_generated.go
+      │   │       │   ├── fischer.go
+      │   │       │   └── flunder.go
+      │   │       └── v1beta1
+      │   │           ├── BUILD
+      │   │           ├── expansion_generated.go
+      │   │           └── flunder.go
+      │   └── openapi
+      │       ├── BUILD
+      │       └── zz_generated.openapi.go
+      └── registry
+          ├── BUILD
+          ├── registry.go
+          └── wardle
+              ├── fischer
+              │   ├── BUILD
+              │   ├── etcd.go
+              │   └── strategy.go
+              └── flunder
+                  ├── BUILD
+                  ├── etcd.go
+                  └── strategy.go
+  ```
+
+  * 其中，artifacts用于部署yaml示例
+  * hack目录存放自动脚本(eg: update-codegen)
+  * main.go是aggregated server启动入口；pkg/cmd负责启动aggregated server具体逻辑；pkg/apiserver用于aggregated server初始化以及路由注册
+  * pkg/apis负责相关CR的结构体定义，自动生成(update-codegen)
+  * pkg/admission负责准入的相关代码
+  * pkg/generated负责生成访问CR的clientset，informers，以及listers
+  * pkg/registry目录负责CR相关的RESTStorage实现
+
+
+更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
 ## apiExtensionsServer
 
@@ -1199,12 +1615,163 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
     	return s, nil
     }
     ```
+    
   - crdHandler处理逻辑如下：
     - 解析req(GET /apis/duyanghao.example.com/v1/namespaces/default/students)，根据请求路径中的group(duyanghao.example.com)，version(v1)，以及resource字段(students)获取对应CRD内容(crd, err := r.crdLister.Get(crdName))
     - 通过crd.UID以及crd.Name获取crdInfo，若不存在则创建对应的crdInfo(crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name))。crdInfo中包含了CRD定义以及该CRD对应Custom Resource的customresource.REST storage
     - customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用于保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
     - 从customresource.REST storage获取Unstructured结构体后会对其进行相应转换然后返回
+    
+    ```go
+    func (r *crdHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+    	ctx := req.Context()
+    	requestInfo, ok := apirequest.RequestInfoFrom(ctx)
+    	if !ok {
+    		responsewriters.ErrorNegotiated(
+    			apierrors.NewInternalError(fmt.Errorf("no RequestInfo found in the context")),
+    			Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req,
+    		)
+    		return
+    	}
+    	if !requestInfo.IsResourceRequest {
+    		pathParts := splitPath(requestInfo.Path)
+    		// only match /apis/<group>/<version>
+    		// only registered under /apis
+    		if len(pathParts) == 3 {
+    			if !r.hasSynced() {
+    				responsewriters.ErrorNegotiated(serverStartingError(), Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req)
+    				return
+    			}
+    			r.versionDiscoveryHandler.ServeHTTP(w, req)
+    			return
+    		}
+    		// only match /apis/<group>
+    		if len(pathParts) == 2 {
+    			if !r.hasSynced() {
+    				responsewriters.ErrorNegotiated(serverStartingError(), Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req)
+    				return
+    			}
+    			r.groupDiscoveryHandler.ServeHTTP(w, req)
+    			return
+    		}
+    
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    
+    	crdName := requestInfo.Resource + "." + requestInfo.APIGroup
+    	crd, err := r.crdLister.Get(crdName)
+    	if apierrors.IsNotFound(err) {
+    		if !r.hasSynced() {
+    			responsewriters.ErrorNegotiated(serverStartingError(), Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req)
+    			return
+    		}
+    
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    	if err != nil {
+    		utilruntime.HandleError(err)
+    		responsewriters.ErrorNegotiated(
+    			apierrors.NewInternalError(fmt.Errorf("error resolving resource")),
+    			Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req,
+    		)
+    		return
+    	}
+    
+    	// if the scope in the CRD and the scope in request differ (with exception of the verbs in possiblyAcrossAllNamespacesVerbs
+    	// for namespaced resources), pass request to the delegate, which is supposed to lead to a 404.
+    	namespacedCRD, namespacedReq := crd.Spec.Scope == apiextensionsv1.NamespaceScoped, len(requestInfo.Namespace) > 0
+    	if !namespacedCRD && namespacedReq {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    	if namespacedCRD && !namespacedReq && !possiblyAcrossAllNamespacesVerbs.Has(requestInfo.Verb) {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    
+    	if !apiextensionshelpers.HasServedCRDVersion(crd, requestInfo.APIVersion) {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    
+    	// There is a small chance that a CRD is being served because NamesAccepted condition is true,
+    	// but it becomes "unserved" because another names update leads to a conflict
+    	// and EstablishingController wasn't fast enough to put the CRD into the Established condition.
+    	// We accept this as the problem is small and self-healing.
+    	if !apiextensionshelpers.IsCRDConditionTrue(crd, apiextensionsv1.NamesAccepted) &&
+    		!apiextensionshelpers.IsCRDConditionTrue(crd, apiextensionsv1.Established) {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    
+    	terminating := apiextensionshelpers.IsCRDConditionTrue(crd, apiextensionsv1.Terminating)
+    
+    	crdInfo, err := r.getOrCreateServingInfoFor(crd.UID, crd.Name)
+    	if apierrors.IsNotFound(err) {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    	if err != nil {
+    		utilruntime.HandleError(err)
+    		responsewriters.ErrorNegotiated(
+    			apierrors.NewInternalError(fmt.Errorf("error resolving resource")),
+    			Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req,
+    		)
+    		return
+    	}
+    	if !hasServedCRDVersion(crdInfo.spec, requestInfo.APIVersion) {
+    		r.delegate.ServeHTTP(w, req)
+    		return
+    	}
+    
+    	verb := strings.ToUpper(requestInfo.Verb)
+    	resource := requestInfo.Resource
+    	subresource := requestInfo.Subresource
+    	scope := metrics.CleanScope(requestInfo)
+    	supportedTypes := []string{
+    		string(types.JSONPatchType),
+    		string(types.MergePatchType),
+    	}
+    	if utilfeature.DefaultFeatureGate.Enabled(features.ServerSideApply) {
+    		supportedTypes = append(supportedTypes, string(types.ApplyPatchType))
+    	}
+    
+    	var handlerFunc http.HandlerFunc
+    	subresources, err := apiextensionshelpers.GetSubresourcesForVersion(crd, requestInfo.APIVersion)
+    	if err != nil {
+    		utilruntime.HandleError(err)
+    		responsewriters.ErrorNegotiated(
+    			apierrors.NewInternalError(fmt.Errorf("could not properly serve the subresource")),
+    			Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req,
+    		)
+    		return
+    	}
+    	switch {
+    	case subresource == "status" && subresources != nil && subresources.Status != nil:
+    		handlerFunc = r.serveStatus(w, req, requestInfo, crdInfo, terminating, supportedTypes)
+    	case subresource == "scale" && subresources != nil && subresources.Scale != nil:
+    		handlerFunc = r.serveScale(w, req, requestInfo, crdInfo, terminating, supportedTypes)
+    	case len(subresource) == 0:
+    		handlerFunc = r.serveResource(w, req, requestInfo, crdInfo, terminating, supportedTypes)
+    	default:
+    		responsewriters.ErrorNegotiated(
+    			apierrors.NewNotFound(schema.GroupResource{Group: requestInfo.APIGroup, Resource: requestInfo.Resource}, requestInfo.Name),
+    			Codecs, schema.GroupVersion{Group: requestInfo.APIGroup, Version: requestInfo.APIVersion}, w, req,
+    		)
+    	}
+    
+    	if handlerFunc != nil {
+    		handlerFunc = metrics.InstrumentHandlerFunc(verb, requestInfo.APIGroup, requestInfo.APIVersion, resource, subresource, scope, metrics.APIServerComponent, handlerFunc)
+    		handler := genericfilters.WithWaitGroup(handlerFunc, longRunningFilter, crdInfo.waitGroup)
+    		handler.ServeHTTP(w, req)
+    		return
+    	}
+    }
+    ```
 
+更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
 ## Conclusion
 
