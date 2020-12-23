@@ -655,7 +655,7 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 }
 ```
 
-而从kubeAPIServer接受到创建请求到完成创建，整个与etcd的交互环节如下：
+而kubeAPIServer从接受到创建请求到完成创建，整个与etcd的交互环节如下：
 
 ```bash
 v1beta1 ⇒ internal ⇒    |    ⇒       |    ⇒  v1  ⇒ json/yaml ⇒ etcd
@@ -669,8 +669,6 @@ v1beta1 ⇒ internal ⇒    |    ⇒       |    ⇒  v1  ⇒ json/yaml ⇒ etcd
 **Decoder**
 
 kubernetes 中的多数 resource 都会有一个 `internal version`，因为在整个开发过程中一个 resource 可能会对应多个 version，比如 deployment 会有 `extensions/v1beta1`，`apps/v1`。 为了避免出现问题，kube-apiserver 必须要知道如何在每一对版本之间进行转换（例如，v1⇔v1alpha1，v1⇔v1beta1，v1beta1⇔v1alpha1），因此其使用了一个特殊的`internal version`，`internal version` 作为一个通用的 version 会包含所有 version 的字段，它具有所有 version 的功能。 Decoder 会首先把 creater object 转换到 `internal version`
-
-在解码时，首先从 HTTP path 中获取期待的 version，然后使用 scheme 以正确的 version 创建一个与之匹配的空对象，并使用 JSON 或 protobuf 解码器进行转换，在转换的第一步中，如果用户省略了某些字段，Decoder 会把其设置为默认值
 
 **Admission**
 
@@ -1609,6 +1607,7 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
     - customresource.REST storage由CR对应的Group(duyanghao.example.com)，Version(v1)，Kind(Student)，Resource(students)等创建完成，由于CR在Kubernetes代码中并没有具体结构体定义，所以这里会先初始化一个范型结构体Unstructured(用于保存所有类型的Custom Resource)，并对该结构体进行SetGroupVersionKind操作(设置具体Custom Resource Type)
     - 从customresource.REST storage获取Unstructured结构体后会对其进行相应转换然后返回
     ```go
+    // k8s.io/kubernetes/staging/src/k8s.io/apiextensions-apiserver/pkg/apiserver/customresource_handler.go:223
     func (r *crdHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
     	ctx := req.Context()
     	requestInfo, ok := apirequest.RequestInfoFrom(ctx)
