@@ -1014,7 +1014,6 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
   - `openapiController`：将 crd 资源的变化同步至提供的 OpenAPI 文档，可通过访问 `/openapi/v2` 进行查看；
   - `crdController`：负责将 crd 信息注册到 apiVersions 和 apiResources 中，两者的信息可通过 `kubectl api-versions` 和 `kubectl api-resources` 查看：
     * `kubectl api-versions`命令返回所有Kubernetes集群资源的版本信息(实际发出了两个请求，分别是`https://127.0.0.1:6443/api`以及`https://127.0.0.1:6443/apis`，并在最后将两个请求的返回结果进行了合并)
-    
       ```bash
       $ kubectl -v=8 api-versions 
       I1211 11:44:50.276446   22493 loader.go:375] Config loaded from file:  /root/.kube/config
@@ -1056,9 +1055,7 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
       storage.k8s.io/v1beta1
       v1
       ```
-    
     * `kubectl api-resources`命令就是先获取所有API版本信息，然后对每一个API版本调用接口获取该版本下的所有API资源类型
-    
       ```bash
       $ kubectl -v=8 api-resources
       5077 loader.go:375] Config loaded from file:  /root/.kube/config
