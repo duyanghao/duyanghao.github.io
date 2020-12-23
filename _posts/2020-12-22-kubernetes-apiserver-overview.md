@@ -1010,6 +1010,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   - `autoRegistrationController`：用于保持 API 中存在的一组特定的 APIServices；
   - `crdRegistrationController`：负责将 CRD GroupVersions 自动注册到 APIServices 中；
   - `openAPIAggregationController`：将 APIServices 资源的变化同步至提供的 OpenAPI 文档；
+  
   ```go
   // k8s.io/kubernetes/staging/src/k8s.io/kube-aggregator/pkg/apiserver/apiserver.go:285
   // AddAPIService adds an API service.  It is not thread-safe, so only call it on one thread at a time please.
@@ -1160,6 +1161,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   v1beta1.metrics.k8s.io                 kube-system/metrics-server   True        50d
   ...
   ```
+  
   ```yaml
   # default APIServices
   $ kubectl get -o yaml APIService/v1.apps
