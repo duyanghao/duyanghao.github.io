@@ -73,8 +73,8 @@ func (c *Controller) Start() {
 		// If we fail to repair node ports apiserver is useless. We should restart and retry.
 		klog.Fatalf("Unable to perform initial service nodePort check: %v", err)
 	}
-
-  // 定期执行bootstrap controller主要的四个功能(reconciliation)  
+	
+	// 定期执行bootstrap controller主要的四个功能(reconciliation)  
 	c.runner = async.NewRunner(c.RunKubernetesNamespaces, c.RunKubernetesService, repairClusterIPs.RunUntil, repairNodePorts.RunUntil)
 	c.runner.Start()
 }
@@ -129,13 +129,13 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 	if c.ExtraConfig.EnableLogsSupport {
 		routes.Logs{}.Install(s.Handler.GoRestfulContainer)
 	}
-  ...
+	...
 	m := &Master{
 		GenericAPIServer:          s,
 		ClusterAuthenticationInfo: c.ExtraConfig.ClusterAuthenticationInfo,
 	}
 
-  // 3、安装 LegacyAPI(core API)
+	// 3、安装 LegacyAPI(core API)
 	// install legacy rest storage
 	if c.ExtraConfig.APIResourceConfigSource.VersionEnabled(apiv1.SchemeGroupVersion) {
 		legacyRESTStorageProvider := corerest.LegacyRESTStorageProvider{
@@ -187,7 +187,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		admissionregistrationrest.RESTStorageProvider{},
 		eventsrest.RESTStorageProvider{TTL: c.ExtraConfig.EventTTL},
 	}
-  // 4、安装 APIs(named groups apis)
+	// 4、安装 APIs(named groups apis)
 	if err := m.InstallAPIs(c.ExtraConfig.APIResourceConfigSource, c.GenericConfig.RESTOptionsGetter, restStorageProviders...); err != nil {
 		return nil, err
 	}
@@ -1010,7 +1010,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   - `autoRegistrationController`：用于保持 API 中存在的一组特定的 APIServices；
   - `crdRegistrationController`：负责将 CRD GroupVersions 自动注册到 APIServices 中；
   - `openAPIAggregationController`：将 APIServices 资源的变化同步至提供的 OpenAPI 文档；
-  
+* apiserviceRegistrationController负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server。apiService有两种类型：Local(Service为空)以及Service(Service非空)。apiserviceRegistrationController负责对这两种类型apiService设置代理：Local类型会直接路由给kube-apiserver进行处理；而Service类型则会设置代理并将请求转化为对aggregated Service的请求(proxyPath := "/apis/" + apiService.Spec.Group + "/" + apiService.Spec.Version)，而请求的负载均衡策略则是优先本地访问kube-apiserver(如果service为kubernetes default apiserver service:443)=>通过service ClusterIP:Port访问(默认) 或者 通过随机选择service endpoint backend进行访问：
   ```go
   // k8s.io/kubernetes/staging/src/k8s.io/kube-aggregator/pkg/apiserver/apiserver.go:285
   // AddAPIService adds an API service.  It is not thread-safe, so only call it on one thread at a time please.
@@ -1151,7 +1151,7 @@ aggregatorServer主要用于处理扩展Kubernetes API Resources的第二种方�
   	handler.ServeHTTP(w, newReq)
   }
   ```
-* apiserviceRegistrationController负责根据APIService定义的aggregated server service构建代理，将CR的请求转发给后端的aggregated server。apiService有两种类型：Local(Service为空)以及Service(Service非空)。apiserviceRegistrationController负责对这两种类型apiService设置代理：Local类型会直接路由给kube-apiserver进行处理；而Service类型则会设置代理并将请求转化为对aggregated Service的请求(proxyPath := "/apis/" + apiService.Spec.Group + "/" + apiService.Spec.Version)，而请求的负载均衡策略则是优先本地访问kube-apiserver(如果service为kubernetes default apiserver service:443)=>通过service ClusterIP:Port访问(默认) 或者 通过随机选择service endpoint backend进行访问：
+
   ```bash
   $ kubectl get APIService           
   NAME                                   SERVICE                      AVAILABLE   AGE
