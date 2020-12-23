@@ -22,7 +22,7 @@ excerpt: 本文从自定义资源(CR)出发，从源码角度深度剖析了Kube
 
 kube-apiserver包含三种APIServer：
 
-* aggregatorServer：暴露的功能类似于一个七层负载均衡，将来自用户的请求拦截转发给其他服务器，也即用于处理扩展api-resource的aggregated apiserver(AA)
+* aggregatorServer：负责处理 `apiregistration.k8s.io` 组下的APIService资源请求，同时将来自用户的请求拦截转发给aggregated server(AA)
 * kubeAPIServer：负责对请求的一些通用处理，包括：认证、鉴权以及各个内建资源(pod, deployment，service and etc)的REST服务等
 * apiExtensionsServer：负责CustomResourceDefinition（CRD）apiResources以及apiVersions的注册，同时处理CRD以及相应CustomResource（CR）的REST请求(如果对应CR不能被处理的话则会返回404)，也是apiserver Delegation的最后一环
 
