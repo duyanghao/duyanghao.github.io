@@ -1759,4 +1759,8 @@ apiExtensionsServer主要负责CustomResourceDefinition（CRD）apiResources以�
 
 ## Conclusion
 
+本文从源码层面对Kubernetes apiserver进行了一个概览性总结，包括：aggregatorServer，kubeAPIServer，apiExtensionsServer以及bootstrap-controller等。通过阅读本文可以对apiserver内部原理有一个大致的理解，另外也有助于后续深入研究
+
 ## Refs
+
+* [kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
