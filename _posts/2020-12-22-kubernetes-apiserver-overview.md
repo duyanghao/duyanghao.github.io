@@ -7,6 +7,16 @@ tags: Kubernetes
 excerpt: 本文从源码层面对Kubernetes apiserver进行了一个概览性总结，包括：aggregatorServer，kubeAPIServer，apiExtensionsServer以及bootstrap-controller等。通过阅读本文可以对apiserver内部原理有一个大致的理解，另外也有助于后续深入研究
 ---
 
+## Table of Contents
+
+* [前言](#前言)
+* [整体组件功能](#整体组件功能)
+* [bootstrap-controller](#bootstrap-controller)
+* [kubeAPIServer](#kubeAPIServer)
+* [aggregatorServer](#aggregatorServer)
+* [apiExtensionsServer](#apiExtensionsServer)
+* [Conclusion](#Conclusion)
+
 ## 前言
 
 整个Kubernetes技术体系由声明式API以及Controller构成，而kube-apiserver是Kubernetes的声明式api server，并为其它组件交互提供了桥梁。因此加深对kube-apiserver的理解就显得至关重要
