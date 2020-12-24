@@ -12,10 +12,11 @@ excerpt: 本文从源码层面对Kubernetes apiserver进行了一个概览性总
 * [前言](#前言)
 * [整体组件功能](#整体组件功能)
 * [bootstrap-controller](#bootstrap-controller)
-* [kubeAPIServer](#kubeAPIServer)
-* [aggregatorServer](#aggregatorServer)
-* [apiExtensionsServer](#apiExtensionsServer)
-* [Conclusion](#Conclusion)
+* [kubeAPIServer](#kubeapiserver)
+* [aggregatorServer](#aggregatorserver)
+* [apiExtensionsServer](#aggregatorserver)
+* [Conclusion](#conclusion)
+* [Refs](#refs)
 
 ## 前言
 
