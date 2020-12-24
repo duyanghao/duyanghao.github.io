@@ -14,7 +14,7 @@ excerpt: 本文从源码层面对Kubernetes apiserver进行了一个概览性总
 * [bootstrap-controller](#bootstrap-controller)
 * [kubeAPIServer](#kubeapiserver)
 * [aggregatorServer](#aggregatorserver)
-* [apiExtensionsServer](#aggregatorserver)
+* [apiExtensionsServer](#apiextensionsserver)
 * [Conclusion](#conclusion)
 * [Refs](#refs)
 
