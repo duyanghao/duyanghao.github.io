@@ -147,6 +147,8 @@ $ dlv --listen=:1234 --headless=true --api-version=2 --accept-multiclient exec .
   kube-scheduler以及kube-controller调试步骤和kube-apiserver基本一致，这里不再赘述
 
   **需要注意的是：由于kube-apiserver一直会有请求过来，所以如果要调试kube-apiserver，则可能需要在代码中嵌入一些条件语句以便触发断点，如上所示**
+  
+  **另外，scheduler以及controller可以在本地直接起进程进行调试，无需远程这么麻烦**
 
 ### kube-proxy
 
