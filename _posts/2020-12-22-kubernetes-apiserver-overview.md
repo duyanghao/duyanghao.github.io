@@ -951,32 +951,7 @@ genericregistry.Store.CompleteWithOptions初始化 k8s.io/kubernetes/staging/src
 
 调用链整理如下：
 
-```bash
-                    |--> CreateNodeDialer
-                    |
-                    |--> CreateKubeAPIServerConfig
-                    |
-CreateServerChain --|--> createAPIExtensionsConfig
-                    |
-                    |                                                                       |--> c.GenericConfig.New
-                    |--> createAPIExtensionsServer --> apiextensionsConfig.Complete().New --|
-                    |                                                                       |--> s.GenericAPIServer.InstallAPIGroup
-                    |
-                    |                                                                 |--> c.GenericConfig.New
-                    |                                                                 |
-                    |--> CreateKubeAPIServer --> kubeAPIServerConfig.Complete().New --|--> m.InstallLegacyAPI --> legacyRESTStorageProvider.NewLegacyRESTStorage --> m.GenericAPIServer.InstallLegacyAPIGroup
-                    |                                                                 |
-                    |                                                                 |--> m.InstallAPIs --> restStorageBuilder.NewRESTStorage --> m.GenericAPIServer.InstallAPIGroups
-                    |
-                    |
-                    |--> createAggregatorConfig
-                    |
-                    |                                                                             |--> c.GenericConfig.New
-                    |                                                                             |
-                    |--> createAggregatorServer --> aggregatorConfig.Complete().NewWithDelegate --|--> apiservicerest.NewRESTStorage
-                                                                                                  |
-                                                                                                  |--> s.GenericAPIServer.InstallAPIGroup
-```
+![](/public/img/apiserver-overview/call.png)
 
 更多代码原理详情，参考[kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/tree/master/core/api-server)
 
