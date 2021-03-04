@@ -4,7 +4,7 @@ title: SuperEdge拓扑感知深度剖析
 date: 2021-3-3 19:10:31
 category: 技术
 tags: Kubernetes SuperEdge
-excerpt: 本文首先介绍了SuperEdge拓扑算法与Kubernetes社区原生service topology awareness特性的区别，之后从源码角度深度剖析了application-grid-wrapper的核心实现，有助于读者对SuperEdge service group的进一步理解
+excerpt: 本文首先介绍了SuperEdge拓扑算法与Kubernetes社区原生service topology awareness特性的区别，之后从源码角度深度剖析了application-grid-wrapper的核心实现，有助于读者对SuperEdge service group的进一步理解和使用
 ---
 
 ## 前言
