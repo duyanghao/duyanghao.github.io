@@ -307,7 +307,7 @@ status:
 
 为了实现Kubernetes零侵入，需要在kube-proxy与apiserver通信之间添加一层wrapper，架构如下：
 
-![img](https://github.com/superedge/superedge/blob/release-0.2/docs/img/superedge_arch.png)
+![img](https://github.com/superedge/superedge/raw/main/docs/img/superedge_arch.png)
 
 调用链路如下：
 
@@ -488,7 +488,7 @@ func (sc *storageCache) EndpointsEventHandler() cache.ResourceEventHandler {
 
 这里依次分析NodeEventHandler，ServiceEventHandler以及EndpointsEventHandler，如下：
 
-1. NodeEventHandler
+1、NodeEventHandler
 
 NodeEventHandler负责监听node资源相关event，并将node以及node Labels添加到storageCache.nodesMap中(key为nodeName，value为node以及node labels)
 
@@ -840,7 +840,7 @@ func (sc *storageCache) rebuildEndpointsMap() []watch.Event {
 
 另外，如果endpoints(拓扑感知后修改的endpoints)发生改变，会构建watch event，传递给endpoints handler(interceptEndpointsRequest)处理
 
-2. ServiceEventHandler
+2、ServiceEventHandler
 
 storageCache.servicesMap结构体key为service名称(namespace/name)，value为serviceContainer，包含如下数据：
 
@@ -895,7 +895,7 @@ func (sh *serviceHandler) update(service *v1.Service) {
 * 比较service topologyKeys与已经存在的是否有差异
 * 如果有差异则更新topologyKeys，且调用rebuildEndpointsMap刷新该service对应的endpoints，如果endpoints发生变化，则构建endpoints watch event，传递给endpoints handler(interceptEndpointsRequest)处理
 
-3. EndpointsEventHandler
+3、EndpointsEventHandler
 
 storageCache.endpointsMap结构体key为endpoints名称(namespace/name)，value为endpointsContainer，包含如下数据：
 
