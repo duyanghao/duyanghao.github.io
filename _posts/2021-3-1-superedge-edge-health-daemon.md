@@ -217,6 +217,14 @@ func (ehd *EdgeHealthDaemon) SyncNodeList() {
 
 	klog.V(4).Infof("SyncNodeList check info %+v successfully", ehd.metadata)
 }
+
+...
+func (cm *CheckMetadata) DeleteByIp(localIp, ip string) {
+	cm.Lock()
+	defer cm.Unlock()
+	delete(cm.CheckInfo[localIp], ip)
+	delete(cm.CheckInfo, ip)
+}
 ```
 
 在按照如上逻辑更新node cache之后，会初始化CheckMetadata.CheckPluginScoreInfo，将节点ip赋值给CheckPluginScoreInfo key(`Checked ip`：被检查的ip)
