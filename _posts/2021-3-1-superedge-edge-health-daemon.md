@@ -463,6 +463,7 @@ func (c *CommunEdge) communSend(checkMetadata *metadata.CheckMetadata, cmLister 
   * SourceIP：表示执行检查的ip
   * CheckDetail：为Checked ip:Check detail组织形式，包含被检查的ip以及检查结果
 * 调用GenerateHmac构建Hmac：实际上是以kube-system下的hmac-config configmap hmackey字段为key，对SourceIP以及CheckDetail进行hmac得到，用于判断传输数据的有效性(是否被篡改)
+
 ```go
 func GenerateHmac(communInfo metadata.CommunInfo, cmLister corelisters.ConfigMapLister) (string, error) {
 	addrBytes, err := json.Marshal(communInfo.SourceIP)
