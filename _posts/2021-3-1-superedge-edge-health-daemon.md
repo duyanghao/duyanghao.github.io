@@ -596,7 +596,7 @@ func (v *VoteEdge) Vote(edgeHealthMetadata *metadata.EdgeHealthMetadata, kubecli
 }
 ```
 
-首先根据检查结果统计出状态正常以及异常的节点名称：
+首先根据检查结果统计出状态正常以及异常的节点列表：
 
 ```go
 type votePair struct {
@@ -692,7 +692,7 @@ util.ParallelizeUntil(context.TODO(), 16, len(prosVoteIpList), func(index int) {
 ```
 
 * 添加或者更新"superedgehealth/node-health" annotation值为"true"，表明分布式健康检查判断该节点状态正常
-* 通过如果node存在NoExecute(node.kubernetes.io/unreachable) taint，则将其去掉，并更新node
+* 如果node存在NoExecute(node.kubernetes.io/unreachable) taint，则将其去掉，并更新node
 
 而对状态异常的节点会添加或者更新"superedgehealth/node-health" annotation值为"false"，表明分布式健康检查判断该节点状态异常：
 
@@ -732,7 +732,7 @@ util.ParallelizeUntil(context.TODO(), 16, len(consVoteIpList), func(index int) {
 })
 ```
 
-在向apiserver发送边端健康结果后，云端运行edge-health-admission([Kubernetes mutating admission webhook](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#mutatingadmissionwebhook))，会不断根据node edge-health annotation调整kube-controller-manager设置的node taint(去掉NoExecute taint)以及endpoints(将失联节点上的pods从endpoint subsets notReadyAddresses移到addresses中)，从而实现即便云边断连，但是分布式健康检查状态正常的情况下：
+在边端edge-health-daemon向apiserver发送节点健康结果后，云端运行edge-health-admission([Kubernetes mutating admission webhook](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#mutatingadmissionwebhook))，会不断根据node edge-health annotation调整kube-controller-manager设置的node taint(去掉NoExecute taint)以及endpoints(将失联节点上的pods从endpoint subsets notReadyAddresses移到addresses中)，从而实现即便云边断连，但是分布式健康检查状态正常的情况下：
 
 * 失联的节点上的pod不会从Service的Endpoint列表中移除
 * 失联的节点上的pod不会被驱逐
