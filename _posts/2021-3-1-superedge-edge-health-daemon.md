@@ -489,6 +489,7 @@ func GetHmacCode(s, key string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 ```
+
 * 发送上述构建的CommunInfo给其它边缘节点(DoRequestAndDiscard)
 
 communReceive逻辑也很清晰：
