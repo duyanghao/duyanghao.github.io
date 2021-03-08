@@ -129,7 +129,7 @@ webhooks:
     timeoutSeconds: 5
 ```
     
-kube-apiserver会发送AdmissionReview(API group: `admission.k8s.io`，version：`v1 or v1beta1`)给Webhooks，并封装成JSON格式，示例如下：
+kube-apiserver会发送AdmissionReview(apiGroup: `admission.k8s.io`，apiVersion：`v1 or v1beta1`)给Webhooks，并封装成JSON格式，示例如下：
 
 ```yaml
 # This example shows the data contained in an AdmissionReview object for a request to update the scale subresource of an apps/v1 Deployment
