@@ -201,7 +201,7 @@ kube-apiserver会发送AdmissionReview(apiGroup: `admission.k8s.io`，apiVersion
 }
 ```
 
-而Webhooks需要向kube-apiserver回应具有相同版本的AdmissionReview，并封装成JSON格式，并且包含如下关键字段：
+而Webhooks需要向kube-apiserver回应具有相同版本的AdmissionReview，并封装成JSON格式，包含如下关键字段：
 
 * uid：拷贝发送给webhooks的AdmissionReview request.uid字段
 * allowed：true表示准许；false表示不准许
