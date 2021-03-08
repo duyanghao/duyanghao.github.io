@@ -468,7 +468,7 @@ func (eha *EdgeHealthAdmission) mutateEndpoint(ar admissionv1.AdmissionReview) *
 * 检查AdmissionReview.Request.Resource是否为endpoints资源的group/version/kind
 * 将AdmissionReview.Request.Object.Raw转化为endpoints对象
 * 设置AdmissionReview.Response.Allowed为true，表示无论如何都准许该请求
-* 遍历endpoints.Subset.NotReadyAddresses，如果EndpointAddress所在节点处于ConditionUnknown状态且分布式健康检查结果为正常的情况下，则将该EndpointAddress从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses
+* 遍历endpoints.Subset.NotReadyAddresses，如果EndpointAddress所在节点处于ConditionUnknown状态且分布式健康检查结果为正常，则将该EndpointAddress从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses
 
 总的来说，mutateEndpoint的作用就是：不断修正被kube-controller-manager更新的endpoints状态，将分布式健康检查正常节点上的负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，让服务依旧可用
 
