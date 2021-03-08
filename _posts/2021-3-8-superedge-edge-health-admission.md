@@ -42,7 +42,7 @@ Admission Webhooks是一个HTTP回调服务，接受AdmissionReview请求并进�
 
 两种类型的webhooks都需要定义如下Matching requests字段：
 
-* admissionReviewVersions：定义了apiserver所支持的AdmissionReview的版本列表(API servers send the first AdmissionReview version in the admissionReviewVersions list they support)
+* admissionReviewVersions：定义了apiserver所支持的AdmissionReview api resoure的版本列表(API servers send the first AdmissionReview version in the admissionReviewVersions list they support)
 * name：webhook名称(如果一个WebhookConfiguration中定义了多个webhooks，需要保证名称的唯一性)
 * clientConfig：定义了webhook server的访问地址(url or service)以及CA bundle(optionally include a custom CA bundle to use to verify the TLS connection)
 * namespaceSelector：限定了匹配请求资源的命名空间labelSelector
