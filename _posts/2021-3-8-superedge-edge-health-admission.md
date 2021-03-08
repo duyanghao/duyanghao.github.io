@@ -383,7 +383,7 @@ func (eha *EdgeHealthAdmission) mutateNodeTaint(ar admissionv1.AdmissionReview) 
 * 设置AdmissionReview.Response.Allowed为true，表示无论如何都准许该请求
 * 执行协助边端健康检查核心逻辑：在节点处于ConditionUnknown状态且分布式健康检查结果为正常的情况下，若节点存在NoExecute(node.kubernetes.io/unreachable) taint，则将其移除
 
-总都来说mutateNodeTaint的作用就是：不断修正被kube-controller-manager更新的节点状态，去掉NoExecute(node.kubernetes.io/unreachable) taint，让节点不会被驱逐
+总的来说，mutateNodeTaint的作用就是：不断修正被kube-controller-manager更新的节点状态，去掉NoExecute(node.kubernetes.io/unreachable) taint，让节点不会被驱逐
 
 2、mutateEndpoint
 
@@ -470,7 +470,7 @@ func (eha *EdgeHealthAdmission) mutateEndpoint(ar admissionv1.AdmissionReview) *
 * 设置AdmissionReview.Response.Allowed为true，表示无论如何都准许该请求
 * 遍历endpoints.Subset.NotReadyAddresses，如果EndpointAddress所在节点处于ConditionUnknown状态且分布式健康检查结果为正常的情况下，则将该EndpointAddress从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses
 
-总都来说mutateEndpoint的作用就是：不断修正被kube-controller-manager更新的endpoints状态，将分布式健康检查正常节点上的负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，让服务依旧可用
+总的来说，mutateEndpoint的作用就是：不断修正被kube-controller-manager更新的endpoints状态，将分布式健康检查正常节点上的负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，让服务依旧可用
 
 ## 总结
 
