@@ -490,13 +490,4 @@ func (eha *EdgeHealthAdmission) mutateEndpoint(ar admissionv1.AdmissionReview) *
   * patchType：目前只支持JSONPatch类型
 * edge-health-admission实际上就是一个mutating admission webhook，选择性地对endpoints以及node UPDATE请求进行修改，包含如下处理逻辑：
   * mutateNodeTaint：不断修正被kube-controller-manager更新的节点状态，去掉NoExecute(node.kubernetes.io/unreachable) taint，让节点不会被驱逐
-  * mutateEndpoint：不断修正被kube-controller-manager更新的endpoints状态，将分布式健康检查正常节点上的负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，让服务依旧可用  
-
-## 展望
-
-SuperEdge为了实现对Kubernetes完全无侵入，设计了edge-health-admission调整kube-controller-manager对node以及endpoints的更改，但是目前也存在如下问题：
-
-* 在edge-health-admission将kube-controller-manager对node api resource的更新请求调整之后，kube-controller-manager又会重新发出同样的更新请求，这样会造成对apiserver以及etcd一定的压力
-* 对于endpoints的调整工作，目前是粗暴地将分布式健康检查正常节点上的所有负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，但是没有考虑到服务本身不可用的情况(readiness probes failure)
-
-后续会考虑优化这两点
+  * mutateEndpoint：不断修正被kube-controller-manager更新的endpoints状态，将分布式健康检查正常节点上的负载从endpoints.Subset.NotReadyAddresses移到endpoints.Subset.Addresses中，让服务依旧可用

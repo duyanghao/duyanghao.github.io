@@ -758,15 +758,6 @@ util.ParallelizeUntil(context.TODO(), 16, len(consVoteIpList), func(index int) {
     * Vote：对所有节点健康检查的结果分类，如果某个节点被大多数(>1/2)节点判定为正常，则对该节点添加superedgehealth/node-health：true annotation，表明该节点分布式健康检查结果为正常；否则，对该节点添加superedgehealth/node-health：false annotation，表明该节点分布式健康检查结果为异常
   * edge-health-admission([Kubernetes mutating admission webhook](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#mutatingadmissionwebhook))：不断根据node edge-health annotation调整kube-controller-manager设置的node taint(去掉NoExecute taint)以及endpoints(将失联节点上的pods从endpoint subsets notReadyAddresses移到addresses中)，从而实现云端和边端共同决定节点状态
 
-## 展望
-
-目前分布式健康检查还存在如下问题：
-
-* 同一个区域内边缘节点存在脑裂的情况
-* 目前算法中，每个边缘节点在整个投票过程中都属于master角色，而且每隔一段时间会向同区域其它所有节点发送检查结果，沟通信息传递过于频繁
-
-计划未来解决脑裂情况；同时改善分布式健康检查算法，减少信息传递量，降低edge-health-daemon的负载以及增加分布式健康检查成功率
-
 ## Refs
 
 * [duyanghao kubernetes-reading-notes](https://github.com/duyanghao/kubernetes-reading-notes/blob/master/superedge/edge-health/README.md)
