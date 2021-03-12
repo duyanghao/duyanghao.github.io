@@ -4,7 +4,7 @@ title: SuperEdge云边隧道network-tunnel深入剖析
 date: 2021-3-12 19:10:31
 category: 技术
 tags: Kubernetes SuperEdge
-excerpt: 本文首先介绍了SuperEdge云边隧道的配置以及数据结构，之后从源码角度深度剖析了network-tunnel的核心模块实现，有助于读者对SuperEdge云边隧道的进一步理解和使用
+excerpt: SuperEdge云边隧道主要用于代理云端访问边缘节点组件的请求，解决云端无法直接访问边缘节点的问题（边缘节点没有暴露在公网中）。本文首先介绍了SuperEdge云边隧道的配置以及数据结构，之后从源码角度深度剖析了network-tunnel的核心模块实现，有助于读者对SuperEdge云边隧道的进一步理解和使用
 ---
 
 Table of Contents
