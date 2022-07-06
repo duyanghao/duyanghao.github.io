@@ -324,6 +324,13 @@ actions = appendIf(actions, action{"POST", resourcePath, resourceParams, namer, 
 actions = appendIf(actions, action{"DELETECOLLECTION", resourcePath, resourceParams, namer, false}
 ```
 
+### 必须实现某个接口
+
+```go
+// Implement ShortNamesProvider
+var _ rest.ShortNamesProvider = &REST{}
+```
+
 ## Refs
 
 * [singleton-pattern-in-go](http://marcio.io/2015/07/singleton-pattern-in-go/)
