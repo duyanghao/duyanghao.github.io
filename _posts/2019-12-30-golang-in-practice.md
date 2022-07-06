@@ -307,6 +307,23 @@ func WithReadBufferSize(s int) DialOption {
 }
 ```
 
+### AppendIf
+
+```go
+func appendIf(actions []action, a action, shouldAppend bool) []action {
+	if shouldAppend {
+		actions = append(actions, a)
+	}
+	return actions
+}
+
+...
+// k8s.io/kubernetes/vendor/k8s.io/apiserver/pkg/endpoints/installer.go:436
+actions = appendIf(actions, action{"LIST", resourcePath, resourceParams, namer, false}, isLister)
+actions = appendIf(actions, action{"POST", resourcePath, resourceParams, namer, false}, isCreater)
+actions = appendIf(actions, action{"DELETECOLLECTION", resourcePath, resourceParams, namer, false}
+```
+
 ## Refs
 
 * [singleton-pattern-in-go](http://marcio.io/2015/07/singleton-pattern-in-go/)
