@@ -331,6 +331,47 @@ actions = appendIf(actions, action{"DELETECOLLECTION", resourcePath, resourcePar
 var _ rest.ShortNamesProvider = &REST{}
 ```
 
+### append正确用法
+
+* 错误使用
+
+```go
+// len(dms) = 4(!= 2)
+func main() {
+    testSlice := []string{"a", "b"}
+    dms := make([]string, len(testSlice))
+    for _, item := range testSlice {
+        dms = append(dms, item)
+    }
+}
+```
+
+* 正确使用1
+
+```go
+// len(dms) = 2
+func main() {
+    testSlice := []string{"a", "b"}
+    dms := make([]string, 0)
+    for _, item := range testSlice {
+       	dms = append(dms, item)
+    }
+}
+```
+
+* 正确使用2(推荐)
+
+```go
+// len(dms) = 2
+func main() {
+    testSlice := []string{"a", "b"}
+    var dms []string
+    for _, item := range testSlice {
+       	dms = append(dms, item)
+    }
+}
+```
+
 ## Refs
 
 * [singleton-pattern-in-go](http://marcio.io/2015/07/singleton-pattern-in-go/)
