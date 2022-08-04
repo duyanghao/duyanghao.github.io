@@ -372,6 +372,45 @@ func main() {
 }
 ```
 
+### range临时变量踩坑
+
+* 错误使用
+
+```go
+type Union struct {
+	Id string
+	// ...
+}
+
+// map[2621754f-c80c-4bd7-a060-66850d2c0ab1:0xc001961d40 7f9e180c-e0bc-45c7-8d11-9507f9a4b087:0xc001961d40 a2997835-c915-477a-b23b-5dc5078a629b:0xc001961d40]
+func convertUnion2Map(unionSlice []Union) map[string]Union {
+    unionMap := make(map[string]*Union)
+    for _, union := range unionSlice {
+        unionMap[union.Id] = &union
+    }
+    return unionMap
+}
+```
+
+这种情况map中每个key指向相同的地址，也即range中临时变量产生一次，每次覆盖值
+
+* 正确使用
+
+```go
+type Union struct {
+	Id string
+	// ...
+}
+
+func convertUnion2Map(unionSlice []Union) map[string]Union {
+    unionMap := make(map[string]*Union)
+    for index := range unionSlice {
+        unionMap[unionSlice[index].Id] = &unionSlice[index]
+    }
+    return unionMap
+}
+```
+
 ## Refs
 
 * [singleton-pattern-in-go](http://marcio.io/2015/07/singleton-pattern-in-go/)
