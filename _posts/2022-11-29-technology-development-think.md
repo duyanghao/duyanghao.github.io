@@ -1,7 +1,7 @@
 ---
 layout: post
 title: 技术成长过程中的一些思考
-date: 2022-11-25 19:10:31
+date: 2022-11-29 19:10:31
 category: 技术
 tags: 后台开发
 excerpt: 前段时间在公司内做了一次《技术成长之路》的分享，总结了我个人在职业发展过程中对技术的一些思考，对外版PPT已经放在github duyanghao/kubernetes-reading-notes首页，本文主要对这次分享做一个文字性的描述，仅供参考
