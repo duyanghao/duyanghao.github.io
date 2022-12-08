@@ -259,3 +259,4 @@ File->Open…(directly open project directory)
 # Refs
 
 * [VS Code 快捷键（中英文对照版）](https://segmentfault.com/a/1190000007688656)
+* [Python 编程教程](https://www.scaler.com/topics/python/)
